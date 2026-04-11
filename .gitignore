@@ -416,3 +416,6 @@ FodyWeavers.xsd
 *.msix
 *.msm
 *.msp
+/src/Tedd.AIOptimizeSql.WebUI/appsettings.Development.json
+/src/Tedd.AIOptimizeSql.Worker/appsettings.Development.json
+/src/Tedd.AIOptimizeSql.AppHost/appsettings.Development.json
