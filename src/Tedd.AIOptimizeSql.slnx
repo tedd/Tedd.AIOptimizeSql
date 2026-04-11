@@ -1,0 +1,11 @@
+<Solution>
+  <Folder Name="/Database/">
+    <Project Path="Tedd.AIOptimizeSql.Database.Models/Tedd.AIOptimizeSql.Database.Models.csproj" Id="2f3af550-121d-4374-b7ff-1b7e8dec8641" />
+    <Project Path="Tedd.AIOptimizeSql.Database/Tedd.AIOptimizeSql.Database.csproj" Id="7f186c2e-8ed0-434b-8d76-4a0b3f73322a" />
+  </Folder>
+  <Project Path="Tedd.AIOptimizeSql.AppHost/Tedd.AIOptimizeSql.AppHost.csproj" />
+  <Project Path="Tedd.AIOptimizeSql.OptimizeEngine/Tedd.AIOptimizeSql.OptimizeEngine.csproj" Id="21c1a415-e5b1-47e4-87b6-cae34f61448f" />
+  <Project Path="Tedd.AIOptimizeSql.ServiceDefaults/Tedd.AIOptimizeSql.ServiceDefaults.csproj" />
+  <Project Path="Tedd.AIOptimizeSql.WebUI/Tedd.AIOptimizeSql.WebUI.csproj" />
+  <Project Path="Tedd.AIOptimizeSql.Worker/Tedd.AIOptimizeSql.Worker.csproj" />
+</Solution>

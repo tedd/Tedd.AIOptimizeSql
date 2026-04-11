@@ -1,0 +1,130 @@
+@implements IDisposable
+@inject IDatabaseReadinessService Readiness
+@inject NavigationManager Navigation
+@using System.Threading
+
+@if (_phase == GuardPhase.Checking || _phase == GuardPhase.Redirecting)
+{
+    <MudStack Justify="Justify.Center" AlignItems="AlignItems.Center" Style="min-height: 70vh;">
+        <MudProgressCircular Indeterminate="true" Color="Color.Primary" Size="Size.Large" />
+        <MudText Typo="Typo.body1" Class="mt-4">Checking database…</MudText>
+    </MudStack>
+}
+else
+{
+    <RouteView RouteData="RouteData" DefaultLayout="typeof(MainLayout)" />
+    <FocusOnNavigate RouteData="RouteData" Selector="h1" />
+}
+
+@code {
+    [Parameter, EditorRequired]
+    public RouteData RouteData { get; set; } = default!;
+
+    private GuardPhase _phase = GuardPhase.Checking;
+
+    // Serialize checks: OnParametersSetAsync and LocationChanged can both run RunGuardAsync; parallel
+    // GetStatusAsync calls used to share one scoped DbContext and caused intermittent failures.
+    private readonly SemaphoreSlim _guardRunLock = new(1, 1);
+    private readonly CancellationTokenSource _cts = new();
+
+    protected override void OnInitialized()
+    {
+        Navigation.LocationChanged += OnLocationChanged;
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        await RunGuardAsync();
+    }
+
+    private void OnLocationChanged(object? sender, LocationChangedEventArgs e)
+    {
+        _ = InvokeAsync(async () =>
+        {
+            await RunGuardAsync();
+            StateHasChanged();
+        });
+    }
+
+    private async Task RunGuardAsync()
+    {
+        var ct = _cts.Token;
+        try
+        {
+            await _guardRunLock.WaitAsync(ct);
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+
+        try
+        {
+            if (ct.IsCancellationRequested)
+                return;
+
+            // Do not flip to Checking on every navigation when already Ready: that unmounts RouteView and
+            // tears down interactive roots while Blazor's enhanced navigation still runs refreshRootComponents,
+            // which throws "Cannot send data if the connection is not in the 'Connected' State" and leaves
+            // loading indicators stuck (e.g. MudTable ServerData).
+            if (_phase != GuardPhase.Ready)
+                _phase = GuardPhase.Checking;
+
+            var onSetupRoute = IsOnMigrationPage();
+            var status = await Readiness.GetStatusAsync(ct);
+
+            if (ct.IsCancellationRequested)
+                return;
+
+            if (status.IsReady)
+            {
+                _phase = GuardPhase.Ready;
+                return;
+            }
+
+            if (onSetupRoute)
+            {
+                _phase = GuardPhase.Ready;
+                return;
+            }
+
+            _phase = GuardPhase.Redirecting;
+            Navigation.NavigateTo("/database/migration", replace: true);
+        }
+        catch (OperationCanceledException)
+        {
+            // Component disposed mid-flight; swallow and exit cleanly.
+        }
+        finally
+        {
+            if (!_cts.IsCancellationRequested)
+                _guardRunLock.Release();
+            else
+            {
+                try { _guardRunLock.Release(); } catch (ObjectDisposedException) { }
+            }
+        }
+    }
+
+    private bool IsOnMigrationPage()
+    {
+        var relative = Navigation.ToBaseRelativePath(Navigation.Uri);
+        var path = relative.Split('?', 2)[0].TrimEnd('/');
+        return string.Equals(path, "database/migration", StringComparison.OrdinalIgnoreCase);
+    }
+
+    public void Dispose()
+    {
+        Navigation.LocationChanged -= OnLocationChanged;
+        _cts.Cancel();
+        _cts.Dispose();
+        _guardRunLock.Dispose();
+    }
+
+    private enum GuardPhase
+    {
+        Checking,
+        Redirecting,
+        Ready
+    }
+}

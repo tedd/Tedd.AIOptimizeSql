@@ -1,0 +1,147 @@
+@page "/ai-connections"
+@implements IDisposable
+@rendermode InteractiveServer
+@inject Tedd.AIOptimizeSql.Database.AIOptimizeDbContext DbContext
+@inject Tedd.AIOptimizeSql.Database.DataAccess.IAIOptimizeDataAccess DataAccess
+@inject NavigationManager Navigation
+@inject IDialogService DialogService
+@inject ISnackbar Snackbar
+@using Microsoft.EntityFrameworkCore
+
+<PageTitle>AI Connections</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.ExtraLarge" Class="mt-4">
+    <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-4">
+        <MudText Typo="Typo.h4">AI Connections</MudText>
+        <MudSpacer />
+        @if (_selectedItems.Count > 0)
+        {
+            <MudButton Variant="Variant.Outlined" Color="Color.Error" StartIcon="@Icons.Material.Filled.Delete"
+                       OnClick="DeleteSelected" Class="mr-2">
+                Delete Selected (@_selectedItems.Count)
+            </MudButton>
+        }
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Add"
+                   Href="/ai-connections/new">
+            New AI Connection
+        </MudButton>
+    </MudStack>
+
+    <MudTable @ref="_table" T="AIConnection" ServerData="LoadServerData" Hover="true" Elevation="3"
+              Dense="true" FixedHeader="true" MultiSelection="true" @bind-SelectedItems="_selectedItems"
+              OnRowClick="OnRowClick" RowClass="cursor-pointer" Class="rounded-lg">
+        <HeaderContent>
+            <MudTh><MudTableSortLabel SortLabel="Name" T="AIConnection">Name</MudTableSortLabel></MudTh>
+            <MudTh><MudTableSortLabel SortLabel="Provider" T="AIConnection">Provider</MudTableSortLabel></MudTh>
+            <MudTh><MudTableSortLabel SortLabel="Model" T="AIConnection">Model</MudTableSortLabel></MudTh>
+            <MudTh><MudTableSortLabel SortLabel="Endpoint" T="AIConnection">Endpoint</MudTableSortLabel></MudTh>
+            <MudTh><MudTableSortLabel SortLabel="CreatedAt" T="AIConnection">Created</MudTableSortLabel></MudTh>
+            <MudTh><MudTableSortLabel SortLabel="ModifiedAt" T="AIConnection">Modified</MudTableSortLabel></MudTh>
+            <MudTh Style="width: 80px;">Actions</MudTh>
+        </HeaderContent>
+        <RowTemplate>
+            <MudTd DataLabel="Name">@context.Name</MudTd>
+            <MudTd DataLabel="Provider">
+                <MudChip T="string" Size="Size.Small" Color="Color.Info" Variant="Variant.Outlined">@context.Provider.ToString()</MudChip>
+            </MudTd>
+            <MudTd DataLabel="Model">@context.Model</MudTd>
+            <MudTd DataLabel="Endpoint">
+                <MudText Typo="Typo.body2" Style="max-width:250px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
+                    @context.Endpoint
+                </MudText>
+            </MudTd>
+            <MudTd DataLabel="Created">@context.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd")</MudTd>
+            <MudTd DataLabel="Modified">@context.ModifiedAt.ToLocalTime().ToString("yyyy-MM-dd")</MudTd>
+            <MudTd>
+                <MudIconButton Icon="@Icons.Material.Filled.Delete" Color="Color.Error" Size="Size.Small"
+                               OnClick="@(() => DeleteSingle(context))" aria-label="Delete" />
+            </MudTd>
+        </RowTemplate>
+        <NoRecordsContent>
+            <MudText Typo="Typo.body1" Class="pa-4">No AI connections found.</MudText>
+        </NoRecordsContent>
+        <PagerContent>
+            <MudTablePager PageSizeOptions="new int[] { 20, 50, 100 }" />
+        </PagerContent>
+    </MudTable>
+</MudContainer>
+
+@code {
+    private readonly CancellationTokenSource _pageCts = new();
+    private MudTable<AIConnection>? _table;
+    private HashSet<AIConnection> _selectedItems = new();
+
+    public void Dispose()
+    {
+        _pageCts.Cancel();
+        _pageCts.Dispose();
+    }
+
+    private Task<TableData<AIConnection>> LoadServerData(TableState state, CancellationToken ct) =>
+        PageLoadCancellation.RunTableLoadAsync(t => LoadServerDataCore(state, t), _pageCts.Token, ct);
+
+    private async Task<TableData<AIConnection>> LoadServerDataCore(TableState state, CancellationToken cancellationToken)
+    {
+        IQueryable<AIConnection> query = DbContext.AIConnections;
+
+        query = state.SortLabel switch
+        {
+            "Name" => state.SortDirection == SortDirection.Descending ? query.OrderByDescending(x => x.Name) : query.OrderBy(x => x.Name),
+            "Provider" => state.SortDirection == SortDirection.Descending ? query.OrderByDescending(x => x.Provider) : query.OrderBy(x => x.Provider),
+            "Model" => state.SortDirection == SortDirection.Descending ? query.OrderByDescending(x => x.Model) : query.OrderBy(x => x.Model),
+            "Endpoint" => state.SortDirection == SortDirection.Descending ? query.OrderByDescending(x => x.Endpoint) : query.OrderBy(x => x.Endpoint),
+            "CreatedAt" => state.SortDirection == SortDirection.Descending ? query.OrderByDescending(x => x.CreatedAt) : query.OrderBy(x => x.CreatedAt),
+            "ModifiedAt" => state.SortDirection == SortDirection.Descending ? query.OrderByDescending(x => x.ModifiedAt) : query.OrderBy(x => x.ModifiedAt),
+            _ => query.OrderByDescending(x => x.ModifiedAt)
+        };
+
+        var totalItems = await query.CountAsync(cancellationToken);
+        var items = await query.Skip(state.Page * state.PageSize).Take(state.PageSize).ToListAsync(cancellationToken);
+
+        return new TableData<AIConnection> { TotalItems = totalItems, Items = items };
+    }
+
+    private void OnRowClick(TableRowClickEventArgs<AIConnection> args)
+    {
+        Navigation.NavigateTo($"/ai-connections/{(int)(object)args.Item!.Id}");
+    }
+
+    private async Task DeleteSingle(AIConnection item)
+    {
+        var confirm = await DialogService.ShowMessageBoxAsync(
+            "Confirm Delete",
+            $"Delete AI connection \"{item.Name}\"? Experiments and hypothesis batch snapshots using this connection will have their AI reference cleared.",
+            yesText: "Delete", cancelText: "Cancel");
+
+        if (confirm == true)
+        {
+            await DataAccess.ClearAiConnectionReferencesAsync(item.Id);
+            DbContext.AIConnections.Remove(item);
+            await DbContext.SaveChangesAsync();
+            Snackbar.Add($"Deleted \"{item.Name}\"", Severity.Success);
+            await _table!.ReloadServerData();
+        }
+    }
+
+    private async Task DeleteSelected()
+    {
+        var confirm = await DialogService.ShowMessageBoxAsync(
+            "Confirm Delete",
+            $"Delete {_selectedItems.Count} AI connection(s)? Experiments and hypothesis batch snapshots using these will have their AI reference cleared.",
+            yesText: "Delete All", cancelText: "Cancel");
+
+        if (confirm == true)
+        {
+            foreach (var item in _selectedItems)
+            {
+                await DataAccess.ClearAiConnectionReferencesAsync(item.Id);
+                DbContext.AIConnections.Remove(item);
+            }
+            await DbContext.SaveChangesAsync();
+            Snackbar.Add($"Deleted {_selectedItems.Count} AI connection(s)", Severity.Success);
+            _selectedItems.Clear();
+            await _table!.ReloadServerData();
+        }
+    }
+
+}

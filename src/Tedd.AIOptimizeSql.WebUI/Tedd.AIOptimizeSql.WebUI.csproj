@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <BlazorDisableThrowNavigationException>true</BlazorDisableThrowNavigationException>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Tedd.AIOptimizeSql.Database\Tedd.AIOptimizeSql.Database.csproj" />
+    <ProjectReference Include="..\Tedd.AIOptimizeSql.Database.Models\Tedd.AIOptimizeSql.Database.Models.csproj" />
+    <ProjectReference Include="..\Tedd.AIOptimizeSql.ServiceDefaults\Tedd.AIOptimizeSql.ServiceDefaults.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Data.SqlClient" Version="6.1.1" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.5">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+    <PackageReference Include="MudBlazor" Version="9.3.0" />
+  </ItemGroup>
+
+</Project>

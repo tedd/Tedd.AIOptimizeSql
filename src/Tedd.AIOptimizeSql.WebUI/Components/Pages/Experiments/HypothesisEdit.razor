@@ -1,0 +1,314 @@
+@page "/experiments/{ExperimentId:int}/hypothesis-batches/{BatchId:int}/hypotheses/new"
+@page "/experiments/{ExperimentId:int}/hypothesis-batches/{BatchId:int}/hypotheses/{HypothesisId:int}"
+@implements IDisposable
+@rendermode InteractiveServer
+@inject Tedd.AIOptimizeSql.Database.AIOptimizeDbContext DbContext
+@inject NavigationManager Navigation
+@inject ISnackbar Snackbar
+@using Microsoft.EntityFrameworkCore
+
+<PageTitle>@(_isNew ? "New" : "View") Hypothesis</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.Medium" Class="mt-4">
+    <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-4">
+        <MudIconButton Icon="@Icons.Material.Filled.ArrowBack" OnClick="GoBack" />
+        <MudText Typo="Typo.h4">@(_isNew ? "New" : _editMode ? "Edit" : "View") Hypothesis</MudText>
+        <MudSpacer />
+        @if (!_isNew && !_editMode)
+        {
+            <MudButton Variant="Variant.Outlined" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Edit"
+                       OnClick="@(() => _editMode = true)">
+                Edit
+            </MudButton>
+        }
+    </MudStack>
+
+    @if (_loading)
+    {
+        <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+    }
+    else if (_model == null)
+    {
+        <MudAlert Severity="Severity.Error">Hypothesis not found.</MudAlert>
+    }
+    else
+    {
+        @if (!_isNew && !_editMode)
+        {
+            <MudGrid Class="mb-4">
+                <MudItem xs="12" sm="4">
+                    <MudPaper Elevation="2" Class="pa-4 rounded-lg d-flex flex-column align-center">
+                        @{
+                            var pct = _model.ImpovementPercentage;
+                            var deltaColor = pct > 0 ? Color.Success : (pct < 0 ? Color.Error : Color.Default);
+                        }
+                        <MudText Typo="Typo.h4" Color="@deltaColor">
+                            @(pct >= 0 ? "+" : "")@pct.ToString("F1")%
+                        </MudText>
+                        <MudText Typo="Typo.caption">Improvement</MudText>
+                    </MudPaper>
+                </MudItem>
+                <MudItem xs="12" sm="4">
+                    <MudPaper Elevation="2" Class="pa-4 rounded-lg d-flex flex-column align-center">
+                        <MudText Typo="Typo.h4" Color="Color.Info">@FormatTime(_model.TimeUsedMs)</MudText>
+                        <MudText Typo="Typo.caption">Time Used</MudText>
+                    </MudPaper>
+                </MudItem>
+                <MudItem xs="12" sm="4">
+                    <MudPaper Elevation="2" Class="pa-4 rounded-lg d-flex flex-column align-center">
+                        <MudText Typo="Typo.h4">@(_batch?.AiProviderUsed?.ToString() ?? "N/A")</MudText>
+                        <MudText Typo="Typo.caption">@(_batch?.AiModelUsed ?? "No model")</MudText>
+                    </MudPaper>
+                </MudItem>
+            </MudGrid>
+
+            @if (_model.BenchmarkRunBefore != null || _model.BenchmarkRunAfter != null)
+            {
+                <MudCard Elevation="3" Class="rounded-lg mb-4">
+                    <MudCardHeader>
+                        <CardHeaderContent>
+                            <MudText Typo="Typo.h6">Benchmark summary (aggregated)</MudText>
+                            <MudText Typo="Typo.caption">Compared on this hypothesis; open each run for full stats, plans, and messages.</MudText>
+                        </CardHeaderContent>
+                    </MudCardHeader>
+                    <MudCardContent>
+                        <MudSimpleTable Dense="true" Class="mb-3">
+                            <thead>
+                            <tr>
+                                <th></th>
+                                <th style="text-align:right">Before</th>
+                                <th style="text-align:right">After</th>
+                                <th style="text-align:right">Δ</th>
+                            </tr>
+                            </thead>
+                            <tbody>
+                            <tr>
+                                <td><MudText Typo="Typo.body2">Total time (ms)</MudText></td>
+                                <td style="text-align:right">@(_model.BenchmarkRunBefore?.TotalTimeMs.ToString() ?? "—")</td>
+                                <td style="text-align:right">@(_model.BenchmarkRunAfter?.TotalTimeMs.ToString() ?? "—")</td>
+                                <td style="text-align:right">
+                                    @if (_benchDeltaTotalMs is int d1)
+                                    {
+                                        <MudText Color="@(d1 < 0 ? Color.Success : d1 > 0 ? Color.Error : Color.Default)" Typo="Typo.body2">@(d1 > 0 ? "+" : "")@d1</MudText>
+                                    }
+                                    else { <text>—</text> }
+                                </td>
+                            </tr>
+                            <tr>
+                                <td><MudText Typo="Typo.body2">Server elapsed (ms)</MudText></td>
+                                <td style="text-align:right">@(_model.BenchmarkRunBefore?.TotalServerElapsedTimeMs.ToString() ?? "—")</td>
+                                <td style="text-align:right">@(_model.BenchmarkRunAfter?.TotalServerElapsedTimeMs.ToString() ?? "—")</td>
+                                <td style="text-align:right">
+                                    @if (_benchDeltaServerElapsedMs is int d2)
+                                    {
+                                        <MudText Color="@(d2 < 0 ? Color.Success : d2 > 0 ? Color.Error : Color.Default)" Typo="Typo.body2">@(d2 > 0 ? "+" : "")@d2</MudText>
+                                    }
+                                    else { <text>—</text> }
+                                </td>
+                            </tr>
+                            <tr>
+                                <td><MudText Typo="Typo.body2">Logical reads</MudText></td>
+                                <td style="text-align:right">@(_model.BenchmarkRunBefore?.TotalLogicalReads.ToString() ?? "—")</td>
+                                <td style="text-align:right">@(_model.BenchmarkRunAfter?.TotalLogicalReads.ToString() ?? "—")</td>
+                                <td style="text-align:right">
+                                    @if (_benchDeltaLogicalReads is int d3)
+                                    {
+                                        <MudText Color="@(d3 < 0 ? Color.Success : d3 > 0 ? Color.Error : Color.Default)" Typo="Typo.body2">@(d3 > 0 ? "+" : "")@d3</MudText>
+                                    }
+                                    else { <text>—</text> }
+                                </td>
+                            </tr>
+                            </tbody>
+                        </MudSimpleTable>
+                        <MudStack Row="true" Spacing="2" Wrap="Wrap.Wrap">
+                            @if (_model.BenchmarkRunBefore != null)
+                            {
+                                <MudButton Variant="Variant.Outlined" Size="Size.Small" Color="Color.Primary"
+                                           Href="@BenchmarkHref(_model.BenchmarkRunBefore.Id)">
+                                    Before benchmark details
+                                </MudButton>
+                            }
+                            @if (_model.BenchmarkRunAfter != null)
+                            {
+                                <MudButton Variant="Variant.Outlined" Size="Size.Small" Color="Color.Primary"
+                                           Href="@BenchmarkHref(_model.BenchmarkRunAfter.Id)">
+                                    After benchmark details
+                                </MudButton>
+                            }
+                        </MudStack>
+                    </MudCardContent>
+                </MudCard>
+            }
+        }
+
+        <MudCard Elevation="3" Class="rounded-lg">
+            <MudCardContent>
+                <MudForm @ref="_form" @bind-IsValid="_formValid">
+                    <MudTextField @bind-Value="_model.Description" Label="Hypothesis"
+                                  Lines="4" Variant="Variant.Outlined" Class="mb-4"
+                                  ReadOnly="@(!_editMode && !_isNew)" />
+
+                    <MudNumericField @bind-Value="_model.ImpovementPercentage" Label="Improvement %"
+                                     Variant="Variant.Outlined" Class="mb-4"
+                                     HelperText="Set after a run. Positive = improvement, negative = regression."
+                                     ReadOnly="true" />
+
+                    <MudNumericField @bind-Value="_model.TimeUsedMs" Label="Time Used (ms)"
+                                     Variant="Variant.Outlined" Class="mb-4"
+                                     HelperText="Set automatically after a benchmark run."
+                                     ReadOnly="true" />
+
+                    <MudSelect T="HypothesisId?" @bind-Value="_selectedBuildsOn"
+                               Label="Builds On Hypothesis" Variant="Variant.Outlined" Class="mb-4"
+                               Clearable="true" ReadOnly="@(!_editMode && !_isNew)">
+                        @foreach (var h in _otherHypotheses)
+                        {
+                            <MudSelectItem Value="@((HypothesisId?)h.Id)">
+                                #@((int)(object)h.Id) - @(h.Description?.Length > 50 ? h.Description[..50] + "..." : h.Description ?? "(no text)")
+                            </MudSelectItem>
+                        }
+                    </MudSelect>
+
+                    @if (!_isNew)
+                    {
+                        <MudText Typo="Typo.caption">
+                            Created: @_model.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm")
+                        </MudText>
+                    }
+                </MudForm>
+            </MudCardContent>
+
+            @if (_editMode || _isNew)
+            {
+                <MudCardActions Class="pa-4">
+                    <MudSpacer />
+                    <MudButton Variant="Variant.Text" OnClick="GoBack" Class="mr-2">Cancel</MudButton>
+                    <MudButton Variant="Variant.Filled" Color="Color.Primary"
+                               OnClick="Save" StartIcon="@Icons.Material.Filled.Save">
+                        Save
+                    </MudButton>
+                </MudCardActions>
+            }
+        </MudCard>
+
+        @if (!_isNew && _model.BuildsOnHypothesisId.HasValue)
+        {
+            <MudAlert Severity="Severity.Info" Class="mt-4">
+                This hypothesis builds on
+                <MudLink Href="@($"/experiments/{ExperimentId}/hypothesis-batches/{BatchId}/hypotheses/{(int)(object)_model.BuildsOnHypothesisId}")"
+                         Color="Color.Primary">
+                    Hypothesis #@((int)(object)_model.BuildsOnHypothesisId)
+                </MudLink>
+            </MudAlert>
+        }
+    }
+</MudContainer>
+
+@code {
+    [Parameter] public int ExperimentId { get; set; }
+    [Parameter] public int BatchId { get; set; }
+    [Parameter] public int? HypothesisId { get; set; }
+
+    private Hypothesis? _model;
+    private HypothesisBatch? _batch;
+    private bool _isNew;
+    private bool _editMode;
+    private bool _loading = true;
+    private bool _formValid;
+    private MudForm? _form;
+    private HypothesisId? _selectedBuildsOn;
+    private List<Hypothesis> _otherHypotheses = new();
+    private int? _benchDeltaTotalMs;
+    private int? _benchDeltaServerElapsedMs;
+    private int? _benchDeltaLogicalReads;
+    private readonly CancellationTokenSource _pageCts = new();
+
+    public void Dispose()
+    {
+        _pageCts.Cancel();
+        _pageCts.Dispose();
+    }
+
+    protected override Task OnInitializedAsync() =>
+        PageLoadCancellation.RunPageLoadAsync(async ct =>
+        {
+            var batchId = (HypothesisBatchId)(object)BatchId;
+
+            _batch = await DbContext.HypothesisBatches.FindAsync(new object[] { batchId }, ct);
+
+            _otherHypotheses = await DbContext.Hypotheses
+                .Where(h => h.HypothesisBatchId == batchId)
+                .OrderBy(h => h.Id)
+                .ToListAsync(ct);
+
+            if (HypothesisId.HasValue)
+            {
+                _isNew = false;
+                var hId = (HypothesisId)(object)HypothesisId.Value;
+                _model = await DbContext.Hypotheses
+                    .Include(h => h.BenchmarkRunBefore)
+                    .Include(h => h.BenchmarkRunAfter)
+                    .FirstOrDefaultAsync(h => h.Id == hId, ct);
+
+                if (_model != null)
+                {
+                    _selectedBuildsOn = _model.BuildsOnHypothesisId;
+                    _otherHypotheses = _otherHypotheses.Where(h => h.Id != _model.Id).ToList();
+                    ComputeBenchDeltas();
+                }
+            }
+            else
+            {
+                _isNew = true;
+                _editMode = true;
+                _model = new Hypothesis
+                {
+                    HypothesisBatchId = batchId
+                };
+            }
+            _loading = false;
+        }, _pageCts.Token);
+
+    private string FormatTime(long ms)
+    {
+        if (ms < 1000) return $"{ms}ms";
+        if (ms < 60000) return $"{ms / 1000.0:F1}s";
+        return $"{ms / 60000.0:F1}m";
+    }
+
+    private void ComputeBenchDeltas()
+    {
+        _benchDeltaTotalMs = null;
+        _benchDeltaServerElapsedMs = null;
+        _benchDeltaLogicalReads = null;
+        if (_model?.BenchmarkRunBefore == null || _model.BenchmarkRunAfter == null)
+            return;
+        var b = _model.BenchmarkRunBefore;
+        var a = _model.BenchmarkRunAfter;
+        _benchDeltaTotalMs = a.TotalTimeMs - b.TotalTimeMs;
+        _benchDeltaServerElapsedMs = a.TotalServerElapsedTimeMs - b.TotalServerElapsedTimeMs;
+        _benchDeltaLogicalReads = a.TotalLogicalReads - b.TotalLogicalReads;
+    }
+
+    private string BenchmarkHref(BenchmarkRunId id) =>
+        $"/experiments/{ExperimentId}/hypothesis-batches/{BatchId}/benchmarks/{(int)(object)id}";
+
+    private async Task Save()
+    {
+        if (_model == null) return;
+
+        _model.BuildsOnHypothesisId = _selectedBuildsOn;
+
+        if (_isNew)
+        {
+            _model.CreatedAt = DateTime.UtcNow;
+            DbContext.Hypotheses.Add(_model);
+        }
+
+        await DbContext.SaveChangesAsync();
+        Snackbar.Add(_isNew ? "Hypothesis created" : "Hypothesis saved", Severity.Success);
+        Navigation.NavigateTo($"/experiments/{ExperimentId}/hypothesis-batches/{BatchId}");
+    }
+
+    private void GoBack() => Navigation.NavigateTo($"/experiments/{ExperimentId}/hypothesis-batches/{BatchId}");
+}

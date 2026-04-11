@@ -1,0 +1,148 @@
+@page "/experiments/{ExperimentId:int}/hypothesis-batches/{BatchId:int}/benchmarks/{BenchmarkRunId:int}"
+@implements IDisposable
+@rendermode InteractiveServer
+@inject Tedd.AIOptimizeSql.Database.AIOptimizeDbContext DbContext
+@inject NavigationManager Navigation
+@using Microsoft.EntityFrameworkCore
+
+<PageTitle>Benchmark run</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.Large" Class="mt-4">
+    <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-4">
+        <MudIconButton Icon="@Icons.Material.Filled.ArrowBack"
+                       OnClick="@(() => Navigation.NavigateTo($"/experiments/{ExperimentId}/hypothesis-batches/{BatchId}"))"
+                       aria-label="Back to batch" />
+        <MudText Typo="Typo.h4">Benchmark run #@BenchmarkRunId</MudText>
+    </MudStack>
+
+    @if (_loading)
+    {
+        <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+    }
+    else if (_run == null)
+    {
+        <MudAlert Severity="Severity.Warning">Benchmark run not found.</MudAlert>
+    }
+    else
+    {
+        <MudText Typo="Typo.caption" Class="mb-4">
+            Created (local): @_run.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm")
+        </MudText>
+
+        <MudGrid Class="mb-4">
+            <MudItem xs="12" sm="4">
+                <MudPaper Elevation="2" Class="pa-4 rounded-lg">
+                    <MudText Typo="Typo.caption">Total time</MudText>
+                    <MudText Typo="Typo.h5">@_run.TotalTimeMs ms</MudText>
+                </MudPaper>
+            </MudItem>
+            <MudItem xs="12" sm="4">
+                <MudPaper Elevation="2" Class="pa-4 rounded-lg">
+                    <MudText Typo="Typo.caption">Server CPU (reported)</MudText>
+                    <MudText Typo="Typo.h5">@_run.TotalServerCpuTimeMs ms</MudText>
+                </MudPaper>
+            </MudItem>
+            <MudItem xs="12" sm="4">
+                <MudPaper Elevation="2" Class="pa-4 rounded-lg">
+                    <MudText Typo="Typo.caption">Server elapsed (reported)</MudText>
+                    <MudText Typo="Typo.h5">@_run.TotalServerElapsedTimeMs ms</MudText>
+                </MudPaper>
+            </MudItem>
+        </MudGrid>
+
+        <MudText Typo="Typo.h6" Class="mb-2">I/O statistics</MudText>
+        <MudSimpleTable Dense="true" Hover="true" Class="rounded-lg mb-4" Style="border:1px solid var(--mud-palette-lines-default);">
+            <thead>
+            <tr>
+                <th>Metric</th>
+                <th style="text-align:right">Value</th>
+            </tr>
+            </thead>
+            <tbody>
+            @foreach (var row in _ioRows)
+            {
+                <tr>
+                    <td>@row.Label</td>
+                    <td style="text-align:right">@row.Value</td>
+                </tr>
+            }
+            </tbody>
+        </MudSimpleTable>
+
+        @if (!string.IsNullOrWhiteSpace(_run.Messages))
+        {
+            <MudExpansionPanels Class="mb-4">
+                <MudExpansionPanel Text="SQL Server messages" Expanded="false">
+                    <MudPaper Class="pa-3" Elevation="0" Outlined="true">
+                        <pre style="white-space:pre-wrap;word-break:break-word;margin:0;font-size:0.85rem;">@_run.Messages</pre>
+                    </MudPaper>
+                </MudExpansionPanel>
+            </MudExpansionPanels>
+        }
+
+        @if (_run.ActualPlanXml.Count > 0)
+        {
+            <MudText Typo="Typo.h6" Class="mb-2">Actual execution plans (@_run.ActualPlanXml.Count)</MudText>
+            <MudExpansionPanels MultiExpansion="true" Class="mb-4">
+                @for (var i = 0; i < _run.ActualPlanXml.Count; i++)
+                {
+                    var idx = i;
+                    var plan = _run.ActualPlanXml[idx];
+                    <MudExpansionPanel Text="@($"Plan batch {idx + 1}")">
+                        <MudPaper Class="pa-3" Elevation="0" Outlined="true" Style="max-height:480px;overflow:auto;">
+                            <pre style="white-space:pre-wrap;word-break:break-word;margin:0;font-size:0.75rem;">@plan</pre>
+                        </MudPaper>
+                    </MudExpansionPanel>
+                }
+            </MudExpansionPanels>
+        }
+    }
+</MudContainer>
+
+@code {
+    [Parameter] public int ExperimentId { get; set; }
+    [Parameter] public int BatchId { get; set; }
+    [Parameter] public int BenchmarkRunId { get; set; }
+
+    private readonly CancellationTokenSource _pageCts = new();
+    private BenchmarkRun? _run;
+    private bool _loading = true;
+    private List<IoRow> _ioRows = new();
+
+    private sealed record IoRow(string Label, int Value);
+
+    public void Dispose()
+    {
+        _pageCts.Cancel();
+        _pageCts.Dispose();
+    }
+
+    protected override Task OnInitializedAsync() =>
+        PageLoadCancellation.RunPageLoadAsync(async ct =>
+        {
+            var id = (BenchmarkRunId)(object)BenchmarkRunId;
+            _run = await DbContext.BenchmarkRuns.AsNoTracking().FirstOrDefaultAsync(b => b.Id == id, ct);
+            if (_run != null)
+                BuildIoRows();
+            _loading = false;
+        }, _pageCts.Token);
+
+    private void BuildIoRows()
+    {
+        if (_run == null) return;
+        _ioRows =
+        [
+            new IoRow("Scan count", _run.TotalScanCount),
+            new IoRow("Logical reads", _run.TotalLogicalReads),
+            new IoRow("Physical reads", _run.TotalPhysicalReads),
+            new IoRow("Page server reads", _run.TotalPageServerReads),
+            new IoRow("Read-ahead reads", _run.TotalReadAheadReads),
+            new IoRow("Page server read-ahead reads", _run.TotalPageServerReadAheadReads),
+            new IoRow("LOB logical reads", _run.TotalLobLogicalReads),
+            new IoRow("LOB physical reads", _run.TotalLobPhysicalReads),
+            new IoRow("LOB page server reads", _run.TotalLobPageServerReads),
+            new IoRow("LOB read-ahead reads", _run.TotalLobReadAheadReads),
+            new IoRow("LOB page server read-ahead reads", _run.TotalLobPageServerReadAheadReads)
+        ];
+    }
+}

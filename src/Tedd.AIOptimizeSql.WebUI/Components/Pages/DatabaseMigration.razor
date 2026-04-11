@@ -1,0 +1,231 @@
+@page "/database/migration"
+@layout SetupLayout
+@implements IDisposable
+@rendermode InteractiveServer
+
+<PageTitle>Database setup</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.Medium" Class="mt-2">
+    <MudText Typo="Typo.h4" GutterBottom="true">Database setup</MudText>
+    <MudText Typo="Typo.body2" Class="mb-6">
+        The application needs a reachable SQL Server database with the latest schema. Review the connection details below, then apply migrations. If the database does not exist yet, the migration step can create it when the configured login has permission.
+    </MudText>
+
+    <MudCard Elevation="3" Class="rounded-lg mb-4">
+        <MudCardHeader>
+            <CardHeaderContent>
+                <MudText Typo="Typo.h6">Connection</MudText>
+                <MudText Typo="Typo.caption">From configuration key <code>ConnectionStrings:AIOptimizeDb</code></MudText>
+            </CardHeaderContent>
+        </MudCardHeader>
+        <MudCardContent>
+            @if (_status?.ConnectionInfo is { } c)
+            {
+                <MudStack Spacing="1">
+                    <MudText><strong>Server:</strong> @c.Server</MudText>
+                    <MudText><strong>Database:</strong> @c.Database</MudText>
+                    <MudText><strong>User:</strong> @c.UserDisplay</MudText>
+                </MudStack>
+            }
+            else if (_status is not null)
+            {
+                <MudAlert Severity="Severity.Warning" Dense="true">Could not parse the connection string for display.</MudAlert>
+            }
+            else
+            {
+                <MudSkeleton Height="24px" Width="80%" Class="mb-2" />
+                <MudSkeleton Height="24px" Width="60%" />
+            }
+        </MudCardContent>
+    </MudCard>
+
+    @if (_checking && _status is null)
+    {
+        <MudAlert Severity="Severity.Info" Class="mb-4">Checking database status…</MudAlert>
+    }
+    else if (_status is not null)
+    {
+        @if (_status.State == DatabaseReadinessState.MissingConfiguration)
+        {
+            <MudAlert Severity="Severity.Error" Class="mb-4" Variant="Variant.Filled">
+                <MudText Typo="Typo.subtitle2" Class="mb-2">Connection string required</MudText>
+                <MudText Typo="Typo.body2" Style="white-space: pre-wrap;">@_status.Message</MudText>
+            </MudAlert>
+        }
+        else if (_status.IsReady)
+        {
+            <MudAlert Severity="Severity.Success" Class="mb-4" Variant="Variant.Filled">
+                Database is up to date. You can continue to the application.
+            </MudAlert>
+        }
+        else if (_status.PendingMigrations.Count > 0)
+        {
+            <MudAlert Severity="Severity.Warning" Class="mb-4" Variant="Variant.Filled">
+                <MudText Typo="Typo.subtitle2" Class="mb-2">Migrations pending</MudText>
+                <MudText Typo="Typo.body2" Class="mb-2">@_status.Message</MudText>
+                <MudText Typo="Typo.body2" Class="mb-2">The following migrations have not been applied:</MudText>
+                <MudStack Spacing="0" Class="mt-2">
+                    @foreach (var m in _status.PendingMigrations)
+                    {
+                        <MudText Typo="Typo.body2">• @m</MudText>
+                    }
+                </MudStack>
+            </MudAlert>
+        }
+        else if (_status.State == DatabaseReadinessState.DatabaseUnavailable)
+        {
+            <MudAlert Severity="Severity.Warning" Class="mb-4" Variant="Variant.Filled">
+                <MudText Typo="Typo.subtitle2" Class="mb-2">
+                    @(_status.DatabaseExists == false ? "Database has not been created yet" : "Database is not available")
+                </MudText>
+                <MudText Typo="Typo.body2" Style="white-space: pre-wrap;">@_status.Message</MudText>
+                @if (!string.IsNullOrWhiteSpace(_status.TechnicalDetails))
+                {
+                    <MudText Typo="Typo.caption" Class="d-block mt-2" Style="white-space: pre-wrap;">
+                        Technical details: @_status.TechnicalDetails
+                    </MudText>
+                }
+            </MudAlert>
+        }
+        else if (_status.State == DatabaseReadinessState.ServerUnavailable)
+        {
+            <MudAlert Severity="Severity.Error" Class="mb-4" Variant="Variant.Filled">
+                <MudText Typo="Typo.subtitle2" Class="mb-2">SQL Server is not reachable</MudText>
+                <MudText Typo="Typo.body2" Style="white-space: pre-wrap;">@_status.Message</MudText>
+                @if (!string.IsNullOrWhiteSpace(_status.TechnicalDetails))
+                {
+                    <MudText Typo="Typo.caption" Class="d-block mt-2" Style="white-space: pre-wrap;">
+                        Technical details: @_status.TechnicalDetails
+                    </MudText>
+                }
+            </MudAlert>
+        }
+        else
+        {
+            <MudAlert Severity="Severity.Error" Class="mb-4" Variant="Variant.Filled">
+                <MudText Typo="Typo.subtitle2" Class="mb-2">Something went wrong</MudText>
+                <MudText Typo="Typo.body2" Style="white-space: pre-wrap;">@_status.Message</MudText>
+                @if (!string.IsNullOrWhiteSpace(_status.TechnicalDetails))
+                {
+                    <MudText Typo="Typo.caption" Class="d-block mt-2" Style="white-space: pre-wrap;">
+                        Technical details: @_status.TechnicalDetails
+                    </MudText>
+                }
+            </MudAlert>
+        }
+    }
+
+    @if (_applying)
+    {
+        <MudProgressLinear Indeterminate="true" Color="Color.Primary" Class="mb-4" />
+    }
+
+    <MudStack Row="true" Spacing="2" Class="flex-wrap">
+        <MudButton Variant="Variant.Filled" Color="Color.Primary"
+                   Disabled="@IsApplyDisabled()"
+                   OnClick="ApplyMigrationsAsync">
+            @GetApplyButtonText()
+        </MudButton>
+        <MudButton Variant="Variant.Outlined" Color="Color.Default"
+                   Disabled="@(_checking || _applying)"
+                   OnClick="RefreshAsync">
+            Refresh status
+        </MudButton>
+        @if (_status?.IsReady == true)
+        {
+            <MudButton Variant="Variant.Filled" Color="Color.Success" OnClick="ContinueToApp">
+                Continue to app
+            </MudButton>
+        }
+    </MudStack>
+</MudContainer>
+
+@code {
+    [Inject]
+    private IDatabaseReadinessService Readiness { get; set; } = default!;
+
+    [Inject]
+    private NavigationManager Navigation { get; set; } = default!;
+
+    private readonly CancellationTokenSource _pageCts = new();
+    private DatabaseReadinessStatus? _status;
+    private bool _checking = true;
+    private bool _applying;
+
+    public void Dispose()
+    {
+        _pageCts.Cancel();
+        _pageCts.Dispose();
+    }
+
+    protected override Task OnInitializedAsync() => RefreshAsync();
+
+    private async Task RefreshAsync()
+    {
+        _checking = true;
+        StateHasChanged();
+
+        try
+        {
+            _status = await Readiness.GetStatusAsync(_pageCts.Token);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        finally
+        {
+            _checking = false;
+        }
+    }
+
+    private async Task ApplyMigrationsAsync()
+    {
+        _applying = true;
+        StateHasChanged();
+
+        try
+        {
+            _status = await Readiness.ApplyMigrationsAsync(_pageCts.Token);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        finally
+        {
+            _applying = false;
+        }
+    }
+
+    private void ContinueToApp()
+    {
+        Navigation.NavigateTo("/", replace: true);
+    }
+
+    private string GetApplyButtonText()
+    {
+        if (_status is null)
+            return "Apply migrations";
+
+        if (_status.State == DatabaseReadinessState.DatabaseUnavailable && _status.DatabaseExists != true)
+            return "Create database and apply migrations";
+
+        if (_status.State == DatabaseReadinessState.Ready)
+            return "Database is up to date";
+
+        if (_status.State == DatabaseReadinessState.ServerUnavailable)
+            return "Cannot reach SQL Server";
+
+        if (_status.State == DatabaseReadinessState.MissingConfiguration)
+            return "Connection string required";
+
+        return "Apply migrations";
+    }
+
+    private bool IsApplyDisabled()
+    {
+        if (_checking || _applying)
+            return true;
+
+        return _status?.State is not (DatabaseReadinessState.PendingMigrations or DatabaseReadinessState.DatabaseUnavailable);
+    }
+}

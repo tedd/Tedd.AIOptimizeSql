@@ -1,0 +1,308 @@
+@page "/experiments/{ExperimentId:int}/hypothesis-batches/{BatchId:int}"
+@implements IDisposable
+@rendermode InteractiveServer
+@inject Tedd.AIOptimizeSql.Database.AIOptimizeDbContext DbContext
+@inject NavigationManager Navigation
+@inject IDialogService DialogService
+@inject ISnackbar Snackbar
+@using Microsoft.EntityFrameworkCore
+
+<PageTitle>Hypotheses</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.ExtraLarge" Class="mt-4">
+    <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-2">
+        <MudIconButton Icon="@Icons.Material.Filled.ArrowBack"
+                       OnClick="@(() => Navigation.NavigateTo($"/experiments/{ExperimentId}/hypothesis-batches"))" />
+        <MudText Typo="Typo.h4">Hypotheses</MudText>
+        <MudSpacer />
+        @if (_selectedItems.Count > 0)
+        {
+            <MudButton Variant="Variant.Outlined" Color="Color.Error" StartIcon="@Icons.Material.Filled.Delete"
+                       OnClick="DeleteSelected" Class="mr-2">
+                Delete Selected (@_selectedItems.Count)
+            </MudButton>
+        }
+        <MudButton Variant="Variant.Outlined" Color="Color.Secondary" StartIcon="@Icons.Material.Filled.Tune"
+                   Href="@($"/experiments/{ExperimentId}/hypothesis-batches/{BatchId}/edit")">
+            Batch settings
+        </MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Add"
+                   Href="@($"/experiments/{ExperimentId}/hypothesis-batches/{BatchId}/hypotheses/new")">
+            New Hypothesis
+        </MudButton>
+    </MudStack>
+
+    @if (_run != null)
+    {
+        <MudText Typo="Typo.subtitle1" Class="mb-4" Color="Color.Default">
+            Batch #@((int)(object)_run.Id) &mdash; Created @_run.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd")
+            @if (!string.IsNullOrEmpty(_run.Hints))
+            {
+                <text> &mdash; @_run.Hints</text>
+            }
+            @if (_run.AiProviderUsed.HasValue)
+            {
+                <text> &mdash; @_run.AiProviderUsed @(_run.AiModelUsed ?? "")</text>
+            }
+        </MudText>
+    }
+
+    @if (_stats != null)
+    {
+        <MudGrid Class="mb-4">
+            <MudItem xs="12" sm="3">
+                <MudPaper Elevation="2" Class="pa-4 rounded-lg d-flex flex-column align-center">
+                    <MudText Typo="Typo.h4" Color="Color.Primary">@_stats.TotalHypotheses</MudText>
+                    <MudText Typo="Typo.caption">Total Hypotheses</MudText>
+                </MudPaper>
+            </MudItem>
+            <MudItem xs="12" sm="3">
+                <MudPaper Elevation="2" Class="pa-4 rounded-lg d-flex flex-column align-center">
+                    <MudText Typo="Typo.h4" Color="Color.Success">@_stats.Improvements</MudText>
+                    <MudText Typo="Typo.caption">Improvements</MudText>
+                </MudPaper>
+            </MudItem>
+            <MudItem xs="12" sm="3">
+                <MudPaper Elevation="2" Class="pa-4 rounded-lg d-flex flex-column align-center">
+                    <MudText Typo="Typo.h4" Color="Color.Error">@_stats.Regressions</MudText>
+                    <MudText Typo="Typo.caption">Regressions</MudText>
+                </MudPaper>
+            </MudItem>
+            <MudItem xs="12" sm="3">
+                <MudPaper Elevation="2" Class="pa-4 rounded-lg d-flex flex-column align-center">
+                    <MudText Typo="Typo.h4" Color="Color.Info">@FormatTime(_stats.TotalTimeMs)</MudText>
+                    <MudText Typo="Typo.caption">Total Time</MudText>
+                </MudPaper>
+            </MudItem>
+        </MudGrid>
+    }
+
+    @if (_hypothesisChartSeries.Count > 0)
+    {
+        <MudCard Elevation="3" Class="rounded-lg mb-4">
+            <MudCardHeader>
+                <CardHeaderContent>
+                    <MudText Typo="Typo.h6">Improvement % per Hypothesis</MudText>
+                </CardHeaderContent>
+            </MudCardHeader>
+            <MudCardContent>
+                <MudChart T="double" ChartType="ChartType.Bar"
+                          ChartSeries="@_hypothesisChartSeries"
+                          x-axis-labels="@_chartLabels" Width="100%" Height="250px" />
+            </MudCardContent>
+        </MudCard>
+    }
+
+    <MudTable @ref="_table" T="Hypothesis" ServerData="LoadServerData" Hover="true" Elevation="3"
+              Dense="true" FixedHeader="true" MultiSelection="true" @bind-SelectedItems="_selectedItems"
+              OnRowClick="OnRowClick" RowClass="cursor-pointer" Class="rounded-lg">
+        <HeaderContent>
+            <MudTh><MudTableSortLabel SortLabel="Id" T="Hypothesis">#</MudTableSortLabel></MudTh>
+            <MudTh><MudTableSortLabel SortLabel="Hypothesis" T="Hypothesis">Hypothesis</MudTableSortLabel></MudTh>
+            <MudTh><MudTableSortLabel SortLabel="Improvement" T="Hypothesis">Improvement</MudTableSortLabel></MudTh>
+            <MudTh>Builds On</MudTh>
+            <MudTh><MudTableSortLabel SortLabel="TimeUsedMs" T="Hypothesis">Time Used</MudTableSortLabel></MudTh>
+            <MudTh><MudTableSortLabel SortLabel="CreatedAt" T="Hypothesis">Created</MudTableSortLabel></MudTh>
+            <MudTh Style="width: 80px;">Actions</MudTh>
+        </HeaderContent>
+        <RowTemplate>
+            <MudTd DataLabel="#">@((int)(object)context.Id)</MudTd>
+            <MudTd DataLabel="Hypothesis">
+                <MudText Typo="Typo.body2" Style="max-width:300px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
+                    @(context.Description ?? "--")
+                </MudText>
+            </MudTd>
+            <MudTd DataLabel="Improvement">
+                @{
+                    var pct = context.ImpovementPercentage;
+                    var deltaColor = pct > 0 ? Color.Success : (pct < 0 ? Color.Error : Color.Default);
+                }
+                <MudChip T="string" Size="Size.Small" Color="@deltaColor">
+                    @(pct >= 0 ? "+" : "")@pct.ToString("F1")%
+                </MudChip>
+            </MudTd>
+            <MudTd DataLabel="Builds On">
+                @if (context.BuildsOnHypothesisId.HasValue)
+                {
+                    <MudLink Href="@($"/experiments/{ExperimentId}/hypothesis-batches/{BatchId}/hypotheses/{(int)(object)context.BuildsOnHypothesisId}")"
+                             Color="Color.Primary">
+                        #@((int)(object)context.BuildsOnHypothesisId)
+                    </MudLink>
+                }
+                else
+                {
+                    <MudText Typo="Typo.body2">--</MudText>
+                }
+            </MudTd>
+            <MudTd DataLabel="Time Used">@FormatTime(context.TimeUsedMs)</MudTd>
+            <MudTd DataLabel="Created">@context.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd")</MudTd>
+            <MudTd>
+                <MudIconButton Icon="@Icons.Material.Filled.Delete" Color="Color.Error" Size="Size.Small"
+                               OnClick="@(() => DeleteSingle(context))" aria-label="Delete" />
+            </MudTd>
+        </RowTemplate>
+        <NoRecordsContent>
+            <MudText Typo="Typo.body1" Class="pa-4">No hypotheses found for this batch.</MudText>
+        </NoRecordsContent>
+        <PagerContent>
+            <MudTablePager PageSizeOptions="new int[] { 20, 50, 100 }" />
+        </PagerContent>
+    </MudTable>
+</MudContainer>
+
+@code {
+    [Parameter] public int ExperimentId { get; set; }
+    [Parameter] public int BatchId { get; set; }
+
+    private readonly CancellationTokenSource _pageCts = new();
+    private HypothesisBatch? _run;
+    private MudTable<Hypothesis>? _table;
+    private HashSet<Hypothesis> _selectedItems = new();
+    private RunStats? _stats;
+    private string[] _chartLabels = Array.Empty<string>();
+    private List<ChartSeries<double>> _hypothesisChartSeries = new();
+
+    private class RunStats
+    {
+        public int TotalHypotheses { get; set; }
+        public int Improvements { get; set; }
+        public int Regressions { get; set; }
+        public long TotalTimeMs { get; set; }
+    }
+
+    public void Dispose()
+    {
+        _pageCts.Cancel();
+        _pageCts.Dispose();
+    }
+
+    protected override Task OnInitializedAsync() =>
+        PageLoadCancellation.RunPageLoadAsync(async ct =>
+        {
+            var batchId = (HypothesisBatchId)(object)BatchId;
+            _run = await DbContext.HypothesisBatches.FindAsync(new object[] { batchId }, ct);
+            await LoadStats(ct);
+            await LoadChartData(ct);
+        }, _pageCts.Token);
+
+    private async Task LoadStats(CancellationToken cancellationToken = default)
+    {
+        var batchId = (HypothesisBatchId)(object)BatchId;
+        var hypotheses = await DbContext.Hypotheses
+            .Where(h => h.HypothesisBatchId == batchId)
+            .ToListAsync(cancellationToken);
+
+        _stats = new RunStats
+        {
+            TotalHypotheses = hypotheses.Count,
+            Improvements = hypotheses.Count(h => h.ImpovementPercentage > 0),
+            Regressions = hypotheses.Count(h => h.ImpovementPercentage < 0),
+            TotalTimeMs = hypotheses.Sum(h => h.TimeUsedMs)
+        };
+    }
+
+    private async Task LoadChartData(CancellationToken cancellationToken = default)
+    {
+        var batchId = (HypothesisBatchId)(object)BatchId;
+        var hypotheses = await DbContext.Hypotheses
+            .Where(h => h.HypothesisBatchId == batchId)
+            .OrderBy(h => h.CreatedAt)
+            .Select(h => new { h.ImpovementPercentage, h.Id })
+            .ToListAsync(cancellationToken);
+
+        var data = hypotheses.Select(h => (double)h.ImpovementPercentage).ToList();
+        _chartLabels = hypotheses.Select(h => $"#{(int)(object)h.Id}").ToArray();
+        _hypothesisChartSeries = data.Count == 0
+            ? new List<ChartSeries<double>>()
+            : new List<ChartSeries<double>> { new() { Name = "Improvement %", Data = data } };
+    }
+
+    private string FormatTime(long ms)
+    {
+        if (ms < 1000) return $"{ms}ms";
+        if (ms < 60000) return $"{ms / 1000.0:F1}s";
+        return $"{ms / 60000.0:F1}m";
+    }
+
+    private Task<TableData<Hypothesis>> LoadServerData(TableState state, CancellationToken ct) =>
+        PageLoadCancellation.RunTableLoadAsync(t => LoadServerDataCore(state, t), _pageCts.Token, ct);
+
+    private async Task<TableData<Hypothesis>> LoadServerDataCore(TableState state, CancellationToken cancellationToken)
+    {
+        var batchId = (HypothesisBatchId)(object)BatchId;
+
+        IQueryable<Hypothesis> query = DbContext.Hypotheses
+            .Where(h => h.HypothesisBatchId == batchId);
+
+        query = state.SortLabel switch
+        {
+            "Id" => state.SortDirection == SortDirection.Descending ? query.OrderByDescending(x => x.Id) : query.OrderBy(x => x.Id),
+            "Hypothesis" => state.SortDirection == SortDirection.Descending ? query.OrderByDescending(x => x.Description) : query.OrderBy(x => x.Description),
+            "Improvement" => state.SortDirection == SortDirection.Descending ? query.OrderByDescending(x => x.ImpovementPercentage) : query.OrderBy(x => x.ImpovementPercentage),
+            "TimeUsedMs" => state.SortDirection == SortDirection.Descending ? query.OrderByDescending(x => x.TimeUsedMs) : query.OrderBy(x => x.TimeUsedMs),
+            "CreatedAt" => state.SortDirection == SortDirection.Descending ? query.OrderByDescending(x => x.CreatedAt) : query.OrderBy(x => x.CreatedAt),
+            _ => query.OrderByDescending(x => x.CreatedAt)
+        };
+
+        var totalItems = await query.CountAsync(cancellationToken);
+        var items = await query.Skip(state.Page * state.PageSize).Take(state.PageSize).ToListAsync(cancellationToken);
+
+        return new TableData<Hypothesis> { TotalItems = totalItems, Items = items };
+    }
+
+    private void OnRowClick(TableRowClickEventArgs<Hypothesis> args)
+    {
+        Navigation.NavigateTo($"/experiments/{ExperimentId}/hypothesis-batches/{BatchId}/hypotheses/{(int)(object)args.Item!.Id}");
+    }
+
+    private async Task DeleteSingle(Hypothesis item)
+    {
+        var confirm = await DialogService.ShowMessageBoxAsync(
+            "Confirm Delete",
+            "Delete this hypothesis?",
+            yesText: "Delete", cancelText: "Cancel");
+
+        if (confirm == true)
+        {
+            await NullOutBuildsOnReferences(item.Id);
+            DbContext.Hypotheses.Remove(item);
+            await DbContext.SaveChangesAsync();
+            Snackbar.Add("Hypothesis deleted", Severity.Success);
+            await _table!.ReloadServerData();
+            await LoadStats();
+            await LoadChartData();
+        }
+    }
+
+    private async Task DeleteSelected()
+    {
+        var confirm = await DialogService.ShowMessageBoxAsync(
+            "Confirm Delete",
+            $"Delete {_selectedItems.Count} hypothesis/hypotheses?",
+            yesText: "Delete All", cancelText: "Cancel");
+
+        if (confirm == true)
+        {
+            foreach (var item in _selectedItems)
+            {
+                await NullOutBuildsOnReferences(item.Id);
+                DbContext.Hypotheses.Remove(item);
+            }
+            await DbContext.SaveChangesAsync();
+            Snackbar.Add($"Deleted {_selectedItems.Count} hypothesis/hypotheses", Severity.Success);
+            _selectedItems.Clear();
+            await _table!.ReloadServerData();
+            await LoadStats();
+            await LoadChartData();
+        }
+    }
+
+    private async Task NullOutBuildsOnReferences(HypothesisId id)
+    {
+        var dependents = await DbContext.Hypotheses
+            .Where(h => h.BuildsOnHypothesisId == id)
+            .ToListAsync();
+        foreach (var h in dependents)
+            h.BuildsOnHypothesisId = null;
+    }
+}

@@ -1,0 +1,115 @@
+@page "/database-connections/new"
+@page "/database-connections/{Id:int}"
+@implements IDisposable
+@rendermode InteractiveServer
+@inject Tedd.AIOptimizeSql.Database.AIOptimizeDbContext DbContext
+@inject NavigationManager Navigation
+@inject ISnackbar Snackbar
+@using Microsoft.EntityFrameworkCore
+
+<PageTitle>@(_isNew ? "New" : "Edit") Database Connection</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.Medium" Class="mt-4">
+    <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-4">
+        <MudIconButton Icon="@Icons.Material.Filled.ArrowBack" OnClick="GoBack" />
+        <MudText Typo="Typo.h4">@(_isNew ? "New" : "Edit") Database Connection</MudText>
+    </MudStack>
+
+    @if (_loading)
+    {
+        <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+    }
+    else if (_model == null)
+    {
+        <MudAlert Severity="Severity.Error">Connection not found.</MudAlert>
+    }
+    else
+    {
+        <MudCard Elevation="3" Class="rounded-lg">
+            <MudCardContent>
+                <MudForm @ref="_form" @bind-IsValid="_formValid">
+                    <MudTextField @bind-Value="_model.Name" Label="Name" Required="true"
+                                  RequiredError="Name is required" MaxLength="512"
+                                  Variant="Variant.Outlined" Class="mb-4" />
+                    <MudTextField @bind-Value="_model.ConnectionString" Label="Connection String" Required="true"
+                                  RequiredError="Connection string is required" MaxLength="4000"
+                                  Lines="3" Variant="Variant.Outlined" Class="mb-4" />
+
+                    @if (!_isNew)
+                    {
+                        <MudStack Row="true" Spacing="4">
+                            <MudText Typo="Typo.caption">Created: @_model.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</MudText>
+                            <MudText Typo="Typo.caption">Modified: @_model.ModifiedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</MudText>
+                        </MudStack>
+                    }
+                </MudForm>
+            </MudCardContent>
+            <MudCardActions Class="pa-4">
+                <MudSpacer />
+                <MudButton Variant="Variant.Text" OnClick="GoBack" Class="mr-2">Cancel</MudButton>
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="@(!_formValid)"
+                           OnClick="Save" StartIcon="@Icons.Material.Filled.Save">
+                    Save
+                </MudButton>
+            </MudCardActions>
+        </MudCard>
+    }
+</MudContainer>
+
+@code {
+    [Parameter] public int? Id { get; set; }
+
+    private DatabaseConnection? _model;
+    private bool _isNew;
+    private bool _loading = true;
+    private bool _formValid;
+    private MudForm? _form;
+    private readonly CancellationTokenSource _pageCts = new();
+
+    public void Dispose()
+    {
+        _pageCts.Cancel();
+        _pageCts.Dispose();
+    }
+
+    protected override Task OnInitializedAsync() =>
+        PageLoadCancellation.RunPageLoadAsync(async ct =>
+        {
+            if (Id.HasValue)
+            {
+                _isNew = false;
+                var id = (DatabaseConnectionId)(object)Id.Value;
+                _model = await DbContext.DatabaseConnections.FindAsync(new object[] { id }, ct);
+            }
+            else
+            {
+                _isNew = true;
+                _model = new DatabaseConnection { Name = "", ConnectionString = "" };
+            }
+            _loading = false;
+        }, _pageCts.Token);
+
+    private async Task Save()
+    {
+        if (_model == null) return;
+        await _form!.ValidateAsync();
+        if (!_formValid) return;
+
+        if (_isNew)
+        {
+            _model.CreatedAt = DateTime.UtcNow;
+            _model.ModifiedAt = DateTime.UtcNow;
+            DbContext.DatabaseConnections.Add(_model);
+        }
+        else
+        {
+            _model.ModifiedAt = DateTime.UtcNow;
+        }
+
+        await DbContext.SaveChangesAsync();
+        Snackbar.Add(_isNew ? "Connection created" : "Connection saved", Severity.Success);
+        Navigation.NavigateTo("/database-connections");
+    }
+
+    private void GoBack() => Navigation.NavigateTo("/database-connections");
+}

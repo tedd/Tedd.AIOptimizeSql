@@ -1,0 +1,164 @@
+@page "/hypothesis-batches"
+@implements IDisposable
+@rendermode InteractiveServer
+@using Tedd.AIOptimizeSql.Database.DataAccess
+@inject IAIOptimizeDataAccess DataAccess
+@inject NavigationManager Navigation
+@inject IDialogService DialogService
+@inject ISnackbar Snackbar
+
+<PageTitle>Hypothesis batches</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.ExtraLarge" Class="mt-4">
+    <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-4">
+        <MudText Typo="Typo.h4">Hypothesis batches</MudText>
+        <MudSpacer />
+        @if (_selectedItems.Count > 0)
+        {
+            <MudButton Variant="Variant.Outlined" Color="Color.Error" StartIcon="@Icons.Material.Filled.Delete"
+                       OnClick="DeleteSelected" Class="mr-2">
+                Delete selected (@_selectedItems.Count)
+            </MudButton>
+        }
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Add"
+                   Href="/hypothesis-batches/new">
+            New hypothesis batch
+        </MudButton>
+    </MudStack>
+
+    <MudTable @ref="_table" T="HypothesisBatchListRow" ServerData="LoadServerData" Hover="true" Elevation="3"
+              Dense="true" FixedHeader="true" MultiSelection="true" @bind-SelectedItems="_selectedItems"
+              OnRowClick="OnRowClick" RowClass="cursor-pointer" Class="rounded-lg">
+        <HeaderContent>
+            <MudTh><MudTableSortLabel SortLabel="Id" T="HypothesisBatchListRow">Batch</MudTableSortLabel></MudTh>
+            <MudTh><MudTableSortLabel SortLabel="Experiment" T="HypothesisBatchListRow">Experiment</MudTableSortLabel></MudTh>
+            <MudTh><MudTableSortLabel SortLabel="Hypotheses" T="HypothesisBatchListRow">Hypotheses</MudTableSortLabel></MudTh>
+            <MudTh>Key result</MudTh>
+            <MudTh><MudTableSortLabel SortLabel="State" T="HypothesisBatchListRow">State</MudTableSortLabel></MudTh>
+            <MudTh><MudTableSortLabel SortLabel="StartedAt" T="HypothesisBatchListRow">Started</MudTableSortLabel></MudTh>
+            <MudTh><MudTableSortLabel SortLabel="EndedAt" T="HypothesisBatchListRow">Ended</MudTableSortLabel></MudTh>
+            <MudTh>Last message</MudTh>
+            <MudTh Style="width: 120px;">Actions</MudTh>
+        </HeaderContent>
+        <RowTemplate>
+            <MudTd DataLabel="Batch">#@((int)(object)context.Id)</MudTd>
+            <MudTd DataLabel="Experiment">
+                <span @onclick:stopPropagation="true">
+                    <MudLink Href="@($"/experiments/{(int)(object)context.ExperimentId}/edit")" Color="Color.Primary">
+                        @context.ExperimentName
+                    </MudLink>
+                </span>
+            </MudTd>
+            <MudTd DataLabel="Hypotheses">
+                <MudChip T="string" Size="Size.Small" Color="Color.Info">@context.HypothesisCount</MudChip>
+            </MudTd>
+            <MudTd DataLabel="Key result">
+                @if (context.BestImprovementPct is double best)
+                {
+                    var color = best > 0 ? Color.Success : best < 0 ? Color.Error : Color.Default;
+                    <MudText Typo="Typo.body2" Color="@color">
+                        Best @(best >= 0 ? "+" : "")@best.ToString("F1")% · @context.ImprovementCount impr.
+                    </MudText>
+                }
+                else
+                {
+                    <MudText Typo="Typo.body2" Color="Color.Default">—</MudText>
+                }
+            </MudTd>
+            <MudTd DataLabel="State">
+                <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">@context.State.ToString()</MudChip>
+            </MudTd>
+            <MudTd DataLabel="Started">@FormatNullableLocal(context.StartedAt)</MudTd>
+            <MudTd DataLabel="Ended">@FormatNullableLocal(context.EndedAt)</MudTd>
+            <MudTd DataLabel="Last message">
+                <MudText Typo="Typo.body2" Style="max-width:220px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
+                    @(context.LastMessage ?? "—")
+                </MudText>
+            </MudTd>
+            <MudTd>
+                <MudIconButton Icon="@Icons.Material.Filled.Edit" Color="Color.Primary" Size="Size.Small"
+                               Href="@($"/hypothesis-batches/{(int)(object)context.Id}/edit")"
+                               aria-label="Edit batch" />
+                <MudIconButton Icon="@Icons.Material.Filled.List" Color="Color.Info" Size="Size.Small"
+                               Href="@($"/experiments/{(int)(object)context.ExperimentId}/hypothesis-batches/{(int)(object)context.Id}")"
+                               aria-label="View hypotheses" />
+                <MudIconButton Icon="@Icons.Material.Filled.Delete" Color="Color.Error" Size="Size.Small"
+                               OnClick="@(() => DeleteSingle(context))" aria-label="Delete" />
+            </MudTd>
+        </RowTemplate>
+        <NoRecordsContent>
+            <MudText Typo="Typo.body1" Class="pa-4">No hypothesis batches yet.</MudText>
+        </NoRecordsContent>
+        <PagerContent>
+            <MudTablePager PageSizeOptions="new int[] { 20, 50, 100 }" />
+        </PagerContent>
+    </MudTable>
+</MudContainer>
+
+@code {
+    private readonly CancellationTokenSource _pageCts = new();
+    private MudTable<HypothesisBatchListRow>? _table;
+    private HashSet<HypothesisBatchListRow> _selectedItems = new();
+
+    public void Dispose()
+    {
+        _pageCts.Cancel();
+        _pageCts.Dispose();
+    }
+
+    private static ListSortDirection ToListSort(SortDirection d) =>
+        d == SortDirection.Descending ? ListSortDirection.Descending : ListSortDirection.Ascending;
+
+    private static string FormatNullableLocal(DateTime? utc) =>
+        utc.HasValue ? utc.Value.ToLocalTime().ToString("yyyy-MM-dd HH:mm") : "—";
+
+    private Task<TableData<HypothesisBatchListRow>> LoadServerData(TableState state, CancellationToken ct) =>
+        PageLoadCancellation.RunTableLoadAsync(t => LoadServerDataCore(state, t), _pageCts.Token, ct);
+
+    private async Task<TableData<HypothesisBatchListRow>> LoadServerDataCore(TableState state, CancellationToken cancellationToken)
+    {
+        var (items, total) = await DataAccess.GetHypothesisBatchesPageAsync(
+            state.Page * state.PageSize,
+            state.PageSize,
+            state.SortLabel,
+            ToListSort(state.SortDirection),
+            cancellationToken);
+
+        return new TableData<HypothesisBatchListRow> { TotalItems = total, Items = items.ToList() };
+    }
+
+    private void OnRowClick(TableRowClickEventArgs<HypothesisBatchListRow> args) =>
+        Navigation.NavigateTo($"/hypothesis-batches/{(int)(object)args.Item!.Id}/edit");
+
+    private async Task DeleteSingle(HypothesisBatchListRow row)
+    {
+        var confirm = await DialogService.ShowMessageBoxAsync(
+            "Confirm delete",
+            "Delete this hypothesis batch and all its hypotheses?",
+            yesText: "Delete", cancelText: "Cancel");
+
+        if (confirm == true)
+        {
+            await DataAccess.DeleteHypothesisBatchAsync(row.Id);
+            Snackbar.Add("Hypothesis batch deleted", Severity.Success);
+            await _table!.ReloadServerData();
+        }
+    }
+
+    private async Task DeleteSelected()
+    {
+        var confirm = await DialogService.ShowMessageBoxAsync(
+            "Confirm delete",
+            $"Delete {_selectedItems.Count} hypothesis batch(es) and all hypotheses?",
+            yesText: "Delete all", cancelText: "Cancel");
+
+        if (confirm == true)
+        {
+            foreach (var row in _selectedItems)
+                await DataAccess.DeleteHypothesisBatchAsync(row.Id);
+            Snackbar.Add($"Deleted {_selectedItems.Count} batch(es)", Severity.Success);
+            _selectedItems.Clear();
+            await _table!.ReloadServerData();
+        }
+    }
+}

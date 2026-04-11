@@ -1,0 +1,7 @@
+﻿@rendermode InteractiveServer
+
+<Router AppAssembly="typeof(Program).Assembly" NotFoundPage="typeof(Pages.NotFound)">
+    <Found Context="routeData">
+        <DatabaseRouteGuard RouteData="routeData" />
+    </Found>
+</Router>

@@ -1,0 +1,298 @@
+@page "/hypothesis-batches/new"
+@page "/hypothesis-batches/{BatchId:int}/edit"
+@page "/experiments/{ExperimentId:int}/hypothesis-batches/new"
+@page "/experiments/{ExperimentId:int}/hypothesis-batches/{BatchId:int}/edit"
+@implements IDisposable
+@rendermode InteractiveServer
+@using Microsoft.EntityFrameworkCore
+@using Tedd.AIOptimizeSql.Database
+@using Tedd.AIOptimizeSql.Database.DataAccess
+@inject AIOptimizeDbContext DbContext
+@inject IAIOptimizeDataAccess DataAccess
+@inject NavigationManager Navigation
+@inject ISnackbar Snackbar
+
+<PageTitle>@(_isNew ? "New" : "Edit") hypothesis batch</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.Medium" Class="mt-4">
+    <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-4">
+        <MudIconButton Icon="@Icons.Material.Filled.ArrowBack" OnClick="GoBack" />
+        <MudText Typo="Typo.h4">@(_isNew ? "New" : "Edit") hypothesis batch</MudText>
+    </MudStack>
+
+    @if (_loading)
+    {
+        <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+    }
+    else if (_isNew && _experiments.Count == 0)
+    {
+        <MudAlert Severity="Severity.Warning" Class="mb-4">
+            Create an experiment before adding a hypothesis batch.
+            <MudLink Href="/experiments/new" Color="Color.Primary">New experiment</MudLink>
+        </MudAlert>
+    }
+    else if (!_isNew && _batch == null)
+    {
+        <MudAlert Severity="Severity.Error">Hypothesis batch not found.</MudAlert>
+    }
+    else
+    {
+        <MudCard Elevation="3" Class="rounded-lg">
+            <MudCardContent>
+                <MudForm @ref="_form" @bind-IsValid="_formValid">
+                    @if (_isNew && !ExperimentIdFromRoute.HasValue)
+                    {
+                        <MudSelect T="ExperimentId?" @bind-Value="_selectedExperimentId" Label="Experiment"
+                                   Variant="Variant.Outlined" Class="mb-4" Required="true"
+                                   RequiredError="Choose an experiment">
+                            @foreach (var e in _experiments)
+                            {
+                                <MudSelectItem Value="@((ExperimentId?)e.Id)">@e.Name</MudSelectItem>
+                            }
+                        </MudSelect>
+                    }
+                    else if (_isNew && ExperimentIdFromRoute.HasValue)
+                    {
+                        <MudText Typo="Typo.body1" Class="mb-4">
+                            Experiment: <strong>@_experimentName</strong>
+                        </MudText>
+                    }
+                    else if (_batch != null)
+                    {
+                        <MudText Typo="Typo.body1" Class="mb-2">
+                            Experiment:
+                            <MudLink Href="@($"/experiments/{(int)(object)_batch.ExperimentId}/edit")">@_batch.Experiment?.Name</MudLink>
+                        </MudText>
+                        <MudDivider Class="mb-4" />
+                        <MudStack Spacing="2" Class="mb-4">
+                            <MudText Typo="Typo.subtitle2">Status</MudText>
+                            <MudText Typo="Typo.body2">State: <strong>@_batch.State</strong></MudText>
+                            <MudText Typo="Typo.body2">Started: @FormatNullable(_batch.StartedAt)</MudText>
+                            <MudText Typo="Typo.body2">Ended: @FormatNullable(_batch.EndedAt)</MudText>
+                            <MudText Typo="Typo.body2">Last message: @(_batch.LastMessage ?? "—")</MudText>
+                            <MudText Typo="Typo.body2">
+                                AI snapshot: @(_batch.AiProviderUsed?.ToString() ?? "—") / @(_batch.AiModelUsed ?? "—")
+                                @if (_batch.AIConnection is { } ac)
+                                {
+                                    <text> (</text>
+                                    <MudLink Href="@($"/ai-connections/{(int)(object)ac.Id}")">@ac.Name</MudLink>
+                                    <text>)</text>
+                                }
+                            </MudText>
+                        </MudStack>
+                    }
+
+                    <MudTextField @bind-Value="_hints" Label="Hints" Lines="3" Variant="Variant.Outlined" Class="mb-4"
+                                  HelperText="Optional guidance for the optimizer" />
+
+                    <MudNumericField @bind-Value="_maxHypotheses" Label="Max number of hypotheses" Variant="Variant.Outlined"
+                                     Min="1" Max="10000" Class="mb-4" Required="true" />
+                </MudForm>
+            </MudCardContent>
+            <MudCardActions Class="pa-4 flex-wrap" Style="gap: 8px;">
+                @if (!_isNew && _batch != null)
+                {
+                    <MudButton Variant="Variant.Outlined" Color="Color.Primary" StartIcon="@Icons.Material.Filled.List"
+                               Href="@($"/experiments/{(int)(object)_batch.ExperimentId}/hypothesis-batches/{(int)(object)_batch.Id}")">
+                        View hypotheses
+                    </MudButton>
+                    <MudButton Variant="Variant.Outlined" Color="Color.Warning" StartIcon="@Icons.Material.Filled.Pause"
+                               OnClick="@(() => SetState(HypothesisBatchState.Paused))" Disabled="@_busy">
+                        Pause
+                    </MudButton>
+                    <MudButton Variant="Variant.Outlined" Color="Color.Error" StartIcon="@Icons.Material.Filled.Stop"
+                               OnClick="@(() => SetState(HypothesisBatchState.Stopped))" Disabled="@_busy">
+                        Stop
+                    </MudButton>
+                    <MudButton Variant="Variant.Outlined" Color="Color.Info" StartIcon="@Icons.Material.Filled.Queue"
+                               OnClick="@(() => SetState(HypothesisBatchState.Queued))" Disabled="@_busy">
+                        Queue
+                    </MudButton>
+                }
+                <MudSpacer />
+                <MudButton Variant="Variant.Text" OnClick="GoBack" Disabled="@_busy">Cancel</MudButton>
+                @if (_isNew)
+                {
+                    <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="@(!_formValid || _busy)"
+                               OnClick="@(() => SaveAsync(runAfter: false))" StartIcon="@Icons.Material.Filled.Save">
+                        Save
+                    </MudButton>
+                    <MudButton Variant="Variant.Filled" Color="Color.Success" Disabled="@(!_formValid || _busy)"
+                               OnClick="@(() => SaveAsync(runAfter: true))" StartIcon="@Icons.Material.Filled.PlayArrow">
+                        Save and run
+                    </MudButton>
+                }
+                else
+                {
+                    <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="@(!_formValid || _busy)"
+                               OnClick="@(() => SaveAsync(runAfter: false))" StartIcon="@Icons.Material.Filled.Save">
+                        Save
+                    </MudButton>
+                }
+            </MudCardActions>
+        </MudCard>
+    }
+</MudContainer>
+
+@code {
+    [Parameter] public int? ExperimentId { get; set; }
+    [Parameter] public int? BatchId { get; set; }
+
+    private HypothesisBatch? _batch;
+    private bool _isNew;
+    private bool _loading = true;
+    private bool _busy;
+    private bool _formValid;
+    private MudForm? _form;
+    private string? _hints;
+    private int _maxHypotheses = 10;
+    private List<Experiment> _experiments = new();
+    private ExperimentId? _selectedExperimentId;
+    private string _experimentName = "";
+
+    private int? ExperimentIdFromRoute => ExperimentId;
+
+    private CancellationTokenSource? _loadCts;
+
+    private CancellationToken StartNewLoad()
+    {
+        _loadCts?.Cancel();
+        _loadCts?.Dispose();
+        _loadCts = new CancellationTokenSource();
+        return _loadCts.Token;
+    }
+
+    public void Dispose()
+    {
+        _loadCts?.Cancel();
+        _loadCts?.Dispose();
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        var ct = StartNewLoad();
+        _loading = true;
+        _batch = null;
+        _isNew = !BatchId.HasValue;
+
+        try
+        {
+            _experiments = await DbContext.Experiments.OrderBy(e => e.Name).ToListAsync(ct);
+
+            if (_isNew)
+            {
+                if (ExperimentIdFromRoute.HasValue)
+                {
+                    var eid = (ExperimentId)(object)ExperimentIdFromRoute.Value;
+                    var exp = _experiments.FirstOrDefault(e => e.Id == eid);
+                    _selectedExperimentId = eid;
+                    _experimentName = exp?.Name ?? $"#{ExperimentIdFromRoute.Value}";
+                }
+                else
+                    _selectedExperimentId = _experiments.FirstOrDefault()?.Id;
+            }
+            else
+            {
+                var bid = (HypothesisBatchId)(object)BatchId!.Value;
+                _batch = await DataAccess.GetHypothesisBatchForEditAsync(bid, ct);
+                if (_batch != null)
+                {
+                    if (ExperimentIdFromRoute.HasValue)
+                    {
+                        var expected = (ExperimentId)(object)ExperimentIdFromRoute.Value;
+                        if (_batch.ExperimentId != expected)
+                        {
+                            _batch = null;
+                            Snackbar.Add("Batch does not belong to this experiment.", Severity.Error);
+                        }
+                    }
+
+                    if (_batch != null)
+                    {
+                        _hints = _batch.Hints;
+                        _maxHypotheses = _batch.MaxNumberOfHypotheses;
+                    }
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        finally
+        {
+            if (!ct.IsCancellationRequested)
+                _loading = false;
+        }
+    }
+
+    private static string FormatNullable(DateTime? utc) =>
+        utc.HasValue ? utc.Value.ToLocalTime().ToString("yyyy-MM-dd HH:mm") : "—";
+
+    private ExperimentId? ResolveExperimentIdForCreate()
+    {
+        if (ExperimentIdFromRoute.HasValue)
+            return (ExperimentId)(object)ExperimentIdFromRoute.Value;
+        return _selectedExperimentId;
+    }
+
+    private async Task SaveAsync(bool runAfter)
+    {
+        await _form!.ValidateAsync();
+        if (!_formValid || _busy) return;
+
+        _busy = true;
+        try
+        {
+            if (_isNew)
+            {
+                var expId = ResolveExperimentIdForCreate();
+                if (expId is null)
+                {
+                    Snackbar.Add("Select an experiment.", Severity.Warning);
+                    return;
+                }
+
+                var newId = await DataAccess.CreateHypothesisBatchAsync(expId.Value, _hints, _maxHypotheses);
+                if (runAfter)
+                    await DataAccess.BeginHypothesisBatchRunAsync(newId);
+
+                Snackbar.Add(runAfter ? "Batch created and run started" : "Batch created", Severity.Success);
+                Navigation.NavigateTo($"/hypothesis-batches/{(int)(object)newId}/edit");
+            }
+            else if (_batch != null)
+            {
+                await DataAccess.UpdateHypothesisBatchEditableFieldsAsync(_batch.Id, _hints, _maxHypotheses);
+                Snackbar.Add("Saved", Severity.Success);
+                _batch = await DataAccess.GetHypothesisBatchForEditAsync(_batch.Id);
+            }
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task SetState(HypothesisBatchState state)
+    {
+        if (_batch == null || _busy) return;
+        _busy = true;
+        try
+        {
+            await DataAccess.SetHypothesisBatchStateAsync(_batch.Id, state);
+            _batch = await DataAccess.GetHypothesisBatchForEditAsync(_batch.Id);
+            Snackbar.Add($"State set to {state}", Severity.Info);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private void GoBack()
+    {
+        if (ExperimentIdFromRoute.HasValue)
+            Navigation.NavigateTo($"/experiments/{ExperimentIdFromRoute.Value}/hypothesis-batches");
+        else
+            Navigation.NavigateTo("/hypothesis-batches");
+    }
+}
