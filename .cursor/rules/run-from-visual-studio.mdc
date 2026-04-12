@@ -1,0 +1,13 @@
+---
+description: >-
+  Do not start the application from the agent; the user runs it from Visual Studio.
+alwaysApply: true
+---
+
+# Application startup: Visual Studio only
+
+Do **not** start the application yourself (for example `dotnet run`, `dotnet watch`, Aspire AppHost, or launching the WebUI project from the terminal).
+
+The user **always** runs the app from **Visual Studio**. You may build or test with non-interactive commands when the user asks, but do not spin up the running app or dev server unless they explicitly request a specific command.
+
+If something needs a running instance (manual verification, browser testing), describe what to run in Visual Studio or ask the user to start it, then proceed once it is up.

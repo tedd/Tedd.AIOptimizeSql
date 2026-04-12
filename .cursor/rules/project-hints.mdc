@@ -1,0 +1,15 @@
+---
+description: >-
+  Read .cursor/project-hints.md before long build/CLI retry loops; append
+  ultra-short bullets when a non-obvious fix is earned through retries.
+alwaysApply: true
+---
+
+# Project hints (agent)
+
+This solution is iterated over a long time—**preserve earned knowledge**.
+
+1. **Before** many retries on the same build, test, or tool command, **skim** `.cursor/project-hints.md`.
+2. After **several failed attempts** you find a **non-obvious** fix (locks, config, flags, paths, environment), **append one line** to that file.
+3. **Format:** `- ` + single line, **≤ ~120 characters**, no paragraph. Skip typos and one-shot mistakes. Do not duplicate an existing hint; update the closest line if the tip changes.
+4. If the fix is a **repeatable multi-step workflow** (not a one-liner), add or update a **skill** under `.cursor/skills/` instead of (or in addition to) a hint.

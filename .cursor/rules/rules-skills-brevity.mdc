@@ -1,0 +1,12 @@
+---
+description: >-
+  Rules: narrow target. Skills: clear one-liner purpose. Few words—context cost adds up.
+alwaysApply: true
+---
+
+# Rules & skills: small target, few words
+
+- **Rule:** Smallest scope that still works—`globs` + `alwaysApply: false` when you can. One topic per file. No essay.
+- **Skill:** First lines must say **when to load** and **what it does**. Same: one job per skill.
+- **Skill bad or wrong?** Say so: suggest edit or delete. **Do not** change or remove a skill unless user **explicitly** allows it.
+- **Voice:** Caveman OK. Short bullets. No filler. Long context = bad over time.
