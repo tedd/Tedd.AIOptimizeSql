@@ -1,5 +1,4 @@
-@page "/experiments/{ExperimentId:int}/hypothesis-batches/{BatchId:int}"
-@implements IDisposable
+@page "/profiles/{ExperimentId:int}/runs/{RunId:int}"
 @rendermode InteractiveServer
 @inject Tedd.AIOptimizeSql.Database.AIOptimizeDbContext DbContext
 @inject NavigationManager Navigation
@@ -12,7 +11,7 @@
 <MudContainer MaxWidth="MaxWidth.ExtraLarge" Class="mt-4">
     <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-2">
         <MudIconButton Icon="@Icons.Material.Filled.ArrowBack"
-                       OnClick="@(() => Navigation.NavigateTo($"/experiments/{ExperimentId}/hypothesis-batches"))" />
+                       OnClick="@(() => Navigation.NavigateTo($"/profiles/{ExperimentId}/runs"))" />
         <MudText Typo="Typo.h4">Hypotheses</MudText>
         <MudSpacer />
         @if (_selectedItems.Count > 0)
@@ -22,12 +21,8 @@
                 Delete Selected (@_selectedItems.Count)
             </MudButton>
         }
-        <MudButton Variant="Variant.Outlined" Color="Color.Secondary" StartIcon="@Icons.Material.Filled.Tune"
-                   Href="@($"/experiments/{ExperimentId}/hypothesis-batches/{BatchId}/edit")">
-            Batch settings
-        </MudButton>
         <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Add"
-                   Href="@($"/experiments/{ExperimentId}/hypothesis-batches/{BatchId}/hypotheses/new")">
+                   Href="@($"/profiles/{ExperimentId}/runs/{RunId}/hypotheses/new")">
             New Hypothesis
         </MudButton>
     </MudStack>
@@ -35,14 +30,10 @@
     @if (_run != null)
     {
         <MudText Typo="Typo.subtitle1" Class="mb-4" Color="Color.Default">
-            Batch #@((int)(object)_run.Id) &mdash; Created @_run.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd")
+            Run #@((int)(object)_run.Id) &mdash; Created @_run.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd")
             @if (!string.IsNullOrEmpty(_run.Hints))
             {
                 <text> &mdash; @_run.Hints</text>
-            }
-            @if (_run.AiProviderUsed.HasValue)
-            {
-                <text> &mdash; @_run.AiProviderUsed @(_run.AiModelUsed ?? "")</text>
             }
         </MudText>
     }
@@ -100,6 +91,8 @@
             <MudTh><MudTableSortLabel SortLabel="Id" T="Hypothesis">#</MudTableSortLabel></MudTh>
             <MudTh><MudTableSortLabel SortLabel="Hypothesis" T="Hypothesis">Hypothesis</MudTableSortLabel></MudTh>
             <MudTh><MudTableSortLabel SortLabel="Improvement" T="Hypothesis">Improvement</MudTableSortLabel></MudTh>
+            <MudTh><MudTableSortLabel SortLabel="AiProvider" T="Hypothesis">AI Provider</MudTableSortLabel></MudTh>
+            <MudTh>Model</MudTh>
             <MudTh>Builds On</MudTh>
             <MudTh><MudTableSortLabel SortLabel="TimeUsedMs" T="Hypothesis">Time Used</MudTableSortLabel></MudTh>
             <MudTh><MudTableSortLabel SortLabel="CreatedAt" T="Hypothesis">Created</MudTableSortLabel></MudTh>
@@ -121,10 +114,12 @@
                     @(pct >= 0 ? "+" : "")@pct.ToString("F1")%
                 </MudChip>
             </MudTd>
+            <MudTd DataLabel="AI Provider">@(_run?.AiProviderUsed?.ToString() ?? "--")</MudTd>
+            <MudTd DataLabel="Model">@(_run?.AiModelUsed ?? "--")</MudTd>
             <MudTd DataLabel="Builds On">
                 @if (context.BuildsOnHypothesisId.HasValue)
                 {
-                    <MudLink Href="@($"/experiments/{ExperimentId}/hypothesis-batches/{BatchId}/hypotheses/{(int)(object)context.BuildsOnHypothesisId}")"
+                    <MudLink Href="@($"/profiles/{ExperimentId}/runs/{RunId}/hypotheses/{(int)(object)context.BuildsOnHypothesisId}")"
                              Color="Color.Primary">
                         #@((int)(object)context.BuildsOnHypothesisId)
                     </MudLink>
@@ -142,7 +137,7 @@
             </MudTd>
         </RowTemplate>
         <NoRecordsContent>
-            <MudText Typo="Typo.body1" Class="pa-4">No hypotheses found for this batch.</MudText>
+            <MudText Typo="Typo.body1" Class="pa-4">No hypotheses found for this run.</MudText>
         </NoRecordsContent>
         <PagerContent>
             <MudTablePager PageSizeOptions="new int[] { 20, 50, 100 }" />
@@ -152,9 +147,8 @@
 
 @code {
     [Parameter] public int ExperimentId { get; set; }
-    [Parameter] public int BatchId { get; set; }
+    [Parameter] public int RunId { get; set; }
 
-    private readonly CancellationTokenSource _pageCts = new();
     private HypothesisBatch? _run;
     private MudTable<Hypothesis>? _table;
     private HashSet<Hypothesis> _selectedItems = new();
@@ -162,27 +156,20 @@
     private string[] _chartLabels = Array.Empty<string>();
     private List<ChartSeries<double>> _hypothesisChartSeries = new();
 
-    public void Dispose()
+    protected override async Task OnInitializedAsync()
     {
-        _pageCts.Cancel();
-        _pageCts.Dispose();
+        var runId = (HypothesisBatchId)(object)RunId;
+        _run = await DbContext.HypothesisBatches.FindAsync(runId);
+        await LoadStats();
+        await LoadChartData();
     }
 
-    protected override Task OnInitializedAsync() =>
-        PageLoadCancellation.RunPageLoadAsync(async ct =>
-        {
-            var batchId = (HypothesisBatchId)(object)BatchId;
-            _run = await DbContext.HypothesisBatches.FindAsync(new object[] { batchId }, ct);
-            await LoadStats(ct);
-            await LoadChartData(ct);
-        }, _pageCts.Token);
-
-    private async Task LoadStats(CancellationToken cancellationToken = default)
+    private async Task LoadStats()
     {
-        var batchId = (HypothesisBatchId)(object)BatchId;
+        var runId = (HypothesisBatchId)(object)RunId;
         var hypotheses = await DbContext.Hypotheses
-            .Where(h => h.HypothesisBatchId == batchId)
-            .ToListAsync(cancellationToken);
+            .Where(h => h.HypothesisBatchId == runId)
+            .ToListAsync();
 
         _stats = HypothesisBatchRunStatsMapper.ToViewModel(new HypothesisBatchRunStatsSource(
             hypotheses.Count,
@@ -191,14 +178,14 @@
             hypotheses.Sum(h => h.TimeUsedMs)));
     }
 
-    private async Task LoadChartData(CancellationToken cancellationToken = default)
+    private async Task LoadChartData()
     {
-        var batchId = (HypothesisBatchId)(object)BatchId;
+        var runId = (HypothesisBatchId)(object)RunId;
         var hypotheses = await DbContext.Hypotheses
-            .Where(h => h.HypothesisBatchId == batchId)
+            .Where(h => h.HypothesisBatchId == runId)
             .OrderBy(h => h.CreatedAt)
             .Select(h => new { h.ImpovementPercentage, h.Id })
-            .ToListAsync(cancellationToken);
+            .ToListAsync();
 
         var data = hypotheses.Select(h => (double)h.ImpovementPercentage).ToList();
         _chartLabels = hypotheses.Select(h => $"#{(int)(object)h.Id}").ToArray();
@@ -214,35 +201,33 @@
         return $"{ms / 60000.0:F1}m";
     }
 
-    private Task<TableData<Hypothesis>> LoadServerData(TableState state, CancellationToken ct) =>
-        PageLoadCancellation.RunTableLoadAsync(t => LoadServerDataCore(state, t), _pageCts.Token, ct);
-
-    private async Task<TableData<Hypothesis>> LoadServerDataCore(TableState state, CancellationToken cancellationToken)
+    private async Task<TableData<Hypothesis>> LoadServerData(TableState state, CancellationToken ct)
     {
-        var batchId = (HypothesisBatchId)(object)BatchId;
+        var runId = (HypothesisBatchId)(object)RunId;
 
         IQueryable<Hypothesis> query = DbContext.Hypotheses
-            .Where(h => h.HypothesisBatchId == batchId);
+            .Where(h => h.HypothesisBatchId == runId);
 
         query = state.SortLabel switch
         {
             "Id" => state.SortDirection == SortDirection.Descending ? query.OrderByDescending(x => x.Id) : query.OrderBy(x => x.Id),
             "Hypothesis" => state.SortDirection == SortDirection.Descending ? query.OrderByDescending(x => x.Description) : query.OrderBy(x => x.Description),
             "Improvement" => state.SortDirection == SortDirection.Descending ? query.OrderByDescending(x => x.ImpovementPercentage) : query.OrderBy(x => x.ImpovementPercentage),
+            "AiProvider" => state.SortDirection == SortDirection.Descending ? query.OrderByDescending(x => x.HypothesisBatch!.AiProviderUsed) : query.OrderBy(x => x.HypothesisBatch!.AiProviderUsed),
             "TimeUsedMs" => state.SortDirection == SortDirection.Descending ? query.OrderByDescending(x => x.TimeUsedMs) : query.OrderBy(x => x.TimeUsedMs),
             "CreatedAt" => state.SortDirection == SortDirection.Descending ? query.OrderByDescending(x => x.CreatedAt) : query.OrderBy(x => x.CreatedAt),
             _ => query.OrderByDescending(x => x.CreatedAt)
         };
 
-        var totalItems = await query.CountAsync(cancellationToken);
-        var items = await query.Skip(state.Page * state.PageSize).Take(state.PageSize).ToListAsync(cancellationToken);
+        var totalItems = await query.CountAsync(ct);
+        var items = await query.Skip(state.Page * state.PageSize).Take(state.PageSize).ToListAsync(ct);
 
         return new TableData<Hypothesis> { TotalItems = totalItems, Items = items };
     }
 
     private void OnRowClick(TableRowClickEventArgs<Hypothesis> args)
     {
-        Navigation.NavigateTo($"/experiments/{ExperimentId}/hypothesis-batches/{BatchId}/hypotheses/{(int)(object)args.Item!.Id}");
+        Navigation.NavigateTo($"/profiles/{ExperimentId}/runs/{RunId}/hypotheses/{(int)(object)args.Item!.Id}");
     }
 
     private async Task DeleteSingle(Hypothesis item)

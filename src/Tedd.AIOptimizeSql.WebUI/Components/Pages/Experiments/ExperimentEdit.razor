@@ -28,84 +28,81 @@
         <MudCard Elevation="3" Class="rounded-lg">
             <MudCardContent>
                 <MudForm @ref="_form" @bind-IsValid="_formValid">
-                    <MudTextField @bind-Value="_model.Name" Label="Name" Required="true"
-                                  RequiredError="Name is required" MaxLength="1024"
-                                  Variant="Variant.Outlined" Class="mb-4" />
+                    <MudTabs @bind-ActivePanelIndex="_activeTabIndex" Rounded="true" Border="true" Class="mb-2">
+                        <MudTabPanel Text="Details">
+                            <MudStack Spacing="0" Class="pt-4">
+                                <MudTextField @bind-Value="_model.Name" Label="Name" Required="true"
+                                              RequiredError="Name is required" MaxLength="1024"
+                                              Variant="Variant.Outlined" Class="mb-4" />
 
-                    <MudTextField @bind-Value="_model.Description" Label="Description"
-                                  Lines="2" Variant="Variant.Outlined" Class="mb-4"
-                                  HelperText="Human-readable description (not used by AI)" />
+                                <MudTextField @bind-Value="_model.Description" Label="Description"
+                                              Lines="2" Variant="Variant.Outlined" Class="mb-4"
+                                              HelperText="Human-readable description (not used by AI)" />
 
-                    <MudSelect T="DatabaseConnectionId?" @bind-Value="_selectedDbConnId" Label="Database Connection"
-                               Variant="Variant.Outlined" Class="mb-4" Clearable="true"
-                               HelperText="Target database for optimization">
-                        @foreach (var conn in _dbConnections)
-                        {
-                            <MudSelectItem Value="@((DatabaseConnectionId?)conn.Id)">@conn.Name</MudSelectItem>
-                        }
-                    </MudSelect>
+                                <MudSelect T="DatabaseConnectionId?" @bind-Value="_selectedDbConnId" Label="Database Connection"
+                                           Variant="Variant.Outlined" Class="mb-4" Clearable="true"
+                                           HelperText="Target database for optimization">
+                                    @foreach (var conn in _dbConnections)
+                                    {
+                                        <MudSelectItem Value="@((DatabaseConnectionId?)conn.Id)">@conn.Name</MudSelectItem>
+                                    }
+                                </MudSelect>
 
-                    <MudSelect T="AIConnectionId?" @bind-Value="_selectedAiConnId" Label="AI Connection"
-                               Variant="Variant.Outlined" Class="mb-4" Clearable="true"
-                               HelperText="AI provider for optimization">
-                        @foreach (var conn in _aiConnections)
-                        {
-                            <MudSelectItem Value="@((AIConnectionId?)conn.Id)">@conn.Name (@conn.Provider / @conn.Model)</MudSelectItem>
-                        }
-                    </MudSelect>
+                                <MudSelect T="AIConnectionId?" @bind-Value="_selectedAiConnId" Label="AI Connection"
+                                           Variant="Variant.Outlined" Class="mb-4" Clearable="true"
+                                           HelperText="AI provider for optimization">
+                                    @foreach (var conn in _aiConnections)
+                                    {
+                                        <MudSelectItem Value="@((AIConnectionId?)conn.Id)">@conn.Name (@conn.Provider / @conn.Model)</MudSelectItem>
+                                    }
+                                </MudSelect>
 
-                    <MudTextField @bind-Value="_model.Instructions" Label="AI Instructions"
-                                  Lines="3" Variant="Variant.Outlined" Class="mb-4"
-                                  HelperText="Instructions for the AI optimizer" />
+                                <MudTextField @bind-Value="_model.Instructions" Label="AI Instructions"
+                                              Lines="3" Variant="Variant.Outlined" Class="mb-4"
+                                              HelperText="Instructions for the AI optimizer" />
 
-                    <MudExpansionPanels MultiExpansion="true" Class="mb-4">
-                        <MudExpansionPanel Text="SQL Scripts" MaxHeight="500">
-                            <MudTextField @bind-Value="_model.ExperimentPreRunSql" Label="Pre-Run SQL"
-                                          Lines="3" Variant="Variant.Outlined" Class="mb-4"
-                                          HelperText="Executed before optimization starts" />
+                                @if (!_isNew)
+                                {
+                                    <MudStack Row="true" Spacing="4" Class="mb-4">
+                                        <MudText Typo="Typo.caption">Created: @_model.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</MudText>
+                                        <MudText Typo="Typo.caption">Modified: @_model.ModifiedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</MudText>
+                                    </MudStack>
+                                }
 
-                            <MudTextField @bind-Value="_model.ExperimentPostRunSql" Label="Post-Run SQL"
-                                          Lines="3" Variant="Variant.Outlined" Class="mb-4"
-                                          HelperText="Executed after each run" />
+                                @TabActions(showHypothesisBatchesLink: true)
+                            </MudStack>
+                        </MudTabPanel>
 
-                            <MudTextField @bind-Value="_model.HypothesisPreRunSql" Label="Hypothesis Pre-Run SQL"
-                                          Lines="3" Variant="Variant.Outlined" Class="mb-4"
-                                          HelperText="Executed before each hypothesis" />
+                        <MudTabPanel Text="SQL">
+                            <MudStack Spacing="0" Class="pt-4">
+                                <MudText Typo="Typo.subtitle2" Class="mb-2">Hypothesis SQL</MudText>
+                                <MudTextField @bind-Value="_model.HypothesisPreRunSql" Label="Hypothesis Pre-Run SQL"
+                                              Lines="3" Variant="Variant.Outlined" Class="mb-4"
+                                              HelperText="Executed before each hypothesis" />
 
-                            <MudTextField @bind-Value="_model.HypothesisPostRunSql" Label="Hypothesis Post-Run SQL"
-                                          Lines="3" Variant="Variant.Outlined" Class="mb-4"
-                                          HelperText="Executed after each hypothesis" />
+                                <MudTextField @bind-Value="_model.HypothesisPostRunSql" Label="Hypothesis Post-Run SQL"
+                                              Lines="3" Variant="Variant.Outlined" Class="mb-4"
+                                              HelperText="Executed after each hypothesis" />
 
-                            <MudTextField @bind-Value="_model.BenchmarkSql" Label="Benchmark SQL"
-                                          Lines="3" Variant="Variant.Outlined"
-                                          HelperText="SQL used to benchmark performance" />
-                        </MudExpansionPanel>
-                    </MudExpansionPanels>
+                                <MudText Typo="Typo.subtitle2" Class="mb-2 mt-2">Experiment SQL</MudText>
+                                <MudTextField @bind-Value="_model.ExperimentPreRunSql" Label="Pre-Run SQL"
+                                              Lines="3" Variant="Variant.Outlined" Class="mb-4"
+                                              HelperText="Executed before optimization starts" />
 
-                    @if (!_isNew)
-                    {
-                        <MudStack Row="true" Spacing="4">
-                            <MudText Typo="Typo.caption">Created: @_model.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</MudText>
-                            <MudText Typo="Typo.caption">Modified: @_model.ModifiedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</MudText>
-                        </MudStack>
-                    }
+                                <MudTextField @bind-Value="_model.ExperimentPostRunSql" Label="Post-Run SQL"
+                                              Lines="3" Variant="Variant.Outlined" Class="mb-4"
+                                              HelperText="Executed after each run" />
+
+                                <MudTextField @bind-Value="_model.BenchmarkSql" Label="Benchmark SQL"
+                                              Lines="3" Variant="Variant.Outlined" Class="mb-4"
+                                              HelperText="SQL used to benchmark performance" />
+
+                                @TabActions(showHypothesisBatchesLink: false)
+                            </MudStack>
+                        </MudTabPanel>
+                    </MudTabs>
                 </MudForm>
             </MudCardContent>
-            <MudCardActions Class="pa-4">
-                @if (!_isNew)
-                {
-                    <MudButton Variant="Variant.Text" Color="Color.Info"
-                               Href="@($"/experiments/{Id}/hypothesis-batches")" StartIcon="@Icons.Material.Filled.PlayArrow">
-                        View Hypothesis Batches
-                    </MudButton>
-                }
-                <MudSpacer />
-                <MudButton Variant="Variant.Text" OnClick="GoBack" Class="mr-2">Cancel</MudButton>
-                <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="@(!_formValid)"
-                           OnClick="Save" StartIcon="@Icons.Material.Filled.Save">
-                    Save
-                </MudButton>
-            </MudCardActions>
         </MudCard>
     }
 </MudContainer>
@@ -117,12 +114,48 @@
     private bool _isNew;
     private bool _loading = true;
     private bool _formValid;
+    private int _activeTabIndex;
     private MudForm? _form;
     private List<DatabaseConnection> _dbConnections = new();
     private List<AIConnection> _aiConnections = new();
     private DatabaseConnectionId? _selectedDbConnId;
     private AIConnectionId? _selectedAiConnId;
     private readonly CancellationTokenSource _pageCts = new();
+
+    private RenderFragment TabActions(bool showHypothesisBatchesLink) => __builder =>
+    {
+        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="mt-4 flex-wrap" Style="gap: 8px;">
+            @if (showHypothesisBatchesLink && !_isNew)
+            {
+                <MudButton Variant="Variant.Text" Color="Color.Info"
+                           Href="@($"/experiments/{Id}/hypothesis-batches")" StartIcon="@Icons.Material.Filled.PlayArrow">
+                    View Hypothesis Batches
+                </MudButton>
+            }
+            <MudSpacer />
+            <MudButton Variant="Variant.Outlined"
+                       StartIcon="@Icons.Material.Filled.NavigateBefore"
+                       Disabled="@(_activeTabIndex == 0)"
+                       OnClick="@(() => _activeTabIndex = 0)">
+                Previous
+            </MudButton>
+            <MudButton Variant="Variant.Outlined"
+                       EndIcon="@Icons.Material.Filled.NavigateNext"
+                       Disabled="@(_activeTabIndex == 1)"
+                       OnClick="@(() => _activeTabIndex = 1)">
+                Next
+            </MudButton>
+            <MudButton Variant="Variant.Text" OnClick="DiscardAsync" Disabled="@_discardBusy">
+                Discard
+            </MudButton>
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="@(!_formValid)"
+                       OnClick="Save" StartIcon="@Icons.Material.Filled.Save">
+                Save
+            </MudButton>
+        </MudStack>
+    };
+
+    private bool _discardBusy;
 
     public void Dispose()
     {
@@ -157,6 +190,43 @@
             }
             _loading = false;
         }, _pageCts.Token);
+
+    private async Task DiscardAsync()
+    {
+        if (_model == null || _discardBusy) return;
+        _discardBusy = true;
+        await InvokeAsync(StateHasChanged);
+        try
+        {
+            if (_isNew)
+            {
+                _model = new Experiment { Name = "" };
+                _selectedDbConnId = null;
+                _selectedAiConnId = null;
+            }
+            else
+            {
+                var experimentId = _model.Id;
+                DbContext.Entry(_model).State = EntityState.Detached;
+                _model = await DbContext.Experiments
+                    .Include(p => p.DatabaseConnection)
+                    .Include(p => p.AIConnection)
+                    .FirstOrDefaultAsync(p => p.Id == experimentId, _pageCts.Token);
+                if (_model == null)
+                {
+                    Snackbar.Add("Experiment not found.", Severity.Error);
+                    return;
+                }
+                _selectedDbConnId = _model.DatabaseConnectionId;
+                _selectedAiConnId = _model.AIConnectionId;
+            }
+            Snackbar.Add("Changes discarded.", Severity.Info);
+        }
+        finally
+        {
+            _discardBusy = false;
+        }
+    }
 
     private async Task Save()
     {

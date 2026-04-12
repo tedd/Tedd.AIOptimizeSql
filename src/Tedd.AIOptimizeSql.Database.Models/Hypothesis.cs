@@ -14,6 +14,8 @@ public record Hypothesis
 
     public HypothesisBatch? HypothesisBatch { get; set; }
 
+    public HypothesisState Status { get; set; } = HypothesisState.Pending;
+
     public BenchmarkRunId? BenchmarkRunIdBefore { get; set; }
     public BenchmarkRun? BenchmarkRunBefore { get; set; }
     public BenchmarkRunId? BenchmarkRunIdAfter { get; set; }
@@ -30,8 +32,9 @@ public record Hypothesis
     public HypothesisId? BuildsOnHypothesisId { get; set; }
     public Hypothesis? BuilOptimizationHypothesis { get; set; }
 
-
     public string? Description { get; set; }
+
+    public string? ErrorMessage { get; set; }
 
     public long TimeUsedMs { get; set; } = 0;
 
@@ -39,4 +42,5 @@ public record Hypothesis
     /// Created UTC
     /// </summary>
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+
 }

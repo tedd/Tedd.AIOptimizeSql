@@ -1,4 +1,4 @@
-namespace Tedd.AIOptimizeSql.OptimizeEngine.Services;
+namespace Tedd.AIOptimizeSql.OptimizeEngine.Models;
 
 /// <summary>
 /// CPU and elapsed time (ms) parsed from SET STATISTICS TIME output.

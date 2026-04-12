@@ -2,6 +2,8 @@ using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
 
+using OpenAI.Chat;
+
 using Tedd.AIOptimizeSql.Database.Models;
 using Tedd.AIOptimizeSql.Database.Models.Enums;
 
@@ -37,8 +39,8 @@ public sealed class AiAgentFactory(ILoggerFactory loggerFactory)
             new Uri(connection.Endpoint),
             new System.ClientModel.ApiKeyCredential(connection.ApiKey));
 
-        IChatClient chatClient = client.GetChatClient(connection.Model).AsChatClient();
-        return chatClient.AsAIAgent(instructions: instructions, tools: tools);
+        ChatClient chatClient = client.GetChatClient(connection.Model);
+        return OpenAIChatClientExtensions.AsAIAgent(chatClient, instructions, tools: tools);
     }
 
     private static AIAgent CreateOpenAI(AIConnection connection, string instructions, IList<AITool> tools)
@@ -47,14 +49,18 @@ public sealed class AiAgentFactory(ILoggerFactory loggerFactory)
             new System.ClientModel.ApiKeyCredential(connection.ApiKey),
             new OpenAI.OpenAIClientOptions { Endpoint = new Uri(connection.Endpoint) });
 
-        IChatClient chatClient = client.GetChatClient(connection.Model).AsChatClient();
-        return chatClient.AsAIAgent(instructions: instructions, tools: tools);
+        ChatClient chatClient = client.GetChatClient(connection.Model);
+        return OpenAIChatClientExtensions.AsAIAgent(chatClient, instructions, tools: tools);
     }
 
     private static AIAgent CreateAnthropic(AIConnection connection, string instructions, IList<AITool> tools)
     {
-        var client = new Anthropic.AnthropicClient { APIKey = connection.ApiKey };
-        return client.AsAIAgent(model: connection.Model, instructions: instructions, tools: tools);
+        var client = new Anthropic.AnthropicClient { ApiKey = connection.ApiKey };
+        return Anthropic.AnthropicClientExtensions.AsAIAgent(
+            client,
+            model: connection.Model,
+            instructions: instructions,
+            tools: tools);
     }
 
     private static AIAgent CreateOllama(AIConnection connection, string instructions, IList<AITool> tools)

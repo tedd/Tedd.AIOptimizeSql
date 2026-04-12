@@ -107,9 +107,7 @@
     private readonly CancellationTokenSource _pageCts = new();
     private BenchmarkRun? _run;
     private bool _loading = true;
-    private List<IoRow> _ioRows = new();
-
-    private sealed record IoRow(string Label, int Value);
+    private List<BenchmarkRunIoRowViewModel> _ioRows = new();
 
     public void Dispose()
     {
@@ -130,19 +128,6 @@
     private void BuildIoRows()
     {
         if (_run == null) return;
-        _ioRows =
-        [
-            new IoRow("Scan count", _run.TotalScanCount),
-            new IoRow("Logical reads", _run.TotalLogicalReads),
-            new IoRow("Physical reads", _run.TotalPhysicalReads),
-            new IoRow("Page server reads", _run.TotalPageServerReads),
-            new IoRow("Read-ahead reads", _run.TotalReadAheadReads),
-            new IoRow("Page server read-ahead reads", _run.TotalPageServerReadAheadReads),
-            new IoRow("LOB logical reads", _run.TotalLobLogicalReads),
-            new IoRow("LOB physical reads", _run.TotalLobPhysicalReads),
-            new IoRow("LOB page server reads", _run.TotalLobPageServerReads),
-            new IoRow("LOB read-ahead reads", _run.TotalLobReadAheadReads),
-            new IoRow("LOB page server read-ahead reads", _run.TotalLobPageServerReadAheadReads)
-        ];
+        _ioRows = BenchmarkRunIoRowsMapper.FromRun(_run).ToList();
     }
 }

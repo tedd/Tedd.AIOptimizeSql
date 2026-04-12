@@ -1,0 +1,80 @@
+@using BlazorMonaco.Editor
+
+<div class="sql-monaco-field mb-4">
+    @if (!string.IsNullOrWhiteSpace(Label))
+    {
+        <MudText Typo="Typo.subtitle2" Class="mb-2">@Label</MudText>
+    }
+    <div class="sql-monaco-resize-wrap">
+        <StandaloneCodeEditor @ref="_editor"
+                              @key="@($"{EditorId}-{ReadOnly}")"
+                              Id="@EditorId"
+                              CssClass="sql-monaco-editor-inner"
+                              ConstructionOptions="BuildOptions"
+                              OnDidChangeModelContent="OnModelContentChanged" />
+    </div>
+    @if (!string.IsNullOrWhiteSpace(HelperText))
+    {
+        <MudText Typo="Typo.caption" Class="mt-1">@HelperText</MudText>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public string EditorId { get; set; } = default!;
+    [Parameter] public string? Label { get; set; }
+    [Parameter] public string? HelperText { get; set; }
+    [Parameter] public string? Value { get; set; }
+    [Parameter] public EventCallback<string?> ValueChanged { get; set; }
+    [Parameter] public bool ReadOnly { get; set; }
+
+    private StandaloneCodeEditor? _editor;
+    private bool _suppressChange;
+
+    private StandaloneEditorConstructionOptions BuildOptions(StandaloneCodeEditor _) =>
+        new()
+        {
+            AutomaticLayout = true,
+            Language = "sql",
+            Value = Value ?? "",
+            ReadOnly = ReadOnly,
+            Minimap = new EditorMinimapOptions { Enabled = false },
+            ScrollBeyondLastLine = false,
+            WordWrap = "on",
+            FontSize = 13,
+            TabSize = 4,
+            InsertSpaces = true,
+        };
+
+    protected override async Task OnParametersSetAsync()
+    {
+        await base.OnParametersSetAsync();
+        if (_editor is null || _suppressChange)
+            return;
+
+        var current = await _editor.GetValue();
+        if (string.Equals(current, Value ?? "", StringComparison.Ordinal))
+            return;
+
+        _suppressChange = true;
+        try
+        {
+            await _editor.SetValue(Value ?? "");
+        }
+        finally
+        {
+            _suppressChange = false;
+        }
+    }
+
+    private async Task OnModelContentChanged()
+    {
+        if (_editor is null || _suppressChange || ReadOnly)
+            return;
+
+        var text = await _editor.GetValue();
+        if (string.Equals(text, Value ?? "", StringComparison.Ordinal))
+            return;
+
+        await ValueChanged.InvokeAsync(text);
+    }
+}

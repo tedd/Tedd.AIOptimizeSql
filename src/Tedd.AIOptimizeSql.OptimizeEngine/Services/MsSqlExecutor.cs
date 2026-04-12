@@ -3,6 +3,8 @@ using System.Text.RegularExpressions;
 
 using Microsoft.Data.SqlClient;
 
+using Tedd.AIOptimizeSql.OptimizeEngine.Models;
+
 namespace Tedd.AIOptimizeSql.OptimizeEngine.Services;
 
 /// <summary>
@@ -13,9 +15,6 @@ namespace Tedd.AIOptimizeSql.OptimizeEngine.Services;
 public class MsSqlExecutor : IDatabaseExecutor
 {
     private static readonly int _timeoutSeconds = 1200;
-    private static readonly Regex TimingRegex = new(
-        @"SQL Server Execution Times:\s*CPU time = (\d+) ms,\s*elapsed time = (\d+) ms",
-        RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     private readonly BenchmarkConfig _config;
     private readonly Action<string> _log;
@@ -126,12 +125,7 @@ public class MsSqlExecutor : IDatabaseExecutor
         foreach (var msg in messages)
         {
             _log($"  [InfoMessage] {msg}");
-            var matches = TimingRegex.Matches(msg);
-            foreach (Match match in matches)
-            {
-                result.CpuTimeMs += int.Parse(match.Groups[1].Value);
-                result.ElapsedTimeMs += int.Parse(match.Groups[2].Value);
-            }
+            MsSqlStatisticsTimeParser.AccumulateFromMessage(msg, result);
         }
 
         return TimeSpan.FromMilliseconds(result.ElapsedTimeMs);
@@ -321,7 +315,7 @@ FROM [{schema}].[{table}] WITH (NOLOCK);";
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
-    private static IReadOnlyList<string> SplitOnGo(string sql)
+    internal static IReadOnlyList<string> SplitOnGo(string sql)
     {
         var batches = Regex.Split(sql, @"^\s*GO\s*$",
             RegexOptions.IgnoreCase | RegexOptions.Multiline);

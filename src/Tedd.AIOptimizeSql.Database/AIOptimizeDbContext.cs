@@ -32,6 +32,7 @@ public class AIOptimizeDbContext : DbContext
         // AiProvider enum stored as string in DB
         builder.Properties<AiProvider>().HaveConversion<string>().HaveMaxLength(128);
         builder.Properties<HypothesisBatchState>().HaveConversion<string>().HaveMaxLength(16);
+        builder.Properties<HypothesisState>().HaveConversion<string>().HaveMaxLength(16);
     }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)

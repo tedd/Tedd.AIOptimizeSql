@@ -33,6 +33,28 @@
     }
     else
     {
+        @if (_experiment != null)
+        {
+            <MudCard Elevation="3" Class="rounded-lg mb-4">
+                <MudCardHeader>
+                    <CardHeaderContent>
+                        <MudText Typo="Typo.h6">Benchmark SQL</MudText>
+                        <MudText Typo="Typo.caption">
+                            Stored on the experiment; used to measure performance for this batch.
+                            <MudLink Href="@($"/experiments/{ExperimentId}/edit")" Color="Color.Primary">Open experiment</MudLink>
+                        </MudText>
+                    </CardHeaderContent>
+                </MudCardHeader>
+                <MudCardContent Class="pt-0">
+                    <SqlMonacoField EditorId="@_benchmarkSqlEditorId"
+                                    Label=""
+                                    HelperText="SQL used to benchmark performance for hypotheses in this experiment."
+                                    @bind-Value="_benchmarkSql"
+                                    ReadOnly="@(!_editMode && !_isNew)" />
+                </MudCardContent>
+            </MudCard>
+        }
+
         @if (!_isNew && !_editMode)
         {
             <MudGrid Class="mb-4">
@@ -211,6 +233,9 @@
 
     private Hypothesis? _model;
     private HypothesisBatch? _batch;
+    private Experiment? _experiment;
+    private string? _benchmarkSql;
+    private string _benchmarkSqlEditorId = "";
     private bool _isNew;
     private bool _editMode;
     private bool _loading = true;
@@ -234,7 +259,13 @@
         {
             var batchId = (HypothesisBatchId)(object)BatchId;
 
-            _batch = await DbContext.HypothesisBatches.FindAsync(new object[] { batchId }, ct);
+            _batch = await DbContext.HypothesisBatches
+                .Include(b => b.Experiment)
+                .FirstOrDefaultAsync(b => b.Id == batchId, ct);
+
+            _experiment = _batch?.Experiment;
+            _benchmarkSql = _experiment?.BenchmarkSql;
+            _benchmarkSqlEditorId = $"hypothesis-benchmark-sql-e{ExperimentId}-b{BatchId}";
 
             _otherHypotheses = await DbContext.Hypotheses
                 .Where(h => h.HypothesisBatchId == batchId)
@@ -298,6 +329,9 @@
         if (_model == null) return;
 
         _model.BuildsOnHypothesisId = _selectedBuildsOn;
+
+        if (_experiment != null && (_isNew || _editMode))
+            _experiment.BenchmarkSql = _benchmarkSql;
 
         if (_isNew)
         {

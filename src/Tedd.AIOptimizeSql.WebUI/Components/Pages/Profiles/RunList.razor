@@ -1,5 +1,4 @@
-@page "/experiments/{ExperimentId:int}/hypothesis-batches"
-@implements IDisposable
+@page "/profiles/{ExperimentId:int}/runs"
 @rendermode InteractiveServer
 @inject Tedd.AIOptimizeSql.Database.AIOptimizeDbContext DbContext
 @inject NavigationManager Navigation
@@ -7,14 +6,14 @@
 @inject ISnackbar Snackbar
 @using Microsoft.EntityFrameworkCore
 
-<PageTitle>Hypothesis Batches</PageTitle>
+<PageTitle>Optimization Runs</PageTitle>
 
 <MudContainer MaxWidth="MaxWidth.ExtraLarge" Class="mt-4">
     <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-4">
         <MudIconButton Icon="@Icons.Material.Filled.ArrowBack"
-                       OnClick="@(() => Navigation.NavigateTo("/experiments"))" />
+                       OnClick="@(() => Navigation.NavigateTo("/profiles"))" />
         <MudText Typo="Typo.h4">
-            Hypothesis Batches for: @(_profile?.Name ?? "...")
+            Runs for: @(_profile?.Name ?? "...")
         </MudText>
         <MudSpacer />
         @if (_selectedItems.Count > 0)
@@ -25,12 +24,8 @@
             </MudButton>
         }
         <MudButton Variant="Variant.Text" Color="Color.Primary"
-                   Href="@($"/experiments/{ExperimentId}/edit")" StartIcon="@Icons.Material.Filled.Edit" Class="mr-2">
-            Edit Experiment
-        </MudButton>
-        <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Add"
-                   Href="@($"/experiments/{ExperimentId}/hypothesis-batches/new")">
-            New hypothesis batch
+                   Href="@($"/profiles/{ExperimentId}/edit")" StartIcon="@Icons.Material.Filled.Edit" Class="mr-2">
+            Edit Profile
         </MudButton>
     </MudStack>
 
@@ -39,7 +34,7 @@
         <MudCard Elevation="3" Class="rounded-lg mb-4">
             <MudCardHeader>
                 <CardHeaderContent>
-                    <MudText Typo="Typo.h6">Hypothesis Improvement %</MudText>
+                    <MudText Typo="Typo.h6">Hypothesis improvement %</MudText>
                     <MudText Typo="Typo.caption">Positive = improvement, Negative = regression</MudText>
                 </CardHeaderContent>
             </MudCardHeader>
@@ -54,37 +49,19 @@
               Dense="true" FixedHeader="true" MultiSelection="true" @bind-SelectedItems="_selectedItems"
               OnRowClick="OnRowClick" RowClass="cursor-pointer" Class="rounded-lg">
         <HeaderContent>
-            <MudTh><MudTableSortLabel SortLabel="Id" T="HypothesisBatchRunRowViewModel">Batch #</MudTableSortLabel></MudTh>
+            <MudTh><MudTableSortLabel SortLabel="Id" T="HypothesisBatchRunRowViewModel">Run #</MudTableSortLabel></MudTh>
             <MudTh><MudTableSortLabel SortLabel="Hypotheses" T="HypothesisBatchRunRowViewModel">Hypotheses</MudTableSortLabel></MudTh>
             <MudTh><MudTableSortLabel SortLabel="TotalTime" T="HypothesisBatchRunRowViewModel">Total Time</MudTableSortLabel></MudTh>
-            <MudTh><MudTableSortLabel SortLabel="State" T="HypothesisBatchRunRowViewModel">State</MudTableSortLabel></MudTh>
-            <MudTh>Started</MudTh>
-            <MudTh>Ended</MudTh>
-            <MudTh>AI Provider</MudTh>
-            <MudTh>Model</MudTh>
-            <MudTh>Last message</MudTh>
             <MudTh>Hints</MudTh>
             <MudTh><MudTableSortLabel SortLabel="CreatedAt" T="HypothesisBatchRunRowViewModel">Created</MudTableSortLabel></MudTh>
-            <MudTh Style="width: 120px;">Actions</MudTh>
+            <MudTh Style="width: 80px;">Actions</MudTh>
         </HeaderContent>
         <RowTemplate>
-            <MudTd DataLabel="Batch #">@((int)(object)context.Run.Id)</MudTd>
+            <MudTd DataLabel="Run #">@((int)(object)context.Run.Id)</MudTd>
             <MudTd DataLabel="Hypotheses">
                 <MudChip T="string" Size="Size.Small" Color="Color.Info">@context.HypothesisCount</MudChip>
             </MudTd>
             <MudTd DataLabel="Total Time">@FormatTime(context.TotalTimeMs)</MudTd>
-            <MudTd DataLabel="State">
-                <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">@context.Run.State.ToString()</MudChip>
-            </MudTd>
-            <MudTd DataLabel="Started">@FormatNullableLocal(context.Run.StartedAt)</MudTd>
-            <MudTd DataLabel="Ended">@FormatNullableLocal(context.Run.EndedAt)</MudTd>
-            <MudTd DataLabel="AI Provider">@(context.Run.AiProviderUsed?.ToString() ?? "—")</MudTd>
-            <MudTd DataLabel="Model">@(context.Run.AiModelUsed ?? "—")</MudTd>
-            <MudTd DataLabel="Last message">
-                <MudText Typo="Typo.body2" Style="max-width:200px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
-                    @(context.Run.LastMessage ?? "—")
-                </MudText>
-            </MudTd>
             <MudTd DataLabel="Hints">
                 <MudText Typo="Typo.body2" Style="max-width:300px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
                     @(context.Run.Hints ?? "--")
@@ -92,18 +69,12 @@
             </MudTd>
             <MudTd DataLabel="Created">@context.Run.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd")</MudTd>
             <MudTd>
-                <MudIconButton Icon="@Icons.Material.Filled.Edit" Color="Color.Primary" Size="Size.Small"
-                               Href="@($"/experiments/{ExperimentId}/hypothesis-batches/{(int)(object)context.Run.Id}/edit")"
-                               aria-label="Edit batch" />
-                <MudIconButton Icon="@Icons.Material.Filled.List" Color="Color.Info" Size="Size.Small"
-                               Href="@($"/experiments/{ExperimentId}/hypothesis-batches/{(int)(object)context.Run.Id}")"
-                               aria-label="Hypotheses" />
                 <MudIconButton Icon="@Icons.Material.Filled.Delete" Color="Color.Error" Size="Size.Small"
                                OnClick="@(() => DeleteSingle(context))" aria-label="Delete" />
             </MudTd>
         </RowTemplate>
         <NoRecordsContent>
-            <MudText Typo="Typo.body1" Class="pa-4">No hypothesis batches found.</MudText>
+            <MudText Typo="Typo.body1" Class="pa-4">No optimization runs found.</MudText>
         </NoRecordsContent>
         <PagerContent>
             <MudTablePager PageSizeOptions="new int[] { 20, 50, 100 }" />
@@ -114,28 +85,20 @@
 @code {
     [Parameter] public int ExperimentId { get; set; }
 
-    private readonly CancellationTokenSource _pageCts = new();
     private Experiment? _profile;
     private MudTable<HypothesisBatchRunRowViewModel>? _table;
     private HashSet<HypothesisBatchRunRowViewModel> _selectedItems = new();
     private string[] _chartLabels = Array.Empty<string>();
     private List<ChartSeries<double>> _runChartSeries = new();
 
-    public void Dispose()
+    protected override async Task OnInitializedAsync()
     {
-        _pageCts.Cancel();
-        _pageCts.Dispose();
+        var experimentId = (ExperimentId)(object)ExperimentId;
+        _profile = await DbContext.Experiments.FindAsync(experimentId);
+        await LoadChartData();
     }
 
-    protected override Task OnInitializedAsync() =>
-        PageLoadCancellation.RunPageLoadAsync(async ct =>
-        {
-            var experimentId = (ExperimentId)(object)ExperimentId;
-            _profile = await DbContext.Experiments.FindAsync(new object[] { experimentId }, ct);
-            await LoadChartData(ct);
-        }, _pageCts.Token);
-
-    private async Task LoadChartData(CancellationToken cancellationToken = default)
+    private async Task LoadChartData()
     {
         var experimentId = (ExperimentId)(object)ExperimentId;
         var hypotheses = await DbContext.Hypotheses
@@ -143,7 +106,7 @@
             .OrderBy(h => h.CreatedAt)
             .Select(h => new { h.ImpovementPercentage, h.CreatedAt })
             .Take(50)
-            .ToListAsync(cancellationToken);
+            .ToListAsync();
 
         var data = hypotheses.Select(h => (double)h.ImpovementPercentage).ToList();
         _chartLabels = hypotheses.Select((h, i) => $"H{i + 1}").ToArray();
@@ -159,13 +122,7 @@
         return $"{ms / 60000.0:F1}m";
     }
 
-    private static string FormatNullableLocal(DateTime? utc) =>
-        utc.HasValue ? utc.Value.ToLocalTime().ToString("yyyy-MM-dd HH:mm") : "—";
-
-    private Task<TableData<HypothesisBatchRunRowViewModel>> LoadServerData(TableState state, CancellationToken ct) =>
-        PageLoadCancellation.RunTableLoadAsync(t => LoadServerDataCore(state, t), _pageCts.Token, ct);
-
-    private async Task<TableData<HypothesisBatchRunRowViewModel>> LoadServerDataCore(TableState state, CancellationToken cancellationToken)
+    private async Task<TableData<HypothesisBatchRunRowViewModel>> LoadServerData(TableState state, CancellationToken ct)
     {
         var experimentId = (ExperimentId)(object)ExperimentId;
 
@@ -178,13 +135,12 @@
             "Id" => state.SortDirection == SortDirection.Descending ? query.OrderByDescending(x => x.Id) : query.OrderBy(x => x.Id),
             "Hypotheses" => state.SortDirection == SortDirection.Descending ? query.OrderByDescending(x => x.Hypotheses.Count) : query.OrderBy(x => x.Hypotheses.Count),
             "TotalTime" => state.SortDirection == SortDirection.Descending ? query.OrderByDescending(x => x.Hypotheses.Sum(h => h.TimeUsedMs)) : query.OrderBy(x => x.Hypotheses.Sum(h => h.TimeUsedMs)),
-            "State" => state.SortDirection == SortDirection.Descending ? query.OrderByDescending(x => x.State) : query.OrderBy(x => x.State),
             "CreatedAt" => state.SortDirection == SortDirection.Descending ? query.OrderByDescending(x => x.CreatedAt) : query.OrderBy(x => x.CreatedAt),
             _ => query.OrderByDescending(x => x.CreatedAt)
         };
 
-        var totalItems = await query.CountAsync(cancellationToken);
-        var runs = await query.Skip(state.Page * state.PageSize).Take(state.PageSize).ToListAsync(cancellationToken);
+        var totalItems = await query.CountAsync(ct);
+        var runs = await query.Skip(state.Page * state.PageSize).Take(state.PageSize).ToListAsync(ct);
 
         var items = runs.Select(HypothesisBatchRunRowMapper.FromTrackedBatch).ToList();
 
@@ -193,21 +149,21 @@
 
     private void OnRowClick(TableRowClickEventArgs<HypothesisBatchRunRowViewModel> args)
     {
-        Navigation.NavigateTo($"/experiments/{ExperimentId}/hypothesis-batches/{(int)(object)args.Item!.Run.Id}/edit");
+        Navigation.NavigateTo($"/profiles/{ExperimentId}/runs/{(int)(object)args.Item!.Run.Id}");
     }
 
     private async Task DeleteSingle(HypothesisBatchRunRowViewModel vm)
     {
         var confirm = await DialogService.ShowMessageBoxAsync(
             "Confirm Delete",
-            $"Delete this hypothesis batch and all its hypotheses?",
+            $"Delete this run and all its hypotheses?",
             yesText: "Delete", cancelText: "Cancel");
 
         if (confirm == true)
         {
             DbContext.HypothesisBatches.Remove(vm.Run);
             await DbContext.SaveChangesAsync();
-            Snackbar.Add("Hypothesis batch deleted", Severity.Success);
+            Snackbar.Add("Run deleted", Severity.Success);
             await _table!.ReloadServerData();
             await LoadChartData();
         }
@@ -217,7 +173,7 @@
     {
         var confirm = await DialogService.ShowMessageBoxAsync(
             "Confirm Delete",
-            $"Delete {_selectedItems.Count} hypothesis batch(es) and all their hypotheses?",
+            $"Delete {_selectedItems.Count} run(s) and all their hypotheses?",
             yesText: "Delete All", cancelText: "Cancel");
 
         if (confirm == true)
@@ -225,7 +181,7 @@
             foreach (var vm in _selectedItems)
                 DbContext.HypothesisBatches.Remove(vm.Run);
             await DbContext.SaveChangesAsync();
-            Snackbar.Add($"Deleted {_selectedItems.Count} hypothesis batch(es)", Severity.Success);
+            Snackbar.Add($"Deleted {_selectedItems.Count} run(s)", Severity.Success);
             _selectedItems.Clear();
             await _table!.ReloadServerData();
             await LoadChartData();

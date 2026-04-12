@@ -5,17 +5,9 @@ namespace Tedd.AIOptimizeSql.OptimizeEngine.Services;
 public interface IAiHypothesisService
 {
     /// <summary>
-    /// Uses an AI agent (with SQL tool access) to generate a new optimisation hypothesis.
+    /// Generates hypotheses in a loop until the batch's <see cref="HypothesisBatch.MaxNumberOfHypotheses"/>
+    /// is reached, the batch state changes to stop/pause, or an unrecoverable error occurs.
+    /// Each hypothesis is persisted as it is created, and the batch status is kept up to date.
     /// </summary>
-    /// <param name="batch">
-    /// The batch being processed. Must have <see cref="HypothesisBatch.Experiment"/>,
-    /// <see cref="Experiment.AIConnection"/>, and <see cref="Experiment.DatabaseConnection"/> loaded.
-    /// </param>
-    /// <param name="priorHypotheses">Previously generated hypotheses for AI context.</param>
-    /// <param name="cancellationToken"/>
-    /// <returns>A newly created (but not yet persisted) <see cref="Hypothesis"/>.</returns>
-    Task<Hypothesis> GenerateHypothesisAsync(
-        HypothesisBatch batch,
-        IReadOnlyList<Hypothesis> priorHypotheses,
-        CancellationToken cancellationToken = default);
+    Task RunBatchAsync(HypothesisBatchId batchId, CancellationToken cancellationToken = default);
 }

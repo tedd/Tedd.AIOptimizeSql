@@ -1,0 +1,41 @@
+---
+description: >-
+  Keeps Tedd.AIOptimizeSql WebUI ViewModels and Riok.Mapperly mappers in sync
+  when working under ViewModels/ (mappers, Razor, RMG012/RMG020).
+globs: src/Tedd.AIOptimizeSql.WebUI/ViewModels/**
+alwaysApply: false
+---
+
+# WebUI ViewModels and mappers (Tedd.AIOptimizeSql)
+
+## When this applies
+
+Any work touching **`src/Tedd.AIOptimizeSql.WebUI/ViewModels/`** or types defined there, including:
+
+- Adding, renaming, or removing properties on a view model
+- Introducing a new view model for a `.razor` list, stats card, or detail section
+- Refactoring display types out of `@code` blocks into `ViewModels/`
+
+## Required habit: update mappers in the same change
+
+View models are populated via **Riok.Mapperly** in **`src/Tedd.AIOptimizeSql.WebUI/Mappers/`**. Do not stop at editing the view model file.
+
+1. **Find the mapper** — partial `[Mapper]` class that maps into the view model (or the source record that feeds it).
+2. **Source DTOs** — often `*Source` records in `Mappers/`; keep property names aligned with mapping methods.
+3. **New target properties** — map from source or set via user code; unmapped targets break compile (**RMG012**).
+4. **Removed or unused source members** — add `[MapperIgnoreSource]` / `[MapperIgnoreTarget]` as appropriate; leftover source fields break compile (**RMG020**).
+5. **Remove Ignore for new members** — remove `[MapperIgnoreSource]` / `[MapperIgnoreTarget]` as appropriate
+5. **Call sites** — update `.razor` or C# that builds sources or calls `*Mapper.*` methods.
+6. **Verify** — `dotnet build` on `Tedd.AIOptimizeSql.WebUI.csproj` (repo `.editorconfig` treats RMG012/RMG020 as errors for that project).
+
+## Layout reminder
+
+| Area | Path |
+|------|------|
+| View models | `WebUI/ViewModels/` |
+| Mapperly + sources | `WebUI/Mappers/` |
+| Diagnostics | `.editorconfig` → `dotnet_diagnostic.RMG012` / `RMG020` for `WebUI/**/*.cs` |
+
+## Non-Mapperly rows
+
+Some UI rows are built manually after a Mapperly step (e.g. metrics → labeled `BenchmarkRunIoRowViewModel` list). If you change the view model shape, update that builder in `Mappers/` as well.

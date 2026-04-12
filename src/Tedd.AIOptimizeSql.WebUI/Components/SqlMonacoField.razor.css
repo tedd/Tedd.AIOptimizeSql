@@ -1,0 +1,17 @@
+.sql-monaco-resize-wrap {
+    resize: both;
+    overflow: hidden;
+    min-height: 200px;
+    min-width: 100%;
+    max-width: 100%;
+    height: 280px;
+    border: 1px solid var(--mud-palette-lines-default);
+    border-radius: var(--mud-default-borderradius);
+    box-sizing: border-box;
+}
+
+::deep .sql-monaco-editor-inner.monaco-editor-container {
+    height: 100%;
+    min-height: 180px;
+    width: 100%;
+}
