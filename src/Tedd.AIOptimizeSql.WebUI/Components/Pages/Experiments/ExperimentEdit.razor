@@ -9,6 +9,10 @@
 
 <PageTitle>@(_isNew ? "New" : "Edit") Experiment</PageTitle>
 
+<EditNavigationGuard HasUnsavedChanges="@(() => IsModified)"
+                     TrySaveAsync="TryPersistAsync"
+                     DiscardAsync="DiscardAsync" />
+
 <MudContainer MaxWidth="MaxWidth.Medium" Class="mt-4">
     <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-4">
         <MudIconButton Icon="@Icons.Material.Filled.ArrowBack" OnClick="GoBack" />
@@ -122,6 +126,45 @@
     private AIConnectionId? _selectedAiConnId;
     private readonly CancellationTokenSource _pageCts = new();
 
+    private string _baselineName = "";
+    private string _baselineDescription = "";
+    private string _baselineInstructions = "";
+    private string _baselineHypothesisPreRunSql = "";
+    private string _baselineHypothesisPostRunSql = "";
+    private string _baselineExperimentPreRunSql = "";
+    private string _baselineExperimentPostRunSql = "";
+    private string _baselineBenchmarkSql = "";
+    private DatabaseConnectionId? _baselineDbConnId;
+    private AIConnectionId? _baselineAiConnId;
+
+    private bool IsModified =>
+        !_loading && _model != null &&
+        (_model.Name != _baselineName ||
+         (_model.Description ?? "") != _baselineDescription ||
+         (_model.Instructions ?? "") != _baselineInstructions ||
+         (_model.HypothesisPreRunSql ?? "") != _baselineHypothesisPreRunSql ||
+         (_model.HypothesisPostRunSql ?? "") != _baselineHypothesisPostRunSql ||
+         (_model.ExperimentPreRunSql ?? "") != _baselineExperimentPreRunSql ||
+         (_model.ExperimentPostRunSql ?? "") != _baselineExperimentPostRunSql ||
+         (_model.BenchmarkSql ?? "") != _baselineBenchmarkSql ||
+         _selectedDbConnId != _baselineDbConnId ||
+         _selectedAiConnId != _baselineAiConnId);
+
+    private void CaptureBaseline()
+    {
+        if (_model == null) return;
+        _baselineName = _model.Name;
+        _baselineDescription = _model.Description ?? "";
+        _baselineInstructions = _model.Instructions ?? "";
+        _baselineHypothesisPreRunSql = _model.HypothesisPreRunSql ?? "";
+        _baselineHypothesisPostRunSql = _model.HypothesisPostRunSql ?? "";
+        _baselineExperimentPreRunSql = _model.ExperimentPreRunSql ?? "";
+        _baselineExperimentPostRunSql = _model.ExperimentPostRunSql ?? "";
+        _baselineBenchmarkSql = _model.BenchmarkSql ?? "";
+        _baselineDbConnId = _selectedDbConnId;
+        _baselineAiConnId = _selectedAiConnId;
+    }
+
     private RenderFragment TabActions(bool showHypothesisBatchesLink) => __builder =>
     {
         <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="mt-4 flex-wrap" Style="gap: 8px;">
@@ -189,6 +232,7 @@
                 _model = new Experiment { Name = "" };
             }
             _loading = false;
+            CaptureBaseline();
         }, _pageCts.Token);
 
     private async Task DiscardAsync()
@@ -221,6 +265,7 @@
                 _selectedAiConnId = _model.AIConnectionId;
             }
             Snackbar.Add("Changes discarded.", Severity.Info);
+            CaptureBaseline();
         }
         finally
         {
@@ -228,11 +273,11 @@
         }
     }
 
-    private async Task Save()
+    private async Task<bool> TryPersistAsync()
     {
-        if (_model == null) return;
+        if (_model == null) return false;
         await _form!.ValidateAsync();
-        if (!_formValid) return;
+        if (!_formValid) return false;
 
         _model.DatabaseConnectionId = _selectedDbConnId;
         _model.AIConnectionId = _selectedAiConnId;
@@ -250,6 +295,13 @@
 
         await DbContext.SaveChangesAsync();
         Snackbar.Add(_isNew ? "Experiment created" : "Experiment saved", Severity.Success);
+        CaptureBaseline();
+        return true;
+    }
+
+    private async Task Save()
+    {
+        if (!await TryPersistAsync()) return;
         Navigation.NavigateTo("/experiments");
     }
 

@@ -14,6 +14,10 @@
 
 <PageTitle>@(_isNew ? "New" : "Edit") hypothesis batch</PageTitle>
 
+<EditNavigationGuard HasUnsavedChanges="@(() => IsModified)"
+                     TrySaveAsync="TryPersistAsync"
+                     DiscardAsync="DiscardChangesAsync" />
+
 <MudContainer MaxWidth="MaxWidth.Medium" Class="mt-4">
     <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-4">
         <MudIconButton Icon="@Icons.Material.Filled.ArrowBack" OnClick="GoBack" />
@@ -152,6 +156,23 @@
 
     private int? ExperimentIdFromRoute => ExperimentId;
 
+    private string? _baselineHints;
+    private int _baselineMaxHypotheses;
+    private ExperimentId? _baselineSelectedExperimentId;
+
+    private bool IsModified =>
+        !_loading &&
+        ((_hints ?? "") != (_baselineHints ?? "") ||
+         _maxHypotheses != _baselineMaxHypotheses ||
+         (_isNew && !ExperimentIdFromRoute.HasValue && _selectedExperimentId != _baselineSelectedExperimentId));
+
+    private void CaptureBaseline()
+    {
+        _baselineHints = _hints;
+        _baselineMaxHypotheses = _maxHypotheses;
+        _baselineSelectedExperimentId = _selectedExperimentId;
+    }
+
     private CancellationTokenSource? _loadCts;
 
     private CancellationToken StartNewLoad()
@@ -221,7 +242,10 @@
         finally
         {
             if (!ct.IsCancellationRequested)
+            {
                 _loading = false;
+                CaptureBaseline();
+            }
         }
     }
 
@@ -235,6 +259,75 @@
         return _selectedExperimentId;
     }
 
+    private async Task<HypothesisBatchId?> CreateBatchCoreAsync()
+    {
+        var expId = ResolveExperimentIdForCreate();
+        if (expId is null)
+        {
+            Snackbar.Add("Select an experiment.", Severity.Warning);
+            return null;
+        }
+
+        return await DataAccess.CreateHypothesisBatchAsync(expId.Value, _hints, _maxHypotheses);
+    }
+
+    private async Task<bool> TryPersistAsync()
+    {
+        await _form!.ValidateAsync();
+        if (!_formValid || _busy) return false;
+
+        _busy = true;
+        try
+        {
+            if (_isNew)
+            {
+                var newId = await CreateBatchCoreAsync();
+                if (newId is null) return false;
+                Snackbar.Add("Batch created", Severity.Success);
+                CaptureBaseline();
+                return true;
+            }
+
+            if (_batch != null)
+            {
+                await DataAccess.UpdateHypothesisBatchEditableFieldsAsync(_batch.Id, _hints, _maxHypotheses);
+                Snackbar.Add("Saved", Severity.Success);
+                _batch = await DataAccess.GetHypothesisBatchForEditAsync(_batch.Id);
+                CaptureBaseline();
+                return true;
+            }
+
+            return false;
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task DiscardChangesAsync()
+    {
+        if (_isNew)
+        {
+            _hints = null;
+            _maxHypotheses = 10;
+            if (!ExperimentIdFromRoute.HasValue)
+                _selectedExperimentId = _experiments.FirstOrDefault()?.Id;
+        }
+        else if (_batch != null)
+        {
+            _batch = await DataAccess.GetHypothesisBatchForEditAsync(_batch.Id);
+            if (_batch != null)
+            {
+                _hints = _batch.Hints;
+                _maxHypotheses = _batch.MaxNumberOfHypotheses;
+            }
+        }
+
+        CaptureBaseline();
+        await InvokeAsync(StateHasChanged);
+    }
+
     private async Task SaveAsync(bool runAfter)
     {
         await _form!.ValidateAsync();
@@ -245,25 +338,20 @@
         {
             if (_isNew)
             {
-                var expId = ResolveExperimentIdForCreate();
-                if (expId is null)
-                {
-                    Snackbar.Add("Select an experiment.", Severity.Warning);
-                    return;
-                }
-
-                var newId = await DataAccess.CreateHypothesisBatchAsync(expId.Value, _hints, _maxHypotheses);
+                var newId = await CreateBatchCoreAsync();
+                if (newId is not HypothesisBatchId createdId) return;
                 if (runAfter)
-                    await DataAccess.BeginHypothesisBatchRunAsync(newId);
+                    await DataAccess.BeginHypothesisBatchRunAsync(createdId);
 
                 Snackbar.Add(runAfter ? "Batch created and run started" : "Batch created", Severity.Success);
-                Navigation.NavigateTo($"/hypothesis-batches/{(int)(object)newId}/edit");
+                Navigation.NavigateTo($"/hypothesis-batches/{(int)(object)createdId}/edit");
             }
             else if (_batch != null)
             {
                 await DataAccess.UpdateHypothesisBatchEditableFieldsAsync(_batch.Id, _hints, _maxHypotheses);
                 Snackbar.Add("Saved", Severity.Success);
                 _batch = await DataAccess.GetHypothesisBatchForEditAsync(_batch.Id);
+                CaptureBaseline();
             }
         }
         finally

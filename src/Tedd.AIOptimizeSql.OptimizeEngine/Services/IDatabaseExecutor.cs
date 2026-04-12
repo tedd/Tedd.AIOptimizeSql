@@ -11,14 +11,24 @@ public interface IDatabaseExecutor
     /// <summary>Opens a new, ready-to-use connection to the database.</summary>
     Task<DbConnection> OpenConnectionAsync(string connectionString, CancellationToken cancellationToken = default);
 
+    /// <summary>Closes an open connection.</summary>
+    Task CloseConnectionAsync(DbConnection conn, CancellationToken cancellationToken = default);
+
+    /// <summary>Closes the existing connection and opens a fresh one to the same server.</summary>
+    Task<DbConnection> ReconnectAsync(DbConnection conn, string connectionString, CancellationToken cancellationToken = default);
+
     /// <summary>
     /// Reads and executes a SQL script file (split on GO batches), optionally
     /// switching the initial catalog (e.g. to master for RESTORE DATABASE).
     /// </summary>
     Task ExecuteInitSqlAsync(string initSqlPath, string connectionString, Action<string> log, CancellationToken cancellationToken = default);
 
-    /// <summary>Executes <paramref name="sql"/> and returns CPU + elapsed timing.</summary>
-    TimeSpan ExecuteWithTiming(DbConnection conn, string sql);
+    /// <summary>
+    /// Executes <paramref name="sql"/> with SET STATISTICS TIME/IO/XML ON and
+    /// returns a rich <see cref="Models.SqlExecutionResult"/> containing timing,
+    /// I/O counters, execution plans, messages, and result sets.
+    /// </summary>
+    Models.SqlExecutionResult ExecuteWithTiming(DbConnection conn, string sql);
 
     /// <summary>Updates table statistics so the query optimiser has accurate cardinality data.</summary>
     void UpdateStatistics(DbConnection conn);

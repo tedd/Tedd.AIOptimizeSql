@@ -9,6 +9,10 @@
 
 <PageTitle>@(_isNew ? "New" : "Edit") Database Connection</PageTitle>
 
+<EditNavigationGuard HasUnsavedChanges="@(() => IsModified)"
+                     TrySaveAsync="TryPersistAsync"
+                     DiscardAsync="DiscardChangesAsync" />
+
 <MudContainer MaxWidth="MaxWidth.Medium" Class="mt-4">
     <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-4">
         <MudIconButton Icon="@Icons.Material.Filled.ArrowBack" OnClick="GoBack" />
@@ -65,6 +69,19 @@
     private bool _formValid;
     private MudForm? _form;
     private readonly CancellationTokenSource _pageCts = new();
+    private string _baselineName = "";
+    private string _baselineConnectionString = "";
+
+    private bool IsModified =>
+        !_loading && _model != null &&
+        (_model.Name != _baselineName || _model.ConnectionString != _baselineConnectionString);
+
+    private void CaptureBaseline()
+    {
+        if (_model == null) return;
+        _baselineName = _model.Name;
+        _baselineConnectionString = _model.ConnectionString;
+    }
 
     public void Dispose()
     {
@@ -87,13 +104,14 @@
                 _model = new DatabaseConnection { Name = "", ConnectionString = "" };
             }
             _loading = false;
+            CaptureBaseline();
         }, _pageCts.Token);
 
-    private async Task Save()
+    private async Task<bool> TryPersistAsync()
     {
-        if (_model == null) return;
+        if (_model == null) return false;
         await _form!.ValidateAsync();
-        if (!_formValid) return;
+        if (!_formValid) return false;
 
         if (_isNew)
         {
@@ -108,7 +126,37 @@
 
         await DbContext.SaveChangesAsync();
         Snackbar.Add(_isNew ? "Connection created" : "Connection saved", Severity.Success);
+        CaptureBaseline();
+        return true;
+    }
+
+    private async Task Save()
+    {
+        if (!await TryPersistAsync()) return;
         Navigation.NavigateTo("/database-connections");
+    }
+
+    private async Task DiscardChangesAsync()
+    {
+        if (_model == null) return;
+        if (_isNew)
+        {
+            _model = new DatabaseConnection { Name = "", ConnectionString = "" };
+        }
+        else
+        {
+            var id = (DatabaseConnectionId)(object)_model.Id;
+            DbContext.Entry(_model).State = EntityState.Detached;
+            _model = await DbContext.DatabaseConnections.FindAsync(new object[] { id }, _pageCts.Token);
+            if (_model == null)
+            {
+                Snackbar.Add("Connection not found.", Severity.Error);
+                return;
+            }
+        }
+
+        CaptureBaseline();
+        await InvokeAsync(StateHasChanged);
     }
 
     private void GoBack() => Navigation.NavigateTo("/database-connections");

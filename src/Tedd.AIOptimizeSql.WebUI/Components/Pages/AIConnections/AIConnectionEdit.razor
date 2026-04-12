@@ -9,6 +9,10 @@
 
 <PageTitle>@(_isNew ? "New" : "Edit") AI Connection</PageTitle>
 
+<EditNavigationGuard HasUnsavedChanges="@(() => IsModified)"
+                     TrySaveAsync="TryPersistAsync"
+                     DiscardAsync="DiscardChangesAsync" />
+
 <MudContainer MaxWidth="MaxWidth.Medium" Class="mt-4">
     <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-4">
         <MudIconButton Icon="@Icons.Material.Filled.ArrowBack" OnClick="GoBack" />
@@ -84,6 +88,29 @@
     private bool _formValid;
     private MudForm? _form;
     private readonly CancellationTokenSource _pageCts = new();
+    private string _baselineName = "";
+    private AiProvider _baselineProvider;
+    private string _baselineModel = "";
+    private string _baselineEndpoint = "";
+    private string _baselineApiKey = "";
+
+    private bool IsModified =>
+        !_loading && _model != null &&
+        (_model.Name != _baselineName ||
+         _model.Provider != _baselineProvider ||
+         _model.Model != _baselineModel ||
+         _model.Endpoint != _baselineEndpoint ||
+         _model.ApiKey != _baselineApiKey);
+
+    private void CaptureBaseline()
+    {
+        if (_model == null) return;
+        _baselineName = _model.Name;
+        _baselineProvider = _model.Provider;
+        _baselineModel = _model.Model;
+        _baselineEndpoint = _model.Endpoint;
+        _baselineApiKey = _model.ApiKey;
+    }
 
     public void Dispose()
     {
@@ -113,13 +140,14 @@
                 };
             }
             _loading = false;
+            CaptureBaseline();
         }, _pageCts.Token);
 
-    private async Task Save()
+    private async Task<bool> TryPersistAsync()
     {
-        if (_model == null) return;
+        if (_model == null) return false;
         await _form!.ValidateAsync();
-        if (!_formValid) return;
+        if (!_formValid) return false;
 
         if (_isNew)
         {
@@ -134,7 +162,44 @@
 
         await DbContext.SaveChangesAsync();
         Snackbar.Add(_isNew ? "AI Connection created" : "AI Connection saved", Severity.Success);
+        CaptureBaseline();
+        return true;
+    }
+
+    private async Task Save()
+    {
+        if (!await TryPersistAsync()) return;
         Navigation.NavigateTo("/ai-connections");
+    }
+
+    private async Task DiscardChangesAsync()
+    {
+        if (_model == null) return;
+        if (_isNew)
+        {
+            _model = new AIConnection
+            {
+                Name = "",
+                Provider = AiProvider.OpenAI,
+                Model = "",
+                Endpoint = "",
+                ApiKey = ""
+            };
+        }
+        else
+        {
+            var id = (AIConnectionId)(object)_model.Id;
+            DbContext.Entry(_model).State = EntityState.Detached;
+            _model = await DbContext.AIConnections.FindAsync(new object[] { id }, _pageCts.Token);
+            if (_model == null)
+            {
+                Snackbar.Add("AI Connection not found.", Severity.Error);
+                return;
+            }
+        }
+
+        CaptureBaseline();
+        await InvokeAsync(StateHasChanged);
     }
 
     private void GoBack() => Navigation.NavigateTo("/ai-connections");

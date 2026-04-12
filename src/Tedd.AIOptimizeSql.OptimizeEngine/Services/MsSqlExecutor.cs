@@ -34,6 +34,19 @@ public class MsSqlExecutor : IDatabaseExecutor
         return conn;
     }
 
+    public async Task CloseConnectionAsync(DbConnection conn, CancellationToken cancellationToken = default)
+    {
+        await conn.CloseAsync();
+    }
+
+    public async Task<DbConnection> ReconnectAsync(DbConnection conn, string connectionString, CancellationToken cancellationToken = default)
+    {
+        await conn.CloseAsync();
+        var newConn = new SqlConnection(connectionString);
+        await newConn.OpenAsync(cancellationToken);
+        return newConn;
+    }
+
     // ── Init SQL ──────────────────────────────────────────────────────────────
 
     /// <summary>
@@ -83,11 +96,11 @@ public class MsSqlExecutor : IDatabaseExecutor
 
     // ── Timing ────────────────────────────────────────────────────────────────
 
-    public TimeSpan ExecuteWithTiming(DbConnection conn, string sql)
+    public SqlExecutionResult ExecuteWithTiming(DbConnection conn, string sql)
     {
         _log($"[DEBUG SQL] ExecuteWithTiming:\n{sql}");
         var sqlConn = (SqlConnection)conn;
-        var result = new SqlTimingResult();
+        var result = new SqlExecutionResult();
         var messages = new List<string>();
 
         void InfoHandler(object sender, SqlInfoMessageEventArgs e) => messages.Add(e.Message);
@@ -97,7 +110,7 @@ public class MsSqlExecutor : IDatabaseExecutor
         sqlConn.InfoMessage += InfoHandler;
         try
         {
-            using (var cmdOn = new SqlCommand("SET STATISTICS TIME ON;", sqlConn))
+            using (var cmdOn = new SqlCommand("SET STATISTICS TIME ON; SET STATISTICS IO ON; SET STATISTICS XML ON;", sqlConn))
             {
                 cmdOn.CommandTimeout = _timeoutSeconds;
                 cmdOn.ExecuteNonQuery();
@@ -107,10 +120,35 @@ public class MsSqlExecutor : IDatabaseExecutor
             {
                 using var cmd = new SqlCommand(batch, sqlConn);
                 cmd.CommandTimeout = _timeoutSeconds;
-                cmd.ExecuteNonQuery();
+
+                using var reader = cmd.ExecuteReader();
+                do
+                {
+                    if (reader.FieldCount == 1 && reader.GetName(0) == "Microsoft SQL Server 2005 XML Showplan")
+                    {
+                        while (reader.Read())
+                        {
+                            var planXml = reader.GetString(0);
+                            if (!string.IsNullOrWhiteSpace(planXml))
+                                result.ActualPlanXml.Add(planXml);
+                        }
+                    }
+                    else if (reader.FieldCount > 0)
+                    {
+                        var resultSet = new List<Dictionary<string, object?>>();
+                        while (reader.Read())
+                        {
+                            var row = new Dictionary<string, object?>();
+                            for (int i = 0; i < reader.FieldCount; i++)
+                                row[reader.GetName(i)] = reader.IsDBNull(i) ? null : reader.GetValue(i);
+                            resultSet.Add(row);
+                        }
+                        result.ResultSets.Add(resultSet);
+                    }
+                } while (reader.NextResult());
             }
 
-            using (var cmdOff = new SqlCommand("SET STATISTICS TIME OFF;", sqlConn))
+            using (var cmdOff = new SqlCommand("SET STATISTICS TIME OFF; SET STATISTICS IO OFF; SET STATISTICS XML OFF;", sqlConn))
             {
                 cmdOff.CommandTimeout = _timeoutSeconds;
                 cmdOff.ExecuteNonQuery();
@@ -121,14 +159,18 @@ public class MsSqlExecutor : IDatabaseExecutor
             sqlConn.InfoMessage -= InfoHandler;
         }
 
-        // Parse timing from InfoMessage output and accumulate across all GO batches
+        var allMessages = new System.Text.StringBuilder();
         foreach (var msg in messages)
         {
             _log($"  [InfoMessage] {msg}");
-            MsSqlStatisticsTimeParser.AccumulateFromMessage(msg, result);
+            MsSqlStatisticsParser.AccumulateFromMessage(msg, result);
+            if (allMessages.Length > 0)
+                allMessages.AppendLine();
+            allMessages.Append(msg);
         }
+        result.Messages = allMessages.ToString();
 
-        return TimeSpan.FromMilliseconds(result.ElapsedTimeMs);
+        return result;
     }
 
     // ── MSSQL cache / statistics ──────────────────────────────────────────────

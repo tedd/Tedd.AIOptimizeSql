@@ -9,6 +9,10 @@
 
 <PageTitle>@(_isNew ? "New" : "View") Hypothesis</PageTitle>
 
+<EditNavigationGuard HasUnsavedChanges="@(() => IsModified)"
+                     TrySaveAsync="TryPersistAsync"
+                     DiscardAsync="DiscardChangesAsync" />
+
 <MudContainer MaxWidth="MaxWidth.Medium" Class="mt-4">
     <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-4">
         <MudIconButton Icon="@Icons.Material.Filled.ArrowBack" OnClick="GoBack" />
@@ -17,7 +21,7 @@
         @if (!_isNew && !_editMode)
         {
             <MudButton Variant="Variant.Outlined" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Edit"
-                       OnClick="@(() => _editMode = true)">
+                       OnClick="EnterEditMode">
                 Edit
             </MudButton>
         }
@@ -248,6 +252,30 @@
     private int? _benchDeltaLogicalReads;
     private readonly CancellationTokenSource _pageCts = new();
 
+    private string _baselineDescription = "";
+    private string _baselineBenchmarkSql = "";
+    private HypothesisId? _baselineBuildsOn;
+
+    private bool IsModified =>
+        _model != null && !_loading && (_isNew || _editMode) &&
+        ((_model.Description ?? "") != _baselineDescription ||
+         (_benchmarkSql ?? "") != _baselineBenchmarkSql ||
+         _selectedBuildsOn != _baselineBuildsOn);
+
+    private void CaptureBaseline()
+    {
+        if (_model == null) return;
+        _baselineDescription = _model.Description ?? "";
+        _baselineBenchmarkSql = _benchmarkSql ?? "";
+        _baselineBuildsOn = _selectedBuildsOn;
+    }
+
+    private void EnterEditMode()
+    {
+        _editMode = true;
+        CaptureBaseline();
+    }
+
     public void Dispose()
     {
         _pageCts.Cancel();
@@ -298,6 +326,7 @@
                 };
             }
             _loading = false;
+            CaptureBaseline();
         }, _pageCts.Token);
 
     private string FormatTime(long ms)
@@ -324,9 +353,11 @@
     private string BenchmarkHref(BenchmarkRunId id) =>
         $"/experiments/{ExperimentId}/hypothesis-batches/{BatchId}/benchmarks/{(int)(object)id}";
 
-    private async Task Save()
+    private async Task<bool> TryPersistAsync()
     {
-        if (_model == null) return;
+        if (_model == null) return false;
+        await _form!.ValidateAsync();
+        if (!_formValid) return false;
 
         _model.BuildsOnHypothesisId = _selectedBuildsOn;
 
@@ -341,7 +372,60 @@
 
         await DbContext.SaveChangesAsync();
         Snackbar.Add(_isNew ? "Hypothesis created" : "Hypothesis saved", Severity.Success);
+        if (!_isNew)
+            _editMode = false;
+        ComputeBenchDeltas();
+        CaptureBaseline();
+        return true;
+    }
+
+    private async Task Save()
+    {
+        if (!await TryPersistAsync()) return;
         Navigation.NavigateTo($"/experiments/{ExperimentId}/hypothesis-batches/{BatchId}");
+    }
+
+    private async Task DiscardChangesAsync()
+    {
+        if (_model == null) return;
+        var batchId = (HypothesisBatchId)(object)BatchId;
+
+        if (_isNew)
+        {
+            _model = new Hypothesis { HypothesisBatchId = batchId };
+            _selectedBuildsOn = null;
+            _benchmarkSql = _experiment?.BenchmarkSql;
+            _otherHypotheses = await DbContext.Hypotheses
+                .Where(h => h.HypothesisBatchId == batchId)
+                .OrderBy(h => h.Id)
+                .ToListAsync(_pageCts.Token);
+        }
+        else
+        {
+            var hId = _model.Id;
+            DbContext.Entry(_model).State = EntityState.Detached;
+            _model = await DbContext.Hypotheses
+                .Include(h => h.BenchmarkRunBefore)
+                .Include(h => h.BenchmarkRunAfter)
+                .FirstOrDefaultAsync(h => h.Id == hId, _pageCts.Token);
+            if (_model == null)
+            {
+                Snackbar.Add("Hypothesis not found.", Severity.Error);
+                return;
+            }
+
+            _selectedBuildsOn = _model.BuildsOnHypothesisId;
+            _benchmarkSql = _experiment?.BenchmarkSql;
+            _editMode = false;
+            _otherHypotheses = await DbContext.Hypotheses
+                .Where(h => h.HypothesisBatchId == batchId && h.Id != _model.Id)
+                .OrderBy(h => h.Id)
+                .ToListAsync(_pageCts.Token);
+            ComputeBenchDeltas();
+        }
+
+        CaptureBaseline();
+        await InvokeAsync(StateHasChanged);
     }
 
     private void GoBack() => Navigation.NavigateTo($"/experiments/{ExperimentId}/hypothesis-batches/{BatchId}");

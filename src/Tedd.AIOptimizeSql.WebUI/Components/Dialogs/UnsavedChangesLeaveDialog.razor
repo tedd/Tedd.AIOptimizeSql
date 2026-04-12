@@ -1,0 +1,23 @@
+@using MudBlazor
+
+<MudDialog>
+    <DialogContent>
+        <MudText Typo="Typo.body1">You have unsaved changes. Save them, discard them, or stay on this page?</MudText>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel">Cancel</MudButton>
+        <MudButton Color="Color.Warning" OnClick="Discard">Discard</MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="Save">Save</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter]
+    private IMudDialogInstance MudDialog { get; set; } = default!;
+
+    private void Cancel() => MudDialog.Cancel();
+
+    private void Discard() => MudDialog.Close(DialogResult.Ok(UnsavedChangesLeaveChoice.Discard));
+
+    private void Save() => MudDialog.Close(DialogResult.Ok(UnsavedChangesLeaveChoice.Save));
+}

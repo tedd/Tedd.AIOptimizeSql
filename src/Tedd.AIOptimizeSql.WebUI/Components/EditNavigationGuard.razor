@@ -1,0 +1,71 @@
+@using Microsoft.AspNetCore.Components.Routing
+@using Tedd.AIOptimizeSql.WebUI.Components.Dialogs
+@inject NavigationManager Navigation
+@inject IDialogService DialogService
+
+<NavigationLock OnBeforeInternalNavigation="OnBeforeInternalNavigation"
+                ConfirmExternalNavigation="@ConfirmExternalNavigationActive" />
+
+@code {
+    /// <summary>When true, unsaved changes are present and navigation should be confirmed.</summary>
+    [Parameter]
+    public Func<bool>? HasUnsavedChanges { get; set; }
+
+    /// <summary>Persist changes without navigating. Return true when save succeeded.</summary>
+    [Parameter]
+    public Func<Task<bool>>? TrySaveAsync { get; set; }
+
+    /// <summary>Revert the form to the last loaded state (or defaults for new entities).</summary>
+    [Parameter]
+    public Func<Task>? DiscardAsync { get; set; }
+
+    private bool _suppressInternalCheck;
+
+    private bool ConfirmExternalNavigationActive => HasUnsavedChanges?.Invoke() ?? false;
+
+    private async Task OnBeforeInternalNavigation(LocationChangingContext context)
+    {
+        if (_suppressInternalCheck)
+            return;
+
+        if (HasUnsavedChanges is null || !HasUnsavedChanges())
+            return;
+
+        context.PreventNavigation();
+        var target = context.TargetLocation;
+
+        var dialog = await DialogService.ShowAsync<UnsavedChangesLeaveDialog>(
+            title: "Unsaved changes",
+            options: new DialogOptions { BackdropClick = false, CloseButton = false });
+
+        var result = await dialog.Result;
+        if (result is null || result.Canceled)
+            return;
+
+        if (result.Data is not UnsavedChangesLeaveChoice choice)
+            return;
+
+        if (choice == UnsavedChangesLeaveChoice.Save)
+        {
+            if (TrySaveAsync is null)
+                return;
+            if (!await TrySaveAsync())
+                return;
+        }
+        else if (choice == UnsavedChangesLeaveChoice.Discard)
+        {
+            if (DiscardAsync is not null)
+                await DiscardAsync();
+        }
+
+        _suppressInternalCheck = true;
+        try
+        {
+            Navigation.NavigateTo(target);
+        }
+        finally
+        {
+            _suppressInternalCheck = false;
+        }
+    }
+}
