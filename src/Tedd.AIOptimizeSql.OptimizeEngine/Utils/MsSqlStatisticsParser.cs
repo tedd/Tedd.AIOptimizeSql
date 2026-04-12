@@ -2,7 +2,7 @@ using System.Text.RegularExpressions;
 
 using Tedd.AIOptimizeSql.OptimizeEngine.Models;
 
-namespace Tedd.AIOptimizeSql.OptimizeEngine.Services;
+namespace Tedd.AIOptimizeSql.OptimizeEngine.Utils;
 
 /// <summary>
 /// Parses SET STATISTICS TIME / IO output from SQL Server

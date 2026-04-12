@@ -7,6 +7,7 @@ using Microsoft.Extensions.Options;
 using Tedd.AIOptimizeSql.Database;
 using Tedd.AIOptimizeSql.Database.DataAccess;
 using Tedd.AIOptimizeSql.Database.Models;
+using Tedd.AIOptimizeSql.OptimizeEngine.Models;
 
 namespace Tedd.AIOptimizeSql.OptimizeEngine.Services;
 

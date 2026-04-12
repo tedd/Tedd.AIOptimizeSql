@@ -2,7 +2,7 @@ using System.Text;
 
 using Tedd.AIOptimizeSql.Database.Models;
 
-namespace Tedd.AIOptimizeSql.OptimizeEngine.Services;
+namespace Tedd.AIOptimizeSql.OptimizeEngine.Utils;
 
 internal static class HypothesisPromptBuilder
 {

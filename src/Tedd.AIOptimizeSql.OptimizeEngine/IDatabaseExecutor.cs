@@ -1,6 +1,6 @@
 ﻿using System.Data.Common;
 
-namespace Tedd.AIOptimizeSql.OptimizeEngine.Services;
+namespace Tedd.AIOptimizeSql.OptimizeEngine;
 
 /// <summary>
 /// Abstracts all database-engine-specific operations so the benchmarking

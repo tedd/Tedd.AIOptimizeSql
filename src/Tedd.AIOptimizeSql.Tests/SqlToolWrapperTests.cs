@@ -6,7 +6,8 @@ using Microsoft.Extensions.Logging.Abstractions;
 
 using Moq;
 
-using Tedd.AIOptimizeSql.OptimizeEngine.Services;
+using Tedd.AIOptimizeSql.OptimizeEngine;
+using Tedd.AIOptimizeSql.OptimizeEngine.Utils;
 
 namespace Tedd.AIOptimizeSql.Tests;
 

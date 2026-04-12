@@ -1,6 +1,6 @@
 using Tedd.AIOptimizeSql.Database.Models;
 using Tedd.AIOptimizeSql.Database.Models.Enums;
-using Tedd.AIOptimizeSql.OptimizeEngine.Services;
+using Tedd.AIOptimizeSql.OptimizeEngine.Utils;
 
 namespace Tedd.AIOptimizeSql.Tests;
 

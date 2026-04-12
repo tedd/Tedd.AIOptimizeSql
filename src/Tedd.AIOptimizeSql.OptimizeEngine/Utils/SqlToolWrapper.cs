@@ -4,7 +4,9 @@ using System.Text;
 
 using Microsoft.Extensions.Logging;
 
-namespace Tedd.AIOptimizeSql.OptimizeEngine.Services;
+using Tedd.AIOptimizeSql.OptimizeEngine;
+
+namespace Tedd.AIOptimizeSql.OptimizeEngine.Utils;
 
 /// <summary>
 /// Wraps <see cref="IDatabaseExecutor"/> operations as methods that can be

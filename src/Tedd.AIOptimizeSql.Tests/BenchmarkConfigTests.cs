@@ -1,4 +1,4 @@
-using Tedd.AIOptimizeSql.OptimizeEngine.Services;
+using Tedd.AIOptimizeSql.OptimizeEngine.Models;
 
 namespace Tedd.AIOptimizeSql.Tests;
 

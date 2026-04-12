@@ -1,4 +1,7 @@
-﻿namespace Tedd.AIOptimizeSql.OptimizeEngine.Services;
+using Tedd.AIOptimizeSql.OptimizeEngine;
+using Tedd.AIOptimizeSql.OptimizeEngine.Models;
+
+namespace Tedd.AIOptimizeSql.OptimizeEngine.Utils;
 
 /// <summary>
 /// Factory that returns the appropriate <see cref="IDatabaseExecutor"/> for the

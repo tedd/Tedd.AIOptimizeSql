@@ -3,7 +3,7 @@ using Microsoft.EntityFrameworkCore;
 
 using Tedd.AIOptimizeSql.Database;
 using Tedd.AIOptimizeSql.Database.DataAccess;
-using Tedd.AIOptimizeSql.OptimizeEngine.Services;
+using Tedd.AIOptimizeSql.OptimizeEngine;
 
 namespace Tedd.AIOptimizeSql.Worker;
 
@@ -20,16 +20,12 @@ public class Program
         builder.Services.AddDbContextFactory<AIOptimizeDbContext>(options =>
             options.UseSqlServer(aiOptimizeCs));
 
-        builder.Services.Configure<OptimizeEngineSettings>(
-            builder.Configuration.GetSection("OptimizeEngine"));
-
         builder.Services.AddScoped<IAIOptimizeDataAccess, AIOptimizeDataAccess>();
-        builder.Services.AddSingleton<AiAgentFactory>();
-        builder.Services.AddSingleton<IAiHypothesisService, AiHypothesisService>();
-        builder.Services.AddSingleton<BatchProcessingEngine>();
-        builder.Services.AddHostedService<QueueMonitorService>();
+
+        Startup.ConfigureServices(builder);
 
         var host = builder.Build();
+        Startup.ConfigureApplication(host);
         host.Run();
     }
 

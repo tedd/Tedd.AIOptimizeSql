@@ -1,4 +1,4 @@
-namespace Tedd.AIOptimizeSql.OptimizeEngine.Services;
+namespace Tedd.AIOptimizeSql.OptimizeEngine.Models;
 
 public sealed class OptimizeEngineSettings
 {

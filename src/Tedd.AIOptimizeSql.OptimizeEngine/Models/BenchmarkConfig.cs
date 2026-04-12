@@ -1,4 +1,4 @@
-namespace Tedd.AIOptimizeSql.OptimizeEngine.Services;
+namespace Tedd.AIOptimizeSql.OptimizeEngine.Models;
 
 /// <summary>
 /// Configuration for database benchmarking (executor factory and cache timing).

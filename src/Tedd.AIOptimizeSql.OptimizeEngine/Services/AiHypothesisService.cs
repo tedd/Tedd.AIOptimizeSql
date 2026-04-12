@@ -9,6 +9,8 @@ using System.Diagnostics;
 using Tedd.AIOptimizeSql.Database;
 using Tedd.AIOptimizeSql.Database.Models;
 using Tedd.AIOptimizeSql.Database.Models.Enums;
+using Tedd.AIOptimizeSql.OptimizeEngine.Models;
+using Tedd.AIOptimizeSql.OptimizeEngine.Utils;
 
 namespace Tedd.AIOptimizeSql.OptimizeEngine.Services;
 

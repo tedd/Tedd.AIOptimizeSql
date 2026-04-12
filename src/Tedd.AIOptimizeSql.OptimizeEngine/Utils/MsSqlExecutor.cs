@@ -3,9 +3,10 @@ using System.Text.RegularExpressions;
 
 using Microsoft.Data.SqlClient;
 
+using Tedd.AIOptimizeSql.OptimizeEngine;
 using Tedd.AIOptimizeSql.OptimizeEngine.Models;
 
-namespace Tedd.AIOptimizeSql.OptimizeEngine.Services;
+namespace Tedd.AIOptimizeSql.OptimizeEngine.Utils;
 
 /// <summary>
 /// MSSQL-specific implementation of <see cref="IDatabaseExecutor"/>.
