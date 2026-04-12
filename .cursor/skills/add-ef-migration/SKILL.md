@@ -1,6 +1,6 @@
 ---
 name: add-ef-migration
-description: Adds Entity Framework Core SQL Server migrations for Tedd.AIOptimizeSql by running dotnet ef against the Database project with WebUI as startup. Use when the user asks to add a migration, update the schema, or run dotnet ef migrations add/remove after model or DbContext changes.
+description: Adds Entity Framework Core SQL Server migrations for Tedd.AIOptimizeSql by running dotnet ef against the Database project with WebUI as startup. Use when the user asks to add a migration, update the schema, or run dotnet ef migrations add/remove after model or DbContext changes. Never run database update automatically; see skill body.
 ---
 
 # Add EF Core migration (Tedd.AIOptimizeSql)
@@ -31,18 +31,10 @@ dotnet ef migrations add <MigrationName> --project Tedd.AIOptimizeSql.Database -
 
 Replace `<MigrationName>` with a descriptive PascalCase name (e.g. `AddBenchmarkColumns`).
 
-## Remove the last migration
-
-Only if it was not applied to any shared database:
-
-```bash
-cd src
-dotnet ef migrations remove --project Tedd.AIOptimizeSql.Database --startup-project Tedd.AIOptimizeSql.WebUI --context AIOptimizeDbContext
-```
-
 ## After adding a migration
 
-- **Runtime apply**: Users normally apply via the WebUI **Database setup** page (`/database/migration`) using **Apply migrations**, or you can run `dotnet ef database update` with the same `--project` / `--startup-project` / `--context` flags if appropriate for the environment.
+- **Do not apply the database from this workflow**: Never run `dotnet ef database update` (or any other automatic apply) unless the user explicitly asks to apply migrations in the same turn. Adding a migration only versions the schema in source control; applying it is a separate, deliberate step for the user (see [update-ef-database](../update-ef-database/SKILL.md)).
+- **Tell the user** they can apply via WebUI **Database setup** (`/database/migration`) → **Apply migrations**, or run `dotnet ef database update` themselves with the same `--project` / `--startup-project` / `--context` flags when they are ready.
 - **Review** the generated `Migrations/*.cs` for unintended table/column renames; adjust the model or use explicit `MigrationBuilder` steps if needed.
 
 ## Troubleshooting
@@ -52,5 +44,6 @@ dotnet ef migrations remove --project Tedd.AIOptimizeSql.Database --startup-proj
 
 ## Do not
 
+- Run **`dotnet ef database update`** (or otherwise apply migrations to a database) automatically after `migrations add` or as an implied follow-up—only when the user clearly requests applying migrations.
 - Add migrations to the WebUI project; keep them under `Tedd.AIOptimizeSql.Database/Migrations/`.
 - Rely on `EnsureCreated()` for this app; migrations are the source of truth.
