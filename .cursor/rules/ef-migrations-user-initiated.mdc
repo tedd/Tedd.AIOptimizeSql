@@ -1,0 +1,20 @@
+---
+description: >-
+  Never add or remove Entity Framework Core migrations unless the user explicitly
+  requests it in the conversation. Applies when working under Database or
+  Database.Models.
+globs:
+  - src/Tedd.AIOptimizeSql.Database/**
+  - src/Tedd.AIOptimizeSql.Database.Models/**
+alwaysApply: false
+---
+
+# EF migrations: user-initiated only (Tedd.AIOptimizeSql)
+
+Do **not** run `dotnet ef migrations add`, `dotnet ef migrations remove`, or hand-author new files under `Tedd.AIOptimizeSql.Database/Migrations/` unless the user **clearly asks** in the current conversation (e.g. “add a migration”, “create migration for …”).
+
+Finishing changes to entities, `AIOptimizeDbContext`, or related code **does not** authorize adding a migration. Wait for an explicit request.
+
+Do **not** run `dotnet ef database update` or apply migrations to a database unless the user explicitly asks in that conversation.
+
+For commands and conventions after the user asks, use the project skills **add-ef-migration** and **update-ef-database** under `.cursor/skills/`.

@@ -1,14 +1,17 @@
 ---
 name: add-ef-migration
-description: Adds Entity Framework Core SQL Server migrations for Tedd.AIOptimizeSql by running dotnet ef against the Database project with WebUI as startup. Use when the user asks to add a migration, update the schema, or run dotnet ef migrations add/remove after model or DbContext changes. Never run database update automatically; see skill body.
+description: Adds Entity Framework Core SQL Server migrations for Tedd.AIOptimizeSql by running dotnet ef against the Database project with WebUI as startup. Use only when the user explicitly asks to add or remove a migration or run dotnet ef migrations add/remove. Do not add migrations proactively; see ef-migrations-user-initiated. Never run database update automatically; see skill body.
 ---
 
 # Add EF Core migration (Tedd.AIOptimizeSql)
 
+## Policy
+
+**Never add or remove migrations unless the user explicitly asks in this conversation.** Model or `DbContext` edits alone are not a trigger. See [ef-migrations-user-initiated](../ef-migrations-user-initiated/SKILL.md).
+
 ## When to use
 
-- `Database.Models` entities or `AIOptimizeDbContext` changed and the database schema must be versioned.
-- User says "add migration", "new migration", "dotnet ef", or "update the database schema".
+- User says "add migration", "new migration", "remove migration", `dotnet ef migrations add`, or otherwise clearly requests migration tooling.
 
 ## Convention
 
@@ -44,6 +47,7 @@ Replace `<MigrationName>` with a descriptive PascalCase name (e.g. `AddBenchmark
 
 ## Do not
 
+- Run **`dotnet ef migrations add`** (or remove) **without an explicit user request** in the current turn.
 - Run **`dotnet ef database update`** (or otherwise apply migrations to a database) automatically after `migrations add` or as an implied follow-up—only when the user clearly requests applying migrations.
 - Add migrations to the WebUI project; keep them under `Tedd.AIOptimizeSql.Database/Migrations/`.
 - Rely on `EnsureCreated()` for this app; migrations are the source of truth.
