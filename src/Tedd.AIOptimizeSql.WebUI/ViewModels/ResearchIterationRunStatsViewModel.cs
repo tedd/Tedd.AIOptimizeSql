@@ -1,6 +1,6 @@
 namespace Tedd.AIOptimizeSql.WebUI.ViewModels;
 
-public sealed class HypothesisBatchRunStatsViewModel
+public sealed class ResearchIterationRunStatsViewModel
 {
     public int TotalHypotheses { get; init; }
     public int Improvements { get; init; }

@@ -3,14 +3,14 @@ using Tedd.AIOptimizeSql.Database.Models.Enums;
 
 namespace Tedd.AIOptimizeSql.Database.DataAccess;
 
-public sealed record HypothesisBatchListRow(
-    HypothesisBatchId Id,
+public sealed record ResearchIterationListRow(
+    ResearchIterationId Id,
     ExperimentId ExperimentId,
     string ExperimentName,
     int HypothesisCount,
     double? BestImprovementPct,
     int ImprovementCount,
-    HypothesisBatchState State,
+    ResearchIterationState State,
     DateTime? StartedAt,
     DateTime? EndedAt,
     string? LastMessage,

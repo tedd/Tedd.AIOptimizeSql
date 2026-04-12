@@ -33,7 +33,7 @@
             <MudTh><MudTableSortLabel SortLabel="Name" T="Experiment">Name</MudTableSortLabel></MudTh>
             <MudTh><MudTableSortLabel SortLabel="DatabaseConnection" T="Experiment">DB Connection</MudTableSortLabel></MudTh>
             <MudTh><MudTableSortLabel SortLabel="AIConnection" T="Experiment">AI Connection</MudTableSortLabel></MudTh>
-            <MudTh><MudTableSortLabel SortLabel="Runs" T="Experiment">Batches</MudTableSortLabel></MudTh>
+            <MudTh><MudTableSortLabel SortLabel="Iterations" T="Experiment">Iterations</MudTableSortLabel></MudTh>
             <MudTh><MudTableSortLabel SortLabel="CreatedAt" T="Experiment">Created</MudTableSortLabel></MudTh>
             <MudTh><MudTableSortLabel SortLabel="ModifiedAt" T="Experiment">Modified</MudTableSortLabel></MudTh>
             <MudTh Style="width: 160px;">Actions</MudTh>
@@ -64,8 +64,8 @@
                     <MudText Typo="Typo.body2" Color="Color.Default">--</MudText>
                 }
             </MudTd>
-            <MudTd DataLabel="Batches">
-                <MudChip T="string" Size="Size.Small" Color="Color.Info">@context.BatchRuns.Count</MudChip>
+            <MudTd DataLabel="Iterations">
+                <MudChip T="string" Size="Size.Small" Color="Color.Info">@context.ResearchIterations.Count</MudChip>
             </MudTd>
             <MudTd DataLabel="Created">@context.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd")</MudTd>
             <MudTd DataLabel="Modified">@context.ModifiedAt.ToLocalTime().ToString("yyyy-MM-dd")</MudTd>
@@ -75,8 +75,8 @@
                                    OnClick="@(() => Navigation.NavigateTo($"/experiments/{(int)(object)context.Id}/edit"))"
                                    aria-label="Edit" />
                     <MudIconButton Icon="@Icons.Material.Filled.PlayArrow" Color="Color.Success" Size="Size.Small"
-                                   OnClick="@(() => Navigation.NavigateTo($"/experiments/{(int)(object)context.Id}/hypothesis-batches"))"
-                                   aria-label="View hypothesis batches" />
+                                   OnClick="@(() => Navigation.NavigateTo($"/experiments/{(int)(object)context.Id}/research-iterations"))"
+                                   aria-label="View research iterations" />
                     <MudIconButton Icon="@Icons.Material.Filled.Delete" Color="Color.Error" Size="Size.Small"
                                    OnClick="@(() => DeleteSingle(context))" aria-label="Delete" />
                 </MudStack>
@@ -110,7 +110,7 @@
         IQueryable<Experiment> query = DbContext.Experiments
             .Include(p => p.DatabaseConnection)
             .Include(p => p.AIConnection)
-            .Include(p => p.BatchRuns);
+            .Include(p => p.ResearchIterations);
 
         query = state.SortLabel switch
         {
@@ -121,7 +121,7 @@
             "AIConnection" => state.SortDirection == SortDirection.Descending
                 ? query.OrderByDescending(x => x.AIConnection != null ? x.AIConnection.Name : "")
                 : query.OrderBy(x => x.AIConnection != null ? x.AIConnection.Name : ""),
-            "Runs" => state.SortDirection == SortDirection.Descending ? query.OrderByDescending(x => x.BatchRuns.Count) : query.OrderBy(x => x.BatchRuns.Count),
+            "Iterations" => state.SortDirection == SortDirection.Descending ? query.OrderByDescending(x => x.ResearchIterations.Count) : query.OrderBy(x => x.ResearchIterations.Count),
             "CreatedAt" => state.SortDirection == SortDirection.Descending ? query.OrderByDescending(x => x.CreatedAt) : query.OrderBy(x => x.CreatedAt),
             "ModifiedAt" => state.SortDirection == SortDirection.Descending ? query.OrderByDescending(x => x.ModifiedAt) : query.OrderBy(x => x.ModifiedAt),
             _ => query.OrderByDescending(x => x.ModifiedAt)
@@ -137,7 +137,7 @@
     {
         var confirm = await DialogService.ShowMessageBoxAsync(
             "Confirm Delete",
-            $"Delete experiment \"{item.Name}\"? All associated hypothesis batches and hypotheses will also be deleted.",
+            $"Delete experiment \"{item.Name}\"? All associated research iterations and hypotheses will also be deleted.",
             yesText: "Delete", cancelText: "Cancel");
 
         if (confirm == true)
@@ -153,7 +153,7 @@
     {
         var confirm = await DialogService.ShowMessageBoxAsync(
             "Confirm Delete",
-            $"Delete {_selectedItems.Count} experiment(s)? All associated hypothesis batches and hypotheses will also be deleted.",
+            $"Delete {_selectedItems.Count} experiment(s)? All associated research iterations and hypotheses will also be deleted.",
             yesText: "Delete All", cancelText: "Cancel");
 
         if (confirm == true)

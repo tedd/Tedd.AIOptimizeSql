@@ -110,7 +110,7 @@
     {
         var confirm = await DialogService.ShowMessageBoxAsync(
             "Confirm Delete",
-            $"Delete AI connection \"{item.Name}\"? Experiments and hypothesis batch snapshots using this connection will have their AI reference cleared.",
+            $"Delete AI connection \"{item.Name}\"? Experiments and research iteration snapshots using this connection will have their AI reference cleared.",
             yesText: "Delete", cancelText: "Cancel");
 
         if (confirm == true)
@@ -127,7 +127,7 @@
     {
         var confirm = await DialogService.ShowMessageBoxAsync(
             "Confirm Delete",
-            $"Delete {_selectedItems.Count} AI connection(s)? Experiments and hypothesis batch snapshots using these will have their AI reference cleared.",
+            $"Delete {_selectedItems.Count} AI connection(s)? Experiments and research iteration snapshots using these will have their AI reference cleared.",
             yesText: "Delete All", cancelText: "Cancel");
 
         if (confirm == true)

@@ -1,4 +1,4 @@
-@page "/experiments/{ExperimentId:int}/hypothesis-batches"
+@page "/experiments/{ExperimentId:int}/research-iterations"
 @implements IDisposable
 @rendermode InteractiveServer
 @inject Tedd.AIOptimizeSql.Database.AIOptimizeDbContext DbContext
@@ -6,15 +6,18 @@
 @inject IDialogService DialogService
 @inject ISnackbar Snackbar
 @using Microsoft.EntityFrameworkCore
+@using Tedd.AIOptimizeSql.Database.Models
+@using Tedd.AIOptimizeSql.WebUI.Mappers
+@using Tedd.AIOptimizeSql.WebUI.ViewModels
 
-<PageTitle>Hypothesis Batches</PageTitle>
+<PageTitle>Research iterations</PageTitle>
 
 <MudContainer MaxWidth="MaxWidth.ExtraLarge" Class="mt-4">
     <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-4">
         <MudIconButton Icon="@Icons.Material.Filled.ArrowBack"
                        OnClick="@(() => Navigation.NavigateTo("/experiments"))" />
         <MudText Typo="Typo.h4">
-            Hypothesis Batches for: @(_profile?.Name ?? "...")
+            Research iterations for: @(_profile?.Name ?? "...")
         </MudText>
         <MudSpacer />
         @if (_selectedItems.Count > 0)
@@ -29,8 +32,8 @@
             Edit Experiment
         </MudButton>
         <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Add"
-                   Href="@($"/experiments/{ExperimentId}/hypothesis-batches/new")">
-            New hypothesis batch
+                   Href="@($"/experiments/{ExperimentId}/research-iterations/new")">
+            New research iteration
         </MudButton>
     </MudStack>
 
@@ -50,60 +53,60 @@
         </MudCard>
     }
 
-    <MudTable @ref="_table" T="HypothesisBatchRunRowViewModel" ServerData="LoadServerData" Hover="true" Elevation="3"
+    <MudTable @ref="_table" T="ResearchIterationRunRowViewModel" ServerData="LoadServerData" Hover="true" Elevation="3"
               Dense="true" FixedHeader="true" MultiSelection="true" @bind-SelectedItems="_selectedItems"
               OnRowClick="OnRowClick" RowClass="cursor-pointer" Class="rounded-lg">
         <HeaderContent>
-            <MudTh><MudTableSortLabel SortLabel="Id" T="HypothesisBatchRunRowViewModel">Batch #</MudTableSortLabel></MudTh>
-            <MudTh><MudTableSortLabel SortLabel="Hypotheses" T="HypothesisBatchRunRowViewModel">Hypotheses</MudTableSortLabel></MudTh>
-            <MudTh><MudTableSortLabel SortLabel="TotalTime" T="HypothesisBatchRunRowViewModel">Total Time</MudTableSortLabel></MudTh>
-            <MudTh><MudTableSortLabel SortLabel="State" T="HypothesisBatchRunRowViewModel">State</MudTableSortLabel></MudTh>
+            <MudTh><MudTableSortLabel SortLabel="Id" T="ResearchIterationRunRowViewModel">Iteration #</MudTableSortLabel></MudTh>
+            <MudTh><MudTableSortLabel SortLabel="Hypotheses" T="ResearchIterationRunRowViewModel">Hypotheses</MudTableSortLabel></MudTh>
+            <MudTh><MudTableSortLabel SortLabel="TotalTime" T="ResearchIterationRunRowViewModel">Total Time</MudTableSortLabel></MudTh>
+            <MudTh><MudTableSortLabel SortLabel="State" T="ResearchIterationRunRowViewModel">State</MudTableSortLabel></MudTh>
             <MudTh>Started</MudTh>
             <MudTh>Ended</MudTh>
             <MudTh>AI Provider</MudTh>
             <MudTh>Model</MudTh>
             <MudTh>Last message</MudTh>
             <MudTh>Hints</MudTh>
-            <MudTh><MudTableSortLabel SortLabel="CreatedAt" T="HypothesisBatchRunRowViewModel">Created</MudTableSortLabel></MudTh>
+            <MudTh><MudTableSortLabel SortLabel="CreatedAt" T="ResearchIterationRunRowViewModel">Created</MudTableSortLabel></MudTh>
             <MudTh Style="width: 120px;">Actions</MudTh>
         </HeaderContent>
         <RowTemplate>
-            <MudTd DataLabel="Batch #">@((int)(object)context.Run.Id)</MudTd>
+            <MudTd DataLabel="Iteration #">@((int)(object)context.Iteration.Id)</MudTd>
             <MudTd DataLabel="Hypotheses">
                 <MudChip T="string" Size="Size.Small" Color="Color.Info">@context.HypothesisCount</MudChip>
             </MudTd>
             <MudTd DataLabel="Total Time">@FormatTime(context.TotalTimeMs)</MudTd>
             <MudTd DataLabel="State">
-                <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">@context.Run.State.ToString()</MudChip>
+                <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">@context.Iteration.State.ToString()</MudChip>
             </MudTd>
-            <MudTd DataLabel="Started">@FormatNullableLocal(context.Run.StartedAt)</MudTd>
-            <MudTd DataLabel="Ended">@FormatNullableLocal(context.Run.EndedAt)</MudTd>
-            <MudTd DataLabel="AI Provider">@(context.Run.AiProviderUsed?.ToString() ?? "—")</MudTd>
-            <MudTd DataLabel="Model">@(context.Run.AiModelUsed ?? "—")</MudTd>
+            <MudTd DataLabel="Started">@FormatNullableLocal(context.Iteration.StartedAt)</MudTd>
+            <MudTd DataLabel="Ended">@FormatNullableLocal(context.Iteration.EndedAt)</MudTd>
+            <MudTd DataLabel="AI Provider">@(context.Iteration.AiProviderUsed?.ToString() ?? "—")</MudTd>
+            <MudTd DataLabel="Model">@(context.Iteration.AiModelUsed ?? "—")</MudTd>
             <MudTd DataLabel="Last message">
                 <MudText Typo="Typo.body2" Style="max-width:200px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
-                    @(context.Run.LastMessage ?? "—")
+                    @(context.Iteration.LastMessage ?? "—")
                 </MudText>
             </MudTd>
             <MudTd DataLabel="Hints">
                 <MudText Typo="Typo.body2" Style="max-width:300px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
-                    @(context.Run.Hints ?? "--")
+                    @(context.Iteration.Hints ?? "--")
                 </MudText>
             </MudTd>
-            <MudTd DataLabel="Created">@context.Run.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd")</MudTd>
+            <MudTd DataLabel="Created">@context.Iteration.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd")</MudTd>
             <MudTd>
                 <MudIconButton Icon="@Icons.Material.Filled.Edit" Color="Color.Primary" Size="Size.Small"
-                               Href="@($"/experiments/{ExperimentId}/hypothesis-batches/{(int)(object)context.Run.Id}/edit")"
-                               aria-label="Edit batch" />
+                               Href="@($"/experiments/{ExperimentId}/research-iterations/{(int)(object)context.Iteration.Id}/edit")"
+                               aria-label="Edit iteration" />
                 <MudIconButton Icon="@Icons.Material.Filled.List" Color="Color.Info" Size="Size.Small"
-                               Href="@($"/experiments/{ExperimentId}/hypothesis-batches/{(int)(object)context.Run.Id}")"
+                               Href="@($"/experiments/{ExperimentId}/research-iterations/{(int)(object)context.Iteration.Id}")"
                                aria-label="Hypotheses" />
                 <MudIconButton Icon="@Icons.Material.Filled.Delete" Color="Color.Error" Size="Size.Small"
                                OnClick="@(() => DeleteSingle(context))" aria-label="Delete" />
             </MudTd>
         </RowTemplate>
         <NoRecordsContent>
-            <MudText Typo="Typo.body1" Class="pa-4">No hypothesis batches found.</MudText>
+            <MudText Typo="Typo.body1" Class="pa-4">No research iterations found.</MudText>
         </NoRecordsContent>
         <PagerContent>
             <MudTablePager PageSizeOptions="new int[] { 20, 50, 100 }" />
@@ -116,8 +119,8 @@
 
     private readonly CancellationTokenSource _pageCts = new();
     private Experiment? _profile;
-    private MudTable<HypothesisBatchRunRowViewModel>? _table;
-    private HashSet<HypothesisBatchRunRowViewModel> _selectedItems = new();
+    private MudTable<ResearchIterationRunRowViewModel>? _table;
+    private HashSet<ResearchIterationRunRowViewModel> _selectedItems = new();
     private string[] _chartLabels = Array.Empty<string>();
     private List<ChartSeries<double>> _runChartSeries = new();
 
@@ -139,7 +142,7 @@
     {
         var experimentId = (ExperimentId)(object)ExperimentId;
         var hypotheses = await DbContext.Hypotheses
-            .Where(h => h.HypothesisBatch!.ExperimentId == experimentId)
+            .Where(h => h.ResearchIteration!.ExperimentId == experimentId)
             .OrderBy(h => h.CreatedAt)
             .Select(h => new { h.ImpovementPercentage, h.CreatedAt })
             .Take(50)
@@ -156,21 +159,21 @@
     {
         if (ms < 1000) return $"{ms}ms";
         if (ms < 60000) return $"{ms / 1000.0:F1}s";
-        
+
         return $"{ms / 60000.0:F1}m";
     }
 
     private static string FormatNullableLocal(DateTime? utc) =>
         utc.HasValue ? utc.Value.ToLocalTime().ToString("yyyy-MM-dd HH:mm") : "—";
 
-    private Task<TableData<HypothesisBatchRunRowViewModel>> LoadServerData(TableState state, CancellationToken ct) =>
+    private Task<TableData<ResearchIterationRunRowViewModel>> LoadServerData(TableState state, CancellationToken ct) =>
         PageLoadCancellation.RunTableLoadAsync(t => LoadServerDataCore(state, t), _pageCts.Token, ct);
 
-    private async Task<TableData<HypothesisBatchRunRowViewModel>> LoadServerDataCore(TableState state, CancellationToken cancellationToken)
+    private async Task<TableData<ResearchIterationRunRowViewModel>> LoadServerDataCore(TableState state, CancellationToken cancellationToken)
     {
         var experimentId = (ExperimentId)(object)ExperimentId;
 
-        IQueryable<HypothesisBatch> query = DbContext.HypothesisBatches
+        IQueryable<ResearchIteration> query = DbContext.ResearchIterations
             .Include(r => r.Hypotheses)
             .Where(r => r.ExperimentId == experimentId);
 
@@ -187,28 +190,28 @@
         var totalItems = await query.CountAsync(cancellationToken);
         var runs = await query.Skip(state.Page * state.PageSize).Take(state.PageSize).ToListAsync(cancellationToken);
 
-        var items = runs.Select(HypothesisBatchRunRowMapper.FromTrackedBatch).ToList();
+        var items = runs.Select(ResearchIterationRunRowMapper.FromTrackedIteration).ToList();
 
-        return new TableData<HypothesisBatchRunRowViewModel> { TotalItems = totalItems, Items = items };
+        return new TableData<ResearchIterationRunRowViewModel> { TotalItems = totalItems, Items = items };
     }
 
-    private void OnRowClick(TableRowClickEventArgs<HypothesisBatchRunRowViewModel> args)
+    private void OnRowClick(TableRowClickEventArgs<ResearchIterationRunRowViewModel> args)
     {
-        Navigation.NavigateTo($"/experiments/{ExperimentId}/hypothesis-batches/{(int)(object)args.Item!.Run.Id}/edit");
+        Navigation.NavigateTo($"/experiments/{ExperimentId}/research-iterations/{(int)(object)args.Item!.Iteration.Id}/edit");
     }
 
-    private async Task DeleteSingle(HypothesisBatchRunRowViewModel vm)
+    private async Task DeleteSingle(ResearchIterationRunRowViewModel vm)
     {
         var confirm = await DialogService.ShowMessageBoxAsync(
             "Confirm Delete",
-            $"Delete this hypothesis batch and all its hypotheses?",
+            $"Delete this research iteration and all its hypotheses?",
             yesText: "Delete", cancelText: "Cancel");
 
         if (confirm == true)
         {
-            DbContext.HypothesisBatches.Remove(vm.Run);
+            DbContext.ResearchIterations.Remove(vm.Iteration);
             await DbContext.SaveChangesAsync();
-            Snackbar.Add("Hypothesis batch deleted", Severity.Success);
+            Snackbar.Add("Research iteration deleted", Severity.Success);
             await _table!.ReloadServerData();
             await LoadChartData();
         }
@@ -218,15 +221,15 @@
     {
         var confirm = await DialogService.ShowMessageBoxAsync(
             "Confirm Delete",
-            $"Delete {_selectedItems.Count} hypothesis batch(es) and all their hypotheses?",
+            $"Delete {_selectedItems.Count} research iteration(s) and all their hypotheses?",
             yesText: "Delete All", cancelText: "Cancel");
 
         if (confirm == true)
         {
             foreach (var vm in _selectedItems)
-                DbContext.HypothesisBatches.Remove(vm.Run);
+                DbContext.ResearchIterations.Remove(vm.Iteration);
             await DbContext.SaveChangesAsync();
-            Snackbar.Add($"Deleted {_selectedItems.Count} hypothesis batch(es)", Severity.Success);
+            Snackbar.Add($"Deleted {_selectedItems.Count} research iteration(s)", Severity.Success);
             _selectedItems.Clear();
             await _table!.ReloadServerData();
             await LoadChartData();

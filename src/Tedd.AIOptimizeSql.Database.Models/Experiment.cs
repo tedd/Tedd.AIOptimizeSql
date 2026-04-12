@@ -59,7 +59,7 @@ public record Experiment
     public AIConnectionId? AIConnectionId { get; set; }
     public AIConnection? AIConnection { get; set; }
 
-    public List<HypothesisBatch> BatchRuns { get; set; } = new List<HypothesisBatch>();
+    public List<ResearchIteration> ResearchIterations { get; set; } = new List<ResearchIteration>();
 
     /// <summary>
     /// Created UTC

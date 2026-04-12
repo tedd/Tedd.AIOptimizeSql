@@ -22,54 +22,54 @@ public sealed class AiHypothesisService(
 {
     private readonly ILogger _logger = loggerFactory.CreateLogger<AiHypothesisService>();
 
-    public async Task RunBatchAsync(HypothesisBatchId batchId, CancellationToken cancellationToken = default)
+    public async Task RunIterationAsync(ResearchIterationId iterationId, CancellationToken cancellationToken = default)
     {
-        _logger.LogInformation("Starting hypothesis generation loop for batch {BatchId}", batchId);
+        _logger.LogInformation("Starting hypothesis generation loop for research iteration {IterationId}", iterationId);
 
-        var batch = await LoadBatchAsync(batchId, cancellationToken);
-        if (batch is null)
+        var iteration = await LoadIterationAsync(iterationId, cancellationToken);
+        if (iteration is null)
         {
-            _logger.LogWarning("Batch {BatchId} not found, aborting", batchId);
+            _logger.LogWarning("Research iteration {IterationId} not found, aborting", iterationId);
             return;
         }
 
-        var hypothesesCreated = batch.Hypotheses.Count;
+        var hypothesesCreated = iteration.Hypotheses.Count;
 
-        while (hypothesesCreated < batch.MaxNumberOfHypotheses)
+        while (hypothesesCreated < iteration.MaxNumberOfHypotheses)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            var currentState = await GetBatchStateAsync(batchId, cancellationToken);
-            if (currentState is HypothesisBatchState.Stopped or HypothesisBatchState.Paused)
+            var currentState = await GetIterationStateAsync(iterationId, cancellationToken);
+            if (currentState is ResearchIterationState.Stopped or ResearchIterationState.Paused)
             {
-                _logger.LogInformation("Batch {BatchId} is {State}, stopping generation loop", batchId, currentState);
-                await UpdateBatchMessageAsync(batchId,
-                    currentState == HypothesisBatchState.Paused ? "Paused" : "Stopped by user",
+                _logger.LogInformation("Research iteration {IterationId} is {State}, stopping generation loop", iterationId, currentState);
+                await UpdateIterationMessageAsync(iterationId,
+                    currentState == ResearchIterationState.Paused ? "Paused" : "Stopped by user",
                     cancellationToken);
                 return;
             }
 
-            await UpdateBatchMessageAsync(batchId,
-                $"Generating hypothesis {hypothesesCreated + 1} of {batch.MaxNumberOfHypotheses}",
+            await UpdateIterationMessageAsync(iterationId,
+                $"Generating hypothesis {hypothesesCreated + 1} of {iteration.MaxNumberOfHypotheses}",
                 cancellationToken);
 
-            batch = await LoadBatchAsync(batchId, cancellationToken)
-                ?? throw new InvalidOperationException($"Batch {batchId} disappeared during processing.");
+            iteration = await LoadIterationAsync(iterationId, cancellationToken)
+                ?? throw new InvalidOperationException($"Research iteration {iterationId} disappeared during processing.");
 
-            var priorHypotheses = await GetPriorHypothesesAsync(batchId, cancellationToken);
+            var priorHypotheses = await GetPriorHypothesesAsync(iterationId, cancellationToken);
 
-            var placeholder = await InsertPendingHypothesisAsync(batchId, hypothesesCreated + 1, cancellationToken);
+            var placeholder = await InsertPendingHypothesisAsync(iterationId, hypothesesCreated + 1, cancellationToken);
 
             try
             {
                 await UpdateHypothesisStatusAsync(placeholder.Id, HypothesisState.Generating, cancellationToken);
 
-                var result = await GenerateSingleHypothesisAsync(batch, priorHypotheses, cancellationToken);
+                var result = await GenerateSingleHypothesisAsync(iteration, priorHypotheses, cancellationToken);
 
                 await FinalizeHypothesisAsync(placeholder.Id, result.Description, result.TimeUsedMs, cancellationToken);
                 hypothesesCreated++;
 
-                _logger.LogInformation("Hypothesis #{Number} created for batch {BatchId}", hypothesesCreated, batchId);
+                _logger.LogInformation("Hypothesis #{Number} created for research iteration {IterationId}", hypothesesCreated, iterationId);
             }
             catch (OperationCanceledException)
             {
@@ -78,39 +78,39 @@ public sealed class AiHypothesisService(
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Failed to generate hypothesis #{Number} for batch {BatchId}",
-                    hypothesesCreated + 1, batchId);
+                _logger.LogError(ex, "Failed to generate hypothesis #{Number} for research iteration {IterationId}",
+                    hypothesesCreated + 1, iterationId);
                 await FailHypothesisAsync(placeholder.Id, ex.Message, CancellationToken.None);
                 hypothesesCreated++;
             }
 
-            var stateAfter = await GetBatchStateAsync(batchId, cancellationToken);
-            if (stateAfter is HypothesisBatchState.Stopped or HypothesisBatchState.Paused)
+            var stateAfter = await GetIterationStateAsync(iterationId, cancellationToken);
+            if (stateAfter is ResearchIterationState.Stopped or ResearchIterationState.Paused)
             {
-                _logger.LogInformation("Batch {BatchId} is {State} after hypothesis, stopping", batchId, stateAfter);
-                await UpdateBatchMessageAsync(batchId,
-                    stateAfter == HypothesisBatchState.Paused ? "Paused" : "Stopped by user",
+                _logger.LogInformation("Research iteration {IterationId} is {State} after hypothesis, stopping", iterationId, stateAfter);
+                await UpdateIterationMessageAsync(iterationId,
+                    stateAfter == ResearchIterationState.Paused ? "Paused" : "Stopped by user",
                     CancellationToken.None);
                 return;
             }
         }
 
-        await UpdateBatchMessageAsync(batchId,
+        await UpdateIterationMessageAsync(iterationId,
             $"All {hypothesesCreated} hypotheses generated",
             cancellationToken);
 
-        _logger.LogInformation("Batch {BatchId} hypothesis loop completed ({Count} hypotheses)", batchId, hypothesesCreated);
+        _logger.LogInformation("Research iteration {IterationId} hypothesis loop completed ({Count} hypotheses)", iterationId, hypothesesCreated);
     }
 
     private async Task<(string? Description, long TimeUsedMs)> GenerateSingleHypothesisAsync(
-        HypothesisBatch batch,
+        ResearchIteration iteration,
         IReadOnlyList<Hypothesis> priorHypotheses,
         CancellationToken cancellationToken)
     {
-        var experiment = batch.Experiment
-            ?? throw new InvalidOperationException("Experiment must be loaded on the batch.");
-        var aiConnection = batch.AIConnection
-            ?? throw new InvalidOperationException("AIConnection must be loaded on the batch.");
+        var experiment = iteration.Experiment
+            ?? throw new InvalidOperationException("Experiment must be loaded on the research iteration.");
+        var aiConnection = iteration.AIConnection
+            ?? throw new InvalidOperationException("AIConnection must be loaded on the research iteration.");
         var dbConnection = experiment.DatabaseConnection
             ?? throw new InvalidOperationException("DatabaseConnection must be loaded on the experiment.");
 
@@ -130,14 +130,14 @@ public sealed class AiHypothesisService(
             AIFunctionFactory.Create(toolWrapper.GetExecutionPlan, nameof(toolWrapper.GetExecutionPlan)),
         };
 
-        var instructions = HypothesisPromptBuilder.BuildInstructions(experiment, batch, priorHypotheses);
+        var instructions = HypothesisPromptBuilder.BuildInstructions(experiment, iteration, priorHypotheses);
         var agent = agentFactory.Create(aiConnection, instructions, tools);
 
         var sw = Stopwatch.StartNew();
-        var prompt = HypothesisPromptBuilder.BuildPrompt(batch, priorHypotheses);
+        var prompt = HypothesisPromptBuilder.BuildPrompt(iteration, priorHypotheses);
 
-        _logger.LogInformation("Invoking AI agent for batch {BatchId}, hypothesis #{Number}",
-            batch.Id, priorHypotheses.Count + 1);
+        _logger.LogInformation("Invoking AI agent for research iteration {IterationId}, hypothesis #{Number}",
+            iteration.Id, priorHypotheses.Count + 1);
 
         var result = await agent.RunAsync(prompt, cancellationToken: cancellationToken);
         sw.Stop();
@@ -149,48 +149,48 @@ public sealed class AiHypothesisService(
 
     #region Database helpers
 
-    private async Task<HypothesisBatch?> LoadBatchAsync(HypothesisBatchId batchId, CancellationToken ct)
+    private async Task<ResearchIteration?> LoadIterationAsync(ResearchIterationId iterationId, CancellationToken ct)
     {
         using var scope = scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AIOptimizeDbContext>();
-        return await db.HypothesisBatches
+        return await db.ResearchIterations
             .Include(b => b.Experiment!)
                 .ThenInclude(e => e.DatabaseConnection)
             .Include(b => b.Experiment!)
                 .ThenInclude(e => e.AIConnection)
             .Include(b => b.AIConnection)
             .Include(b => b.Hypotheses)
-            .FirstOrDefaultAsync(b => b.Id == batchId, ct);
+            .FirstOrDefaultAsync(b => b.Id == iterationId, ct);
     }
 
-    private async Task<HypothesisBatchState> GetBatchStateAsync(HypothesisBatchId batchId, CancellationToken ct)
+    private async Task<ResearchIterationState> GetIterationStateAsync(ResearchIterationId iterationId, CancellationToken ct)
     {
         using var scope = scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AIOptimizeDbContext>();
-        return await db.HypothesisBatches
-            .Where(b => b.Id == batchId)
+        return await db.ResearchIterations
+            .Where(b => b.Id == iterationId)
             .Select(b => b.State)
             .FirstOrDefaultAsync(ct);
     }
 
-    private async Task<IReadOnlyList<Hypothesis>> GetPriorHypothesesAsync(HypothesisBatchId batchId, CancellationToken ct)
+    private async Task<IReadOnlyList<Hypothesis>> GetPriorHypothesesAsync(ResearchIterationId iterationId, CancellationToken ct)
     {
         using var scope = scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AIOptimizeDbContext>();
         return await db.Hypotheses
             .AsNoTracking()
-            .Where(h => h.HypothesisBatchId == batchId)
+            .Where(h => h.ResearchIterationId == iterationId)
             .OrderBy(h => h.CreatedAt)
             .ToListAsync(ct);
     }
 
-    private async Task<Hypothesis> InsertPendingHypothesisAsync(HypothesisBatchId batchId, int number, CancellationToken ct)
+    private async Task<Hypothesis> InsertPendingHypothesisAsync(ResearchIterationId iterationId, int number, CancellationToken ct)
     {
         using var scope = scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AIOptimizeDbContext>();
         var hypothesis = new Hypothesis
         {
-            HypothesisBatchId = batchId,
+            ResearchIterationId = iterationId,
             Status = HypothesisState.Pending,
             Description = $"Generating hypothesis #{number}...",
             CreatedAt = DateTime.UtcNow,
@@ -246,22 +246,22 @@ public sealed class AiHypothesisService(
         }
     }
 
-    private async Task UpdateBatchMessageAsync(HypothesisBatchId batchId, string message, CancellationToken ct)
+    private async Task UpdateIterationMessageAsync(ResearchIterationId iterationId, string message, CancellationToken ct)
     {
         try
         {
             using var scope = scopeFactory.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<AIOptimizeDbContext>();
-            var batch = await db.HypothesisBatches.FirstOrDefaultAsync(b => b.Id == batchId, ct);
-            if (batch is not null)
+            var iteration = await db.ResearchIterations.FirstOrDefaultAsync(b => b.Id == iterationId, ct);
+            if (iteration is not null)
             {
-                batch.LastMessage = message;
+                iteration.LastMessage = message;
                 await db.SaveChangesAsync(ct);
             }
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to update batch {BatchId} message", batchId);
+            _logger.LogError(ex, "Failed to update research iteration {IterationId} message", iterationId);
         }
     }
 

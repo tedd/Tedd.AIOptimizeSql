@@ -73,7 +73,7 @@
                                     </MudStack>
                                 }
 
-                                @TabActions(showHypothesisBatchesLink: true)
+                                @TabActions(showResearchIterationsLink: true)
                             </MudStack>
                         </MudTabPanel>
 
@@ -101,7 +101,7 @@
                                               Lines="3" Variant="Variant.Outlined" Class="mb-4"
                                               HelperText="SQL used to benchmark performance" />
 
-                                @TabActions(showHypothesisBatchesLink: false)
+                                @TabActions(showResearchIterationsLink: false)
                             </MudStack>
                         </MudTabPanel>
                     </MudTabs>
@@ -165,14 +165,14 @@
         _baselineAiConnId = _selectedAiConnId;
     }
 
-    private RenderFragment TabActions(bool showHypothesisBatchesLink) => __builder =>
+    private RenderFragment TabActions(bool showResearchIterationsLink) => __builder =>
     {
         <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="mt-4 flex-wrap" Style="gap: 8px;">
-            @if (showHypothesisBatchesLink && !_isNew)
+            @if (showResearchIterationsLink && !_isNew)
             {
                 <MudButton Variant="Variant.Text" Color="Color.Info"
-                           Href="@($"/experiments/{Id}/hypothesis-batches")" StartIcon="@Icons.Material.Filled.PlayArrow">
-                    View Hypothesis Batches
+                           Href="@($"/experiments/{Id}/research-iterations")" StartIcon="@Icons.Material.Filled.PlayArrow">
+                    View research iterations
                 </MudButton>
             }
             <MudSpacer />

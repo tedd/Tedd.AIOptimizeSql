@@ -1,4 +1,4 @@
-@page "/profiles/{ExperimentId:int}/runs/{RunId:int}"
+@page "/profiles/{ExperimentId:int}/research-iterations/{IterationId:int}"
 @rendermode InteractiveServer
 @inject Tedd.AIOptimizeSql.Database.AIOptimizeDbContext DbContext
 @inject NavigationManager Navigation
@@ -11,7 +11,7 @@
 <MudContainer MaxWidth="MaxWidth.ExtraLarge" Class="mt-4">
     <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-2">
         <MudIconButton Icon="@Icons.Material.Filled.ArrowBack"
-                       OnClick="@(() => Navigation.NavigateTo($"/profiles/{ExperimentId}/runs"))" />
+                       OnClick="@(() => Navigation.NavigateTo($"/profiles/{ExperimentId}/research-iterations"))" />
         <MudText Typo="Typo.h4">Hypotheses</MudText>
         <MudSpacer />
         @if (_selectedItems.Count > 0)
@@ -22,18 +22,18 @@
             </MudButton>
         }
         <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Add"
-                   Href="@($"/profiles/{ExperimentId}/runs/{RunId}/hypotheses/new")">
+                   Href="@($"/experiments/{ExperimentId}/research-iterations/{IterationId}/hypotheses/new")">
             New Hypothesis
         </MudButton>
     </MudStack>
 
-    @if (_run != null)
+    @if (_iteration != null)
     {
         <MudText Typo="Typo.subtitle1" Class="mb-4" Color="Color.Default">
-            Run #@((int)(object)_run.Id) &mdash; Created @_run.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd")
-            @if (!string.IsNullOrEmpty(_run.Hints))
+            Iteration #@((int)(object)_iteration.Id) &mdash; Created @_iteration.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd")
+            @if (!string.IsNullOrEmpty(_iteration.Hints))
             {
-                <text> &mdash; @_run.Hints</text>
+                <text> &mdash; @_iteration.Hints</text>
             }
         </MudText>
     }
@@ -114,12 +114,12 @@
                     @(pct >= 0 ? "+" : "")@pct.ToString("F1")%
                 </MudChip>
             </MudTd>
-            <MudTd DataLabel="AI Provider">@(_run?.AiProviderUsed?.ToString() ?? "--")</MudTd>
-            <MudTd DataLabel="Model">@(_run?.AiModelUsed ?? "--")</MudTd>
+            <MudTd DataLabel="AI Provider">@(_iteration?.AiProviderUsed?.ToString() ?? "--")</MudTd>
+            <MudTd DataLabel="Model">@(_iteration?.AiModelUsed ?? "--")</MudTd>
             <MudTd DataLabel="Builds On">
                 @if (context.BuildsOnHypothesisId.HasValue)
                 {
-                    <MudLink Href="@($"/profiles/{ExperimentId}/runs/{RunId}/hypotheses/{(int)(object)context.BuildsOnHypothesisId}")"
+                    <MudLink Href="@($"/experiments/{ExperimentId}/research-iterations/{IterationId}/hypotheses/{(int)(object)context.BuildsOnHypothesisId}")"
                              Color="Color.Primary">
                         #@((int)(object)context.BuildsOnHypothesisId)
                     </MudLink>
@@ -137,7 +137,7 @@
             </MudTd>
         </RowTemplate>
         <NoRecordsContent>
-            <MudText Typo="Typo.body1" Class="pa-4">No hypotheses found for this run.</MudText>
+            <MudText Typo="Typo.body1" Class="pa-4">No hypotheses found for this research iteration.</MudText>
         </NoRecordsContent>
         <PagerContent>
             <MudTablePager PageSizeOptions="new int[] { 20, 50, 100 }" />
@@ -147,31 +147,31 @@
 
 @code {
     [Parameter] public int ExperimentId { get; set; }
-    [Parameter] public int RunId { get; set; }
+    [Parameter] public int IterationId { get; set; }
 
-    private HypothesisBatch? _run;
+    private ResearchIteration? _iteration;
     private MudTable<Hypothesis>? _table;
     private HashSet<Hypothesis> _selectedItems = new();
-    private HypothesisBatchRunStatsViewModel? _stats;
+    private ResearchIterationRunStatsViewModel? _stats;
     private string[] _chartLabels = Array.Empty<string>();
     private List<ChartSeries<double>> _hypothesisChartSeries = new();
 
     protected override async Task OnInitializedAsync()
     {
-        var runId = (HypothesisBatchId)(object)RunId;
-        _run = await DbContext.HypothesisBatches.FindAsync(runId);
+        var iterationId = (ResearchIterationId)(object)IterationId;
+        _iteration = await DbContext.ResearchIterations.FindAsync(iterationId);
         await LoadStats();
         await LoadChartData();
     }
 
     private async Task LoadStats()
     {
-        var runId = (HypothesisBatchId)(object)RunId;
+        var iterationId = (ResearchIterationId)(object)IterationId;
         var hypotheses = await DbContext.Hypotheses
-            .Where(h => h.HypothesisBatchId == runId)
+            .Where(h => h.ResearchIterationId == iterationId)
             .ToListAsync();
 
-        _stats = HypothesisBatchRunStatsMapper.ToViewModel(new HypothesisBatchRunStatsSource(
+        _stats = ResearchIterationRunStatsMapper.ToViewModel(new ResearchIterationRunStatsSource(
             hypotheses.Count,
             hypotheses.Count(h => h.ImpovementPercentage > 0),
             hypotheses.Count(h => h.ImpovementPercentage < 0),
@@ -180,9 +180,9 @@
 
     private async Task LoadChartData()
     {
-        var runId = (HypothesisBatchId)(object)RunId;
+        var iterationId = (ResearchIterationId)(object)IterationId;
         var hypotheses = await DbContext.Hypotheses
-            .Where(h => h.HypothesisBatchId == runId)
+            .Where(h => h.ResearchIterationId == iterationId)
             .OrderBy(h => h.CreatedAt)
             .Select(h => new { h.ImpovementPercentage, h.Id })
             .ToListAsync();
@@ -203,17 +203,17 @@
 
     private async Task<TableData<Hypothesis>> LoadServerData(TableState state, CancellationToken ct)
     {
-        var runId = (HypothesisBatchId)(object)RunId;
+        var iterationId = (ResearchIterationId)(object)IterationId;
 
         IQueryable<Hypothesis> query = DbContext.Hypotheses
-            .Where(h => h.HypothesisBatchId == runId);
+            .Where(h => h.ResearchIterationId == iterationId);
 
         query = state.SortLabel switch
         {
             "Id" => state.SortDirection == SortDirection.Descending ? query.OrderByDescending(x => x.Id) : query.OrderBy(x => x.Id),
             "Hypothesis" => state.SortDirection == SortDirection.Descending ? query.OrderByDescending(x => x.Description) : query.OrderBy(x => x.Description),
             "Improvement" => state.SortDirection == SortDirection.Descending ? query.OrderByDescending(x => x.ImpovementPercentage) : query.OrderBy(x => x.ImpovementPercentage),
-            "AiProvider" => state.SortDirection == SortDirection.Descending ? query.OrderByDescending(x => x.HypothesisBatch!.AiProviderUsed) : query.OrderBy(x => x.HypothesisBatch!.AiProviderUsed),
+            "AiProvider" => state.SortDirection == SortDirection.Descending ? query.OrderByDescending(x => x.ResearchIteration!.AiProviderUsed) : query.OrderBy(x => x.ResearchIteration!.AiProviderUsed),
             "TimeUsedMs" => state.SortDirection == SortDirection.Descending ? query.OrderByDescending(x => x.TimeUsedMs) : query.OrderBy(x => x.TimeUsedMs),
             "CreatedAt" => state.SortDirection == SortDirection.Descending ? query.OrderByDescending(x => x.CreatedAt) : query.OrderBy(x => x.CreatedAt),
             _ => query.OrderByDescending(x => x.CreatedAt)
@@ -227,7 +227,7 @@
 
     private void OnRowClick(TableRowClickEventArgs<Hypothesis> args)
     {
-        Navigation.NavigateTo($"/profiles/{ExperimentId}/runs/{RunId}/hypotheses/{(int)(object)args.Item!.Id}");
+        Navigation.NavigateTo($"/experiments/{ExperimentId}/research-iterations/{IterationId}/hypotheses/{(int)(object)args.Item!.Id}");
     }
 
     private async Task DeleteSingle(Hypothesis item)

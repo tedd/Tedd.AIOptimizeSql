@@ -6,7 +6,7 @@ namespace Tedd.AIOptimizeSql.OptimizeEngine.Utils;
 
 internal static class HypothesisPromptBuilder
 {
-    public static string BuildInstructions(Experiment experiment, HypothesisBatch batch, IReadOnlyList<Hypothesis> priorHypotheses)
+    public static string BuildInstructions(Experiment experiment, ResearchIteration iteration, IReadOnlyList<Hypothesis> priorHypotheses)
     {
         var sb = new StringBuilder();
         sb.AppendLine("You are an expert SQL Server performance analyst and query optimiser.");
@@ -37,20 +37,20 @@ internal static class HypothesisPromptBuilder
         return sb.ToString();
     }
 
-    public static string BuildPrompt(HypothesisBatch batch, IReadOnlyList<Hypothesis> priorHypotheses)
+    public static string BuildPrompt(ResearchIteration iteration, IReadOnlyList<Hypothesis> priorHypotheses)
     {
         var sb = new StringBuilder();
 
-        if (!string.IsNullOrWhiteSpace(batch.Hints))
+        if (!string.IsNullOrWhiteSpace(iteration.Hints))
         {
-            sb.AppendLine("=== Additional hints for this batch ===");
-            sb.AppendLine(batch.Hints);
+            sb.AppendLine("=== Additional hints for this research iteration ===");
+            sb.AppendLine(iteration.Hints);
             sb.AppendLine();
         }
 
         if (priorHypotheses.Count > 0)
         {
-            sb.AppendLine("=== Prior hypotheses in this batch (avoid duplicating these) ===");
+            sb.AppendLine("=== Prior hypotheses in this iteration (avoid duplicating these) ===");
             for (var i = 0; i < priorHypotheses.Count; i++)
             {
                 var h = priorHypotheses[i];

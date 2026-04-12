@@ -2,9 +2,9 @@ using Tedd.AIOptimizeSql.Database.Models;
 
 namespace Tedd.AIOptimizeSql.WebUI.ViewModels;
 
-public sealed class HypothesisBatchRunRowViewModel
+public sealed class ResearchIterationRunRowViewModel
 {
-    public required HypothesisBatch Run { get; init; }
+    public required ResearchIteration Iteration { get; init; }
     public int HypothesisCount { get; init; }
     public long TotalTimeMs { get; init; }
 }

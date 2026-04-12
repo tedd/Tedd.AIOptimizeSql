@@ -17,7 +17,7 @@ public static class Startup
 
         builder.Services.AddSingleton<AiAgentFactory>();
         builder.Services.AddSingleton<IAiHypothesisService, AiHypothesisService>();
-        builder.Services.AddSingleton<BatchProcessingEngine>();
+        builder.Services.AddSingleton<ResearchIterationProcessingEngine>();
         builder.Services.AddHostedService<QueueMonitorService>();
     }
 

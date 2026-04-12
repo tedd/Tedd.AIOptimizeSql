@@ -14,13 +14,13 @@ public class HypothesisPromptBuilderTests
             BenchmarkSql = benchmarkSql,
         };
 
-    private static HypothesisBatch Batch(string? hints = null) =>
+    private static ResearchIteration Iteration(string? hints = null) =>
         new() { Hints = hints };
 
     [Fact]
     public void BuildInstructions_always_includes_guidelines()
     {
-        var text = HypothesisPromptBuilder.BuildInstructions(Experiment(), Batch(), []);
+        var text = HypothesisPromptBuilder.BuildInstructions(Experiment(), Iteration(), []);
 
         Assert.Contains("You are an expert SQL Server performance analyst", text, StringComparison.Ordinal);
         Assert.Contains("Guidelines:", text, StringComparison.Ordinal);
@@ -33,7 +33,7 @@ public class HypothesisPromptBuilderTests
     {
         var text = HypothesisPromptBuilder.BuildInstructions(
             Experiment(instructions: "Do X", benchmarkSql: "SELECT 1"),
-            Batch(),
+            Iteration(),
             []);
 
         Assert.Contains("=== Experiment-specific instructions ===", text, StringComparison.Ordinal);
@@ -47,7 +47,7 @@ public class HypothesisPromptBuilderTests
     {
         var text = HypothesisPromptBuilder.BuildInstructions(
             Experiment(instructions: "   ", benchmarkSql: "\t"),
-            Batch(),
+            Iteration(),
             []);
 
         Assert.DoesNotContain("=== Experiment-specific instructions ===", text, StringComparison.Ordinal);
@@ -57,41 +57,41 @@ public class HypothesisPromptBuilderTests
     [Fact]
     public void BuildPrompt_includes_hints_when_present()
     {
-        var text = HypothesisPromptBuilder.BuildPrompt(Batch(hints: "Focus on indexes"), []);
+        var text = HypothesisPromptBuilder.BuildPrompt(Iteration(hints: "Focus on indexes"), []);
 
-        Assert.Contains("=== Additional hints for this batch ===", text, StringComparison.Ordinal);
+        Assert.Contains("=== Additional hints for this research iteration ===", text, StringComparison.Ordinal);
         Assert.Contains("Focus on indexes", text, StringComparison.Ordinal);
     }
 
     [Fact]
     public void BuildPrompt_lists_prior_hypotheses_with_improvement_format()
     {
-        var batch = Batch();
+        var iteration = Iteration();
         var priors = new List<Hypothesis>
         {
             new()
             {
-                HypothesisBatchId = default,
+                ResearchIterationId = default,
                 Description = "Add index A",
                 ImpovementPercentage = 12.5f,
             },
             new()
             {
-                HypothesisBatchId = default,
+                ResearchIterationId = default,
                 Description = "Rewrite join",
                 ImpovementPercentage = -3f,
             },
             new()
             {
-                HypothesisBatchId = default,
+                ResearchIterationId = default,
                 Description = "No change",
                 ImpovementPercentage = 0f,
             },
         };
 
-        var text = HypothesisPromptBuilder.BuildPrompt(batch, priors);
+        var text = HypothesisPromptBuilder.BuildPrompt(iteration, priors);
 
-        Assert.Contains("=== Prior hypotheses in this batch", text, StringComparison.Ordinal);
+        Assert.Contains("=== Prior hypotheses in this iteration", text, StringComparison.Ordinal);
         Assert.Contains("Hypothesis #1 (improvement: +12.5%):", text, StringComparison.Ordinal);
         Assert.Contains("Add index A", text, StringComparison.Ordinal);
         Assert.Contains("Hypothesis #2 (improvement: -3%):", text, StringComparison.Ordinal);
@@ -102,7 +102,7 @@ public class HypothesisPromptBuilderTests
     [Fact]
     public void BuildPrompt_without_priors_ends_with_proposal_instructions()
     {
-        var text = HypothesisPromptBuilder.BuildPrompt(Batch(), []);
+        var text = HypothesisPromptBuilder.BuildPrompt(Iteration(), []);
 
         Assert.DoesNotContain("Prior hypotheses", text, StringComparison.Ordinal);
         Assert.Contains("Please analyse the database and propose your next optimisation hypothesis.", text, StringComparison.Ordinal);
@@ -114,10 +114,10 @@ public class HypothesisPromptBuilderTests
     {
         var priors = new List<Hypothesis>
         {
-            new() { HypothesisBatchId = default, Description = null, ImpovementPercentage = 0 },
+            new() { ResearchIterationId = default, Description = null, ImpovementPercentage = 0 },
         };
 
-        var text = HypothesisPromptBuilder.BuildPrompt(Batch(), priors);
+        var text = HypothesisPromptBuilder.BuildPrompt(Iteration(), priors);
 
         Assert.Contains("(no description)", text, StringComparison.Ordinal);
     }

@@ -14,7 +14,7 @@ public class AIOptimizeDbContext : DbContext
     public DbSet<DatabaseConnection> DatabaseConnections => Set<DatabaseConnection>();
     public DbSet<AIConnection> AIConnections => Set<AIConnection>();
     public DbSet<Experiment> Experiments => Set<Experiment>();
-    public DbSet<HypothesisBatch> HypothesisBatches => Set<HypothesisBatch>();
+    public DbSet<ResearchIteration> ResearchIterations => Set<ResearchIteration>();
     public DbSet<Hypothesis> Hypotheses => Set<Hypothesis>();
     public DbSet<BenchmarkRun> BenchmarkRuns => Set<BenchmarkRun>();
     public DbSet<RunQueue> RunQueue => Set<RunQueue>();
@@ -24,14 +24,14 @@ public class AIOptimizeDbContext : DbContext
         builder.Properties<DatabaseConnectionId>().HaveConversion<int>();
         builder.Properties<AIConnectionId>().HaveConversion<int>();
         builder.Properties<ExperimentId>().HaveConversion<int>();
-        builder.Properties<HypothesisBatchId>().HaveConversion<int>();
+        builder.Properties<ResearchIterationId>().HaveConversion<int>();
         builder.Properties<HypothesisId>().HaveConversion<int>();
         builder.Properties<BenchmarkRunId>().HaveConversion<int>();
         builder.Properties<RunQueueId>().HaveConversion<int>();
 
         // AiProvider enum stored as string in DB
         builder.Properties<AiProvider>().HaveConversion<string>().HaveMaxLength(128);
-        builder.Properties<HypothesisBatchState>().HaveConversion<string>().HaveMaxLength(16);
+        builder.Properties<ResearchIterationState>().HaveConversion<string>().HaveMaxLength(16);
         builder.Properties<HypothesisState>().HaveConversion<string>().HaveMaxLength(16);
     }
 
@@ -50,10 +50,10 @@ public class AIOptimizeDbContext : DbContext
                 .OnDelete(DeleteBehavior.SetNull);
         });
 
-        modelBuilder.Entity<HypothesisBatch>(entity =>
+        modelBuilder.Entity<ResearchIteration>(entity =>
         {
             entity.HasOne(r => r.Experiment)
-                .WithMany(p => p.BatchRuns)
+                .WithMany(p => p.ResearchIterations)
                 .HasForeignKey(r => r.ExperimentId)
                 .OnDelete(DeleteBehavior.Cascade);
 
@@ -76,28 +76,28 @@ public class AIOptimizeDbContext : DbContext
 
         modelBuilder.Entity<RunQueue>(entity =>
         {
-            entity.HasOne(r => r.HypothesisBatch)
+            entity.HasOne(r => r.ResearchIteration)
                 .WithMany()
-                .HasForeignKey(r => r.HypothesisBatchId)
+                .HasForeignKey(r => r.ResearchIterationId)
                 .OnDelete(DeleteBehavior.Cascade);
 
-            entity.HasIndex(r => r.HypothesisBatchId).IsUnique();
+            entity.HasIndex(r => r.ResearchIterationId).IsUnique();
         });
 
         modelBuilder.Entity<Hypothesis>(entity =>
         {
-            entity.HasOne(h => h.HypothesisBatch)
+            entity.HasOne(h => h.ResearchIteration)
                 .WithMany(r => r.Hypotheses)
-                .HasForeignKey(h => h.HypothesisBatchId)
+                .HasForeignKey(h => h.ResearchIterationId)
                 .OnDelete(DeleteBehavior.Cascade);
 
-            // NoAction: avoids SQL Server cycle with CASCADE from HypothesisBatch on the same table.
+            // NoAction: avoids SQL Server cycle with CASCADE from ResearchIteration on the same table.
             entity.HasOne(h => h.BuilOptimizationHypothesis)
                 .WithMany()
                 .HasForeignKey(h => h.BuildsOnHypothesisId)
                 .OnDelete(DeleteBehavior.NoAction);
 
-            // NoAction: SQL Server rejects multiple cascade/set-null paths when combined with CASCADE from HypothesisBatch.
+            // NoAction: SQL Server rejects multiple cascade/set-null paths when combined with CASCADE from ResearchIteration.
             entity.HasOne(h => h.BenchmarkRunBefore)
                 .WithMany()
                 .HasForeignKey(h => h.BenchmarkRunIdBefore)

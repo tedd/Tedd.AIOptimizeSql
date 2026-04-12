@@ -1,4 +1,4 @@
-@page "/experiments/{ExperimentId:int}/hypothesis-batches/{BatchId:int}/benchmarks/{BenchmarkRunId:int}"
+@page "/experiments/{ExperimentId:int}/research-iterations/{IterationId:int}/benchmarks/{BenchmarkRunId:int}"
 @implements IDisposable
 @rendermode InteractiveServer
 @inject Tedd.AIOptimizeSql.Database.AIOptimizeDbContext DbContext
@@ -10,8 +10,8 @@
 <MudContainer MaxWidth="MaxWidth.Large" Class="mt-4">
     <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-4">
         <MudIconButton Icon="@Icons.Material.Filled.ArrowBack"
-                       OnClick="@(() => Navigation.NavigateTo($"/experiments/{ExperimentId}/hypothesis-batches/{BatchId}"))"
-                       aria-label="Back to batch" />
+                       OnClick="@(() => Navigation.NavigateTo($"/experiments/{ExperimentId}/research-iterations/{IterationId}"))"
+                       aria-label="Back to research iteration" />
         <MudText Typo="Typo.h4">Benchmark run #@BenchmarkRunId</MudText>
     </MudStack>
 
@@ -101,7 +101,7 @@
 
 @code {
     [Parameter] public int ExperimentId { get; set; }
-    [Parameter] public int BatchId { get; set; }
+    [Parameter] public int IterationId { get; set; }
     [Parameter] public int BenchmarkRunId { get; set; }
 
     private readonly CancellationTokenSource _pageCts = new();

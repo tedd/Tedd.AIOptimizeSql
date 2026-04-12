@@ -10,9 +10,9 @@ public record Hypothesis
 {
     [Key] public HypothesisId Id { get; set; }
 
-    public required HypothesisBatchId HypothesisBatchId { get; set; }
+    public required ResearchIterationId ResearchIterationId { get; set; }
 
-    public HypothesisBatch? HypothesisBatch { get; set; }
+    public ResearchIteration? ResearchIteration { get; set; }
 
     public HypothesisState Status { get; set; } = HypothesisState.Pending;
 

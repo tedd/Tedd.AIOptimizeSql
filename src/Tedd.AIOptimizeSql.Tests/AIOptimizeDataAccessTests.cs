@@ -18,7 +18,7 @@ public class AIOptimizeDataAccessTests
     }
 
     [Fact]
-    public async Task SetHypothesisBatchStateAsync_Queued_adds_single_RunQueue_row()
+    public async Task SetResearchIterationStateAsync_Queued_adds_single_RunQueue_row()
     {
         await using var db = CreateContext();
         var ai = new AIConnection
@@ -36,50 +36,50 @@ public class AIOptimizeDataAccessTests
         db.Experiments.Add(experiment);
         await db.SaveChangesAsync();
 
-        var batch = new HypothesisBatch
+        var iteration = new ResearchIteration
         {
             ExperimentId = experiment.Id,
             MaxNumberOfHypotheses = 2,
-            State = HypothesisBatchState.Stopped,
+            State = ResearchIterationState.Stopped,
         };
-        db.HypothesisBatches.Add(batch);
+        db.ResearchIterations.Add(iteration);
         await db.SaveChangesAsync();
 
         var access = new AIOptimizeDataAccess(db);
-        await access.SetHypothesisBatchStateAsync(batch.Id, HypothesisBatchState.Queued);
+        await access.SetResearchIterationStateAsync(iteration.Id, ResearchIterationState.Queued);
 
-        Assert.Equal(HypothesisBatchState.Queued, db.HypothesisBatches.Single().State);
+        Assert.Equal(ResearchIterationState.Queued, db.ResearchIterations.Single().State);
         var queue = await db.RunQueue.ToListAsync();
         Assert.Single(queue);
-        Assert.Equal(batch.Id, queue[0].HypothesisBatchId);
+        Assert.Equal(iteration.Id, queue[0].ResearchIterationId);
     }
 
     [Fact]
-    public async Task SetHypothesisBatchStateAsync_non_Queued_removes_RunQueue_rows()
+    public async Task SetResearchIterationStateAsync_non_Queued_removes_RunQueue_rows()
     {
         await using var db = CreateContext();
         var experiment = new Experiment { Name = "exp" };
         db.Experiments.Add(experiment);
         await db.SaveChangesAsync();
 
-        var batch = new HypothesisBatch
+        var iteration = new ResearchIteration
         {
             ExperimentId = experiment.Id,
-            State = HypothesisBatchState.Queued,
+            State = ResearchIterationState.Queued,
         };
-        db.HypothesisBatches.Add(batch);
+        db.ResearchIterations.Add(iteration);
         await db.SaveChangesAsync();
-        db.RunQueue.Add(new RunQueue { HypothesisBatchId = batch.Id });
+        db.RunQueue.Add(new RunQueue { ResearchIterationId = iteration.Id });
         await db.SaveChangesAsync();
 
         var access = new AIOptimizeDataAccess(db);
-        await access.SetHypothesisBatchStateAsync(batch.Id, HypothesisBatchState.Stopped);
+        await access.SetResearchIterationStateAsync(iteration.Id, ResearchIterationState.Stopped);
 
         Assert.Empty(await db.RunQueue.ToListAsync());
     }
 
     [Fact]
-    public async Task BeginHypothesisBatchRunAsync_sets_running_clears_queue_and_snapshots_ai_from_experiment()
+    public async Task BeginResearchIterationRunAsync_sets_running_clears_queue_and_snapshots_ai_from_experiment()
     {
         await using var db = CreateContext();
         var ai = new AIConnection
@@ -97,20 +97,20 @@ public class AIOptimizeDataAccessTests
         db.Experiments.Add(experiment);
         await db.SaveChangesAsync();
 
-        var batch = new HypothesisBatch
+        var iteration = new ResearchIteration
         {
             ExperimentId = experiment.Id,
-            State = HypothesisBatchState.Queued,
+            State = ResearchIterationState.Queued,
         };
-        db.HypothesisBatches.Add(batch);
-        db.RunQueue.Add(new RunQueue { HypothesisBatchId = batch.Id });
+        db.ResearchIterations.Add(iteration);
+        db.RunQueue.Add(new RunQueue { ResearchIterationId = iteration.Id });
         await db.SaveChangesAsync();
 
         var access = new AIOptimizeDataAccess(db);
-        await access.BeginHypothesisBatchRunAsync(batch.Id);
+        await access.BeginResearchIterationRunAsync(iteration.Id);
 
-        var reloaded = await db.HypothesisBatches.AsNoTracking().SingleAsync();
-        Assert.Equal(HypothesisBatchState.Running, reloaded.State);
+        var reloaded = await db.ResearchIterations.AsNoTracking().SingleAsync();
+        Assert.Equal(ResearchIterationState.Running, reloaded.State);
         Assert.NotNull(reloaded.StartedAt);
         Assert.Null(reloaded.EndedAt);
         Assert.Equal("Run started", reloaded.LastMessage);

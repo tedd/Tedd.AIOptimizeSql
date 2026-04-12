@@ -1,13 +1,14 @@
-﻿using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations;
 using Tedd.AIOptimizeSql.Database.Models.Enums;
 
 namespace Tedd.AIOptimizeSql.Database.Models;
 
-public enum HypothesisBatchId { }
-public record HypothesisBatch
+public enum ResearchIterationId { }
+
+public record ResearchIteration
 {
     [Key]
-    public HypothesisBatchId Id { get; set; }
+    public ResearchIterationId Id { get; set; }
 
     public ExperimentId ExperimentId { get; set; }
 
@@ -26,7 +27,7 @@ public record HypothesisBatch
 
     public int MaxNumberOfHypotheses { get; set; } = 10;
 
-    public HypothesisBatchState State { get; set; } = HypothesisBatchState.Stopped;
+    public ResearchIterationState State { get; set; } = ResearchIterationState.Stopped;
 
     /// <summary>
     /// The date and time the run queue started.

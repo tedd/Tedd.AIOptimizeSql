@@ -8,8 +8,8 @@ public record RunQueue
 {
     [Key]
     public RunQueueId Id { get; set; }
-    public HypothesisBatchId HypothesisBatchId { get; set; }
-    public HypothesisBatch? HypothesisBatch { get; set; }
+    public ResearchIterationId ResearchIterationId { get; set; }
+    public ResearchIteration? ResearchIteration { get; set; }
 
     /// <summary>
     /// Created UTC

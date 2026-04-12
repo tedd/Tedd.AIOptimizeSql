@@ -1,11 +1,12 @@
-@page "/experiments/{ExperimentId:int}/hypothesis-batches/{BatchId:int}/hypotheses/new"
-@page "/experiments/{ExperimentId:int}/hypothesis-batches/{BatchId:int}/hypotheses/{HypothesisId:int}"
+@page "/experiments/{ExperimentId:int}/research-iterations/{IterationId:int}/hypotheses/new"
+@page "/experiments/{ExperimentId:int}/research-iterations/{IterationId:int}/hypotheses/{HypothesisId:int}"
 @implements IDisposable
 @rendermode InteractiveServer
 @inject Tedd.AIOptimizeSql.Database.AIOptimizeDbContext DbContext
 @inject NavigationManager Navigation
 @inject ISnackbar Snackbar
 @using Microsoft.EntityFrameworkCore
+@using Tedd.AIOptimizeSql.Database.Models
 
 <PageTitle>@(_isNew ? "New" : "View") Hypothesis</PageTitle>
 
@@ -44,7 +45,7 @@
                     <CardHeaderContent>
                         <MudText Typo="Typo.h6">Benchmark SQL</MudText>
                         <MudText Typo="Typo.caption">
-                            Stored on the experiment; used to measure performance for this batch.
+                            Stored on the experiment; used to measure performance for this research iteration.
                             <MudLink Href="@($"/experiments/{ExperimentId}/edit")" Color="Color.Primary">Open experiment</MudLink>
                         </MudText>
                     </CardHeaderContent>
@@ -82,8 +83,8 @@
                 </MudItem>
                 <MudItem xs="12" sm="4">
                     <MudPaper Elevation="2" Class="pa-4 rounded-lg d-flex flex-column align-center">
-                        <MudText Typo="Typo.h4">@(_batch?.AiProviderUsed?.ToString() ?? "N/A")</MudText>
-                        <MudText Typo="Typo.caption">@(_batch?.AiModelUsed ?? "No model")</MudText>
+                        <MudText Typo="Typo.h4">@(_iteration?.AiProviderUsed?.ToString() ?? "N/A")</MudText>
+                        <MudText Typo="Typo.caption">@(_iteration?.AiModelUsed ?? "No model")</MudText>
                     </MudPaper>
                 </MudItem>
             </MudGrid>
@@ -221,7 +222,7 @@
         {
             <MudAlert Severity="Severity.Info" Class="mt-4">
                 This hypothesis builds on
-                <MudLink Href="@($"/experiments/{ExperimentId}/hypothesis-batches/{BatchId}/hypotheses/{(int)(object)_model.BuildsOnHypothesisId}")"
+                <MudLink Href="@($"/experiments/{ExperimentId}/research-iterations/{IterationId}/hypotheses/{(int)(object)_model.BuildsOnHypothesisId}")"
                          Color="Color.Primary">
                     Hypothesis #@((int)(object)_model.BuildsOnHypothesisId)
                 </MudLink>
@@ -232,11 +233,11 @@
 
 @code {
     [Parameter] public int ExperimentId { get; set; }
-    [Parameter] public int BatchId { get; set; }
+    [Parameter] public int IterationId { get; set; }
     [Parameter] public int? HypothesisId { get; set; }
 
     private Hypothesis? _model;
-    private HypothesisBatch? _batch;
+    private ResearchIteration? _iteration;
     private Experiment? _experiment;
     private string? _benchmarkSql;
     private string _benchmarkSqlEditorId = "";
@@ -285,18 +286,18 @@
     protected override Task OnInitializedAsync() =>
         PageLoadCancellation.RunPageLoadAsync(async ct =>
         {
-            var batchId = (HypothesisBatchId)(object)BatchId;
+            var iterationId = (ResearchIterationId)(object)IterationId;
 
-            _batch = await DbContext.HypothesisBatches
+            _iteration = await DbContext.ResearchIterations
                 .Include(b => b.Experiment)
-                .FirstOrDefaultAsync(b => b.Id == batchId, ct);
+                .FirstOrDefaultAsync(b => b.Id == iterationId, ct);
 
-            _experiment = _batch?.Experiment;
+            _experiment = _iteration?.Experiment;
             _benchmarkSql = _experiment?.BenchmarkSql;
-            _benchmarkSqlEditorId = $"hypothesis-benchmark-sql-e{ExperimentId}-b{BatchId}";
+            _benchmarkSqlEditorId = $"hypothesis-benchmark-sql-e{ExperimentId}-i{IterationId}";
 
             _otherHypotheses = await DbContext.Hypotheses
-                .Where(h => h.HypothesisBatchId == batchId)
+                .Where(h => h.ResearchIterationId == iterationId)
                 .OrderBy(h => h.Id)
                 .ToListAsync(ct);
 
@@ -322,7 +323,7 @@
                 _editMode = true;
                 _model = new Hypothesis
                 {
-                    HypothesisBatchId = batchId
+                    ResearchIterationId = iterationId
                 };
             }
             _loading = false;
@@ -351,7 +352,7 @@
     }
 
     private string BenchmarkHref(BenchmarkRunId id) =>
-        $"/experiments/{ExperimentId}/hypothesis-batches/{BatchId}/benchmarks/{(int)(object)id}";
+        $"/experiments/{ExperimentId}/research-iterations/{IterationId}/benchmarks/{(int)(object)id}";
 
     private async Task<bool> TryPersistAsync()
     {
@@ -382,21 +383,21 @@
     private async Task Save()
     {
         if (!await TryPersistAsync()) return;
-        Navigation.NavigateTo($"/experiments/{ExperimentId}/hypothesis-batches/{BatchId}");
+        Navigation.NavigateTo($"/experiments/{ExperimentId}/research-iterations/{IterationId}");
     }
 
     private async Task DiscardChangesAsync()
     {
         if (_model == null) return;
-        var batchId = (HypothesisBatchId)(object)BatchId;
+        var iterationId = (ResearchIterationId)(object)IterationId;
 
         if (_isNew)
         {
-            _model = new Hypothesis { HypothesisBatchId = batchId };
+            _model = new Hypothesis { ResearchIterationId = iterationId };
             _selectedBuildsOn = null;
             _benchmarkSql = _experiment?.BenchmarkSql;
             _otherHypotheses = await DbContext.Hypotheses
-                .Where(h => h.HypothesisBatchId == batchId)
+                .Where(h => h.ResearchIterationId == iterationId)
                 .OrderBy(h => h.Id)
                 .ToListAsync(_pageCts.Token);
         }
@@ -418,7 +419,7 @@
             _benchmarkSql = _experiment?.BenchmarkSql;
             _editMode = false;
             _otherHypotheses = await DbContext.Hypotheses
-                .Where(h => h.HypothesisBatchId == batchId && h.Id != _model.Id)
+                .Where(h => h.ResearchIterationId == iterationId && h.Id != _model.Id)
                 .OrderBy(h => h.Id)
                 .ToListAsync(_pageCts.Token);
             ComputeBenchDeltas();
@@ -428,5 +429,5 @@
         await InvokeAsync(StateHasChanged);
     }
 
-    private void GoBack() => Navigation.NavigateTo($"/experiments/{ExperimentId}/hypothesis-batches/{BatchId}");
+    private void GoBack() => Navigation.NavigateTo($"/experiments/{ExperimentId}/research-iterations/{IterationId}");
 }

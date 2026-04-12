@@ -1,18 +1,20 @@
-@page "/hypothesis-batches/new"
-@page "/hypothesis-batches/{BatchId:int}/edit"
-@page "/experiments/{ExperimentId:int}/hypothesis-batches/new"
-@page "/experiments/{ExperimentId:int}/hypothesis-batches/{BatchId:int}/edit"
+@page "/research-iterations/new"
+@page "/research-iterations/{IterationId:int}/edit"
+@page "/experiments/{ExperimentId:int}/research-iterations/new"
+@page "/experiments/{ExperimentId:int}/research-iterations/{IterationId:int}/edit"
 @implements IDisposable
 @rendermode InteractiveServer
 @using Microsoft.EntityFrameworkCore
 @using Tedd.AIOptimizeSql.Database
 @using Tedd.AIOptimizeSql.Database.DataAccess
+@using Tedd.AIOptimizeSql.Database.Models
+@using Tedd.AIOptimizeSql.Database.Models.Enums
 @inject AIOptimizeDbContext DbContext
 @inject IAIOptimizeDataAccess DataAccess
 @inject NavigationManager Navigation
 @inject ISnackbar Snackbar
 
-<PageTitle>@(_isNew ? "New" : "Edit") hypothesis batch</PageTitle>
+<PageTitle>@(_isNew ? "New" : "Edit") research iteration</PageTitle>
 
 <EditNavigationGuard HasUnsavedChanges="@(() => IsModified)"
                      TrySaveAsync="TryPersistAsync"
@@ -21,7 +23,7 @@
 <MudContainer MaxWidth="MaxWidth.Medium" Class="mt-4">
     <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-4">
         <MudIconButton Icon="@Icons.Material.Filled.ArrowBack" OnClick="GoBack" />
-        <MudText Typo="Typo.h4">@(_isNew ? "New" : "Edit") hypothesis batch</MudText>
+        <MudText Typo="Typo.h4">@(_isNew ? "New" : "Edit") research iteration</MudText>
     </MudStack>
 
     @if (_loading)
@@ -31,13 +33,13 @@
     else if (_isNew && _experiments.Count == 0)
     {
         <MudAlert Severity="Severity.Warning" Class="mb-4">
-            Create an experiment before adding a hypothesis batch.
+            Create an experiment before adding a research iteration.
             <MudLink Href="/experiments/new" Color="Color.Primary">New experiment</MudLink>
         </MudAlert>
     }
-    else if (!_isNew && _batch == null)
+    else if (!_isNew && _iteration == null)
     {
-        <MudAlert Severity="Severity.Error">Hypothesis batch not found.</MudAlert>
+        <MudAlert Severity="Severity.Error">Research iteration not found.</MudAlert>
     }
     else
     {
@@ -61,22 +63,22 @@
                             Experiment: <strong>@_experimentName</strong>
                         </MudText>
                     }
-                    else if (_batch != null)
+                    else if (_iteration != null)
                     {
                         <MudText Typo="Typo.body1" Class="mb-2">
                             Experiment:
-                            <MudLink Href="@($"/experiments/{(int)(object)_batch.ExperimentId}/edit")">@_batch.Experiment?.Name</MudLink>
+                            <MudLink Href="@($"/experiments/{(int)(object)_iteration.ExperimentId}/edit")">@_iteration.Experiment?.Name</MudLink>
                         </MudText>
                         <MudDivider Class="mb-4" />
                         <MudStack Spacing="2" Class="mb-4">
                             <MudText Typo="Typo.subtitle2">Status</MudText>
-                            <MudText Typo="Typo.body2">State: <strong>@_batch.State</strong></MudText>
-                            <MudText Typo="Typo.body2">Started: @FormatNullable(_batch.StartedAt)</MudText>
-                            <MudText Typo="Typo.body2">Ended: @FormatNullable(_batch.EndedAt)</MudText>
-                            <MudText Typo="Typo.body2">Last message: @(_batch.LastMessage ?? "—")</MudText>
+                            <MudText Typo="Typo.body2">State: <strong>@_iteration.State</strong></MudText>
+                            <MudText Typo="Typo.body2">Started: @FormatNullable(_iteration.StartedAt)</MudText>
+                            <MudText Typo="Typo.body2">Ended: @FormatNullable(_iteration.EndedAt)</MudText>
+                            <MudText Typo="Typo.body2">Last message: @(_iteration.LastMessage ?? "—")</MudText>
                             <MudText Typo="Typo.body2">
-                                AI snapshot: @(_batch.AiProviderUsed?.ToString() ?? "—") / @(_batch.AiModelUsed ?? "—")
-                                @if (_batch.AIConnection is { } ac)
+                                AI snapshot: @(_iteration.AiProviderUsed?.ToString() ?? "—") / @(_iteration.AiModelUsed ?? "—")
+                                @if (_iteration.AIConnection is { } ac)
                                 {
                                     <text> (</text>
                                     <MudLink Href="@($"/ai-connections/{(int)(object)ac.Id}")">@ac.Name</MudLink>
@@ -94,24 +96,44 @@
                 </MudForm>
             </MudCardContent>
             <MudCardActions Class="pa-4 flex-wrap" Style="gap: 8px;">
-                @if (!_isNew && _batch != null)
+                @if (!_isNew && _iteration != null)
                 {
                     <MudButton Variant="Variant.Outlined" Color="Color.Primary" StartIcon="@Icons.Material.Filled.List"
-                               Href="@($"/experiments/{(int)(object)_batch.ExperimentId}/hypothesis-batches/{(int)(object)_batch.Id}")">
+                               Href="@($"/experiments/{(int)(object)_iteration.ExperimentId}/research-iterations/{(int)(object)_iteration.Id}")">
                         View hypotheses
                     </MudButton>
-                    <MudButton Variant="Variant.Outlined" Color="Color.Warning" StartIcon="@Icons.Material.Filled.Pause"
-                               OnClick="@(() => SetState(HypothesisBatchState.Paused))" Disabled="@_busy">
-                        Pause
-                    </MudButton>
-                    <MudButton Variant="Variant.Outlined" Color="Color.Error" StartIcon="@Icons.Material.Filled.Stop"
-                               OnClick="@(() => SetState(HypothesisBatchState.Stopped))" Disabled="@_busy">
-                        Stop
-                    </MudButton>
-                    <MudButton Variant="Variant.Outlined" Color="Color.Info" StartIcon="@Icons.Material.Filled.Queue"
-                               OnClick="@(() => SetState(HypothesisBatchState.Queued))" Disabled="@_busy">
-                        Queue
-                    </MudButton>
+                    @if (_iteration.State == ResearchIterationState.Stopped)
+                    {
+                        <MudButton Variant="Variant.Outlined" Color="Color.Info" StartIcon="@Icons.Material.Filled.Queue"
+                                   OnClick="@(() => SetState(ResearchIterationState.Queued))" Disabled="@_busy">
+                            Queue
+                        </MudButton>
+                    }
+                    @if (_iteration.State == ResearchIterationState.Queued)
+                    {
+                        <MudButton Variant="Variant.Outlined" Color="Color.Error" StartIcon="@Icons.Material.Filled.Stop"
+                                   OnClick="@(() => SetState(ResearchIterationState.Stopped))" Disabled="@_busy">
+                            Stop
+                        </MudButton>
+                    }
+                    @if (_iteration.State == ResearchIterationState.Paused)
+                    {
+                        <MudButton Variant="Variant.Outlined" Color="Color.Success" StartIcon="@Icons.Material.Filled.PlayArrow"
+                                   OnClick="@(() => SetState(ResearchIterationState.Queued))" Disabled="@_busy">
+                            Resume
+                        </MudButton>
+                    }
+                    @if (_iteration.State == ResearchIterationState.Running)
+                    {
+                        <MudButton Variant="Variant.Outlined" Color="Color.Warning" StartIcon="@Icons.Material.Filled.Pause"
+                                   OnClick="@(() => SetState(ResearchIterationState.Paused))" Disabled="@_busy">
+                            Pause
+                        </MudButton>
+                        <MudButton Variant="Variant.Outlined" Color="Color.Error" StartIcon="@Icons.Material.Filled.Stop"
+                                   OnClick="@(() => SetState(ResearchIterationState.Stopped))" Disabled="@_busy">
+                            Stop
+                        </MudButton>
+                    }
                 }
                 <MudSpacer />
                 <MudButton Variant="Variant.Text" OnClick="GoBack" Disabled="@_busy">Cancel</MudButton>
@@ -140,9 +162,9 @@
 
 @code {
     [Parameter] public int? ExperimentId { get; set; }
-    [Parameter] public int? BatchId { get; set; }
+    [Parameter] public int? IterationId { get; set; }
 
-    private HypothesisBatch? _batch;
+    private ResearchIteration? _iteration;
     private bool _isNew;
     private bool _loading = true;
     private bool _busy;
@@ -193,8 +215,8 @@
     {
         var ct = StartNewLoad();
         _loading = true;
-        _batch = null;
-        _isNew = !BatchId.HasValue;
+        _iteration = null;
+        _isNew = !IterationId.HasValue;
 
         try
         {
@@ -214,24 +236,24 @@
             }
             else
             {
-                var bid = (HypothesisBatchId)(object)BatchId!.Value;
-                _batch = await DataAccess.GetHypothesisBatchForEditAsync(bid, ct);
-                if (_batch != null)
+                var iid = (ResearchIterationId)(object)IterationId!.Value;
+                _iteration = await DataAccess.GetResearchIterationForEditAsync(iid, ct);
+                if (_iteration != null)
                 {
                     if (ExperimentIdFromRoute.HasValue)
                     {
                         var expected = (ExperimentId)(object)ExperimentIdFromRoute.Value;
-                        if (_batch.ExperimentId != expected)
+                        if (_iteration.ExperimentId != expected)
                         {
-                            _batch = null;
-                            Snackbar.Add("Batch does not belong to this experiment.", Severity.Error);
+                            _iteration = null;
+                            Snackbar.Add("Research iteration does not belong to this experiment.", Severity.Error);
                         }
                     }
 
-                    if (_batch != null)
+                    if (_iteration != null)
                     {
-                        _hints = _batch.Hints;
-                        _maxHypotheses = _batch.MaxNumberOfHypotheses;
+                        _hints = _iteration.Hints;
+                        _maxHypotheses = _iteration.MaxNumberOfHypotheses;
                     }
                 }
             }
@@ -259,7 +281,7 @@
         return _selectedExperimentId;
     }
 
-    private async Task<HypothesisBatchId?> CreateBatchCoreAsync()
+    private async Task<ResearchIterationId?> CreateIterationCoreAsync()
     {
         var expId = ResolveExperimentIdForCreate();
         if (expId is null)
@@ -268,7 +290,7 @@
             return null;
         }
 
-        return await DataAccess.CreateHypothesisBatchAsync(expId.Value, _hints, _maxHypotheses);
+        return await DataAccess.CreateResearchIterationAsync(expId.Value, _hints, _maxHypotheses);
     }
 
     private async Task<bool> TryPersistAsync()
@@ -281,18 +303,18 @@
         {
             if (_isNew)
             {
-                var newId = await CreateBatchCoreAsync();
+                var newId = await CreateIterationCoreAsync();
                 if (newId is null) return false;
-                Snackbar.Add("Batch created", Severity.Success);
+                Snackbar.Add("Research iteration created", Severity.Success);
                 CaptureBaseline();
                 return true;
             }
 
-            if (_batch != null)
+            if (_iteration != null)
             {
-                await DataAccess.UpdateHypothesisBatchEditableFieldsAsync(_batch.Id, _hints, _maxHypotheses);
+                await DataAccess.UpdateResearchIterationEditableFieldsAsync(_iteration.Id, _hints, _maxHypotheses);
                 Snackbar.Add("Saved", Severity.Success);
-                _batch = await DataAccess.GetHypothesisBatchForEditAsync(_batch.Id);
+                _iteration = await DataAccess.GetResearchIterationForEditAsync(_iteration.Id);
                 CaptureBaseline();
                 return true;
             }
@@ -314,13 +336,13 @@
             if (!ExperimentIdFromRoute.HasValue)
                 _selectedExperimentId = _experiments.FirstOrDefault()?.Id;
         }
-        else if (_batch != null)
+        else if (_iteration != null)
         {
-            _batch = await DataAccess.GetHypothesisBatchForEditAsync(_batch.Id);
-            if (_batch != null)
+            _iteration = await DataAccess.GetResearchIterationForEditAsync(_iteration.Id);
+            if (_iteration != null)
             {
-                _hints = _batch.Hints;
-                _maxHypotheses = _batch.MaxNumberOfHypotheses;
+                _hints = _iteration.Hints;
+                _maxHypotheses = _iteration.MaxNumberOfHypotheses;
             }
         }
 
@@ -338,19 +360,19 @@
         {
             if (_isNew)
             {
-                var newId = await CreateBatchCoreAsync();
-                if (newId is not HypothesisBatchId createdId) return;
+                var newId = await CreateIterationCoreAsync();
+                if (newId is not ResearchIterationId createdId) return;
                 if (runAfter)
-                    await DataAccess.BeginHypothesisBatchRunAsync(createdId);
+                    await DataAccess.BeginResearchIterationRunAsync(createdId);
 
-                Snackbar.Add(runAfter ? "Batch created and run started" : "Batch created", Severity.Success);
-                Navigation.NavigateTo($"/hypothesis-batches/{(int)(object)createdId}/edit");
+                Snackbar.Add(runAfter ? "Research iteration created and run started" : "Research iteration created", Severity.Success);
+                Navigation.NavigateTo($"/research-iterations/{(int)(object)createdId}/edit");
             }
-            else if (_batch != null)
+            else if (_iteration != null)
             {
-                await DataAccess.UpdateHypothesisBatchEditableFieldsAsync(_batch.Id, _hints, _maxHypotheses);
+                await DataAccess.UpdateResearchIterationEditableFieldsAsync(_iteration.Id, _hints, _maxHypotheses);
                 Snackbar.Add("Saved", Severity.Success);
-                _batch = await DataAccess.GetHypothesisBatchForEditAsync(_batch.Id);
+                _iteration = await DataAccess.GetResearchIterationForEditAsync(_iteration.Id);
                 CaptureBaseline();
             }
         }
@@ -360,14 +382,14 @@
         }
     }
 
-    private async Task SetState(HypothesisBatchState state)
+    private async Task SetState(ResearchIterationState state)
     {
-        if (_batch == null || _busy) return;
+        if (_iteration == null || _busy) return;
         _busy = true;
         try
         {
-            await DataAccess.SetHypothesisBatchStateAsync(_batch.Id, state);
-            _batch = await DataAccess.GetHypothesisBatchForEditAsync(_batch.Id);
+            await DataAccess.SetResearchIterationStateAsync(_iteration.Id, state);
+            _iteration = await DataAccess.GetResearchIterationForEditAsync(_iteration.Id);
             Snackbar.Add($"State set to {state}", Severity.Info);
         }
         finally
@@ -379,8 +401,8 @@
     private void GoBack()
     {
         if (ExperimentIdFromRoute.HasValue)
-            Navigation.NavigateTo($"/experiments/{ExperimentIdFromRoute.Value}/hypothesis-batches");
+            Navigation.NavigateTo($"/experiments/{ExperimentIdFromRoute.Value}/research-iterations");
         else
-            Navigation.NavigateTo("/hypothesis-batches");
+            Navigation.NavigateTo("/research-iterations");
     }
 }
