@@ -260,11 +260,9 @@
         {
             await using var db = await DbContextFactory.CreateDbContextAsync();
             await NullOutBuildsOnReferences(db, item.Id);
-            var tracked = await db.Hypotheses.AsTracking().FirstOrDefaultAsync(h => h.Id == item.Id);
-            if (tracked is null)
+            var deleted = await db.Hypotheses.Where(h => h.Id == item.Id).ExecuteDeleteAsync();
+            if (deleted == 0)
                 return;
-            db.Hypotheses.Remove(tracked);
-            await db.SaveChangesAsync();
             Snackbar.Add("Hypothesis deleted", Severity.Success);
             await _table!.ReloadServerData();
             await RefreshStatsAndChartAfterMutationAsync();
@@ -282,26 +280,21 @@
         {
             var ids = _selectedItems.Select(i => i.Id).ToList();
             await using var db = await DbContextFactory.CreateDbContextAsync();
-            foreach (var id in ids)
-                await NullOutBuildsOnReferences(db, id);
-            var tracked = await db.Hypotheses.AsTracking().Where(h => ids.Contains(h.Id)).ToListAsync();
-            db.Hypotheses.RemoveRange(tracked);
-            await db.SaveChangesAsync();
-            Snackbar.Add($"Deleted {_selectedItems.Count} hypothesis/hypotheses", Severity.Success);
+            await db.Hypotheses
+                .Where(h => h.BuildsOnHypothesisId != null && ids.Contains(h.BuildsOnHypothesisId.Value))
+                .ExecuteUpdateAsync(s => s.SetProperty(h => h.BuildsOnHypothesisId, (HypothesisId?)null));
+            var deleted = await db.Hypotheses.Where(h => ids.Contains(h.Id)).ExecuteDeleteAsync();
+            Snackbar.Add(deleted == 0 ? "Nothing deleted" : $"Deleted {deleted} hypothesis/hypotheses", deleted == 0 ? Severity.Info : Severity.Success);
             _selectedItems.Clear();
             await _table!.ReloadServerData();
             await RefreshStatsAndChartAfterMutationAsync();
         }
     }
 
-    private async Task NullOutBuildsOnReferences(AIOptimizeDbContext db, HypothesisId id)
-    {
-        var dependents = await db.Hypotheses.AsTracking()
+    private static Task NullOutBuildsOnReferences(AIOptimizeDbContext db, HypothesisId id) =>
+        db.Hypotheses
             .Where(h => h.BuildsOnHypothesisId == id)
-            .ToListAsync();
-        foreach (var h in dependents)
-            h.BuildsOnHypothesisId = null;
-    }
+            .ExecuteUpdateAsync(s => s.SetProperty(h => h.BuildsOnHypothesisId, (HypothesisId?)null));
 
     private async Task RefreshStatsAndChartAfterMutationAsync()
     {
