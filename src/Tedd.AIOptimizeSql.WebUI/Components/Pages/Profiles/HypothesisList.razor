@@ -1,10 +1,12 @@
 @page "/profiles/{ExperimentId:int}/research-iterations/{IterationId:int}"
+@implements IDisposable
 @rendermode InteractiveServer
-@inject Tedd.AIOptimizeSql.Database.AIOptimizeDbContext DbContext
+@inject IDbContextFactory<Tedd.AIOptimizeSql.Database.AIOptimizeDbContext> DbContextFactory
 @inject NavigationManager Navigation
 @inject IDialogService DialogService
 @inject ISnackbar Snackbar
 @using Microsoft.EntityFrameworkCore
+@using Tedd.AIOptimizeSql.Database
 
 <PageTitle>Hypotheses</PageTitle>
 
@@ -149,6 +151,7 @@
     [Parameter] public int ExperimentId { get; set; }
     [Parameter] public int IterationId { get; set; }
 
+    private readonly CancellationTokenSource _pageCts = new();
     private ResearchIteration? _iteration;
     private MudTable<Hypothesis>? _table;
     private HashSet<Hypothesis> _selectedItems = new();
@@ -156,20 +159,28 @@
     private string[] _chartLabels = Array.Empty<string>();
     private List<ChartSeries<double>> _hypothesisChartSeries = new();
 
-    protected override async Task OnInitializedAsync()
+    public void Dispose()
     {
-        var iterationId = (ResearchIterationId)(object)IterationId;
-        _iteration = await DbContext.ResearchIterations.FindAsync(iterationId);
-        await LoadStats();
-        await LoadChartData();
+        _pageCts.Cancel();
+        _pageCts.Dispose();
     }
 
-    private async Task LoadStats()
+    protected override Task OnInitializedAsync() =>
+        PageLoadCancellation.RunPageLoadAsync(async ct =>
+        {
+            await using var db = await DbContextFactory.CreateDbContextAsync(ct);
+            var iterationId = (ResearchIterationId)(object)IterationId;
+            _iteration = await db.ResearchIterations.AsNoTracking().FirstOrDefaultAsync(r => r.Id == iterationId, ct);
+            await LoadStats(db, ct);
+            await LoadChartData(db, ct);
+        }, _pageCts.Token);
+
+    private async Task LoadStats(AIOptimizeDbContext db, CancellationToken cancellationToken = default)
     {
         var iterationId = (ResearchIterationId)(object)IterationId;
-        var hypotheses = await DbContext.Hypotheses
+        var hypotheses = await db.Hypotheses
             .Where(h => h.ResearchIterationId == iterationId)
-            .ToListAsync();
+            .ToListAsync(cancellationToken);
 
         _stats = ResearchIterationRunStatsMapper.ToViewModel(new ResearchIterationRunStatsSource(
             hypotheses.Count,
@@ -178,14 +189,14 @@
             hypotheses.Sum(h => h.TimeUsedMs)));
     }
 
-    private async Task LoadChartData()
+    private async Task LoadChartData(AIOptimizeDbContext db, CancellationToken cancellationToken = default)
     {
         var iterationId = (ResearchIterationId)(object)IterationId;
-        var hypotheses = await DbContext.Hypotheses
+        var hypotheses = await db.Hypotheses
             .Where(h => h.ResearchIterationId == iterationId)
             .OrderBy(h => h.CreatedAt)
             .Select(h => new { h.ImpovementPercentage, h.Id })
-            .ToListAsync();
+            .ToListAsync(cancellationToken);
 
         var data = hypotheses.Select(h => (double)h.ImpovementPercentage).ToList();
         _chartLabels = hypotheses.Select(h => $"#{(int)(object)h.Id}").ToArray();
@@ -201,11 +212,15 @@
         return $"{ms / 60000.0:F1}m";
     }
 
-    private async Task<TableData<Hypothesis>> LoadServerData(TableState state, CancellationToken ct)
+    private Task<TableData<Hypothesis>> LoadServerData(TableState state, CancellationToken ct) =>
+        PageLoadCancellation.RunTableLoadAsync(t => LoadServerDataCore(state, t), _pageCts.Token, ct);
+
+    private async Task<TableData<Hypothesis>> LoadServerDataCore(TableState state, CancellationToken cancellationToken)
     {
+        await using var db = await DbContextFactory.CreateDbContextAsync(cancellationToken);
         var iterationId = (ResearchIterationId)(object)IterationId;
 
-        IQueryable<Hypothesis> query = DbContext.Hypotheses
+        IQueryable<Hypothesis> query = db.Hypotheses
             .Where(h => h.ResearchIterationId == iterationId);
 
         query = state.SortLabel switch
@@ -219,8 +234,8 @@
             _ => query.OrderByDescending(x => x.CreatedAt)
         };
 
-        var totalItems = await query.CountAsync(ct);
-        var items = await query.Skip(state.Page * state.PageSize).Take(state.PageSize).ToListAsync(ct);
+        var totalItems = await query.CountAsync(cancellationToken);
+        var items = await query.Skip(state.Page * state.PageSize).Take(state.PageSize).ToListAsync(cancellationToken);
 
         return new TableData<Hypothesis> { TotalItems = totalItems, Items = items };
     }
@@ -239,13 +254,13 @@
 
         if (confirm == true)
         {
-            await NullOutBuildsOnReferences(item.Id);
-            DbContext.Hypotheses.Remove(item);
-            await DbContext.SaveChangesAsync();
+            await using var db = await DbContextFactory.CreateDbContextAsync();
+            await NullOutBuildsOnReferences(db, item.Id);
+            db.Hypotheses.Remove(item);
+            await db.SaveChangesAsync();
             Snackbar.Add("Hypothesis deleted", Severity.Success);
             await _table!.ReloadServerData();
-            await LoadStats();
-            await LoadChartData();
+            await RefreshStatsAndChartAfterMutationAsync();
         }
     }
 
@@ -258,26 +273,33 @@
 
         if (confirm == true)
         {
+            await using var db = await DbContextFactory.CreateDbContextAsync();
             foreach (var item in _selectedItems)
             {
-                await NullOutBuildsOnReferences(item.Id);
-                DbContext.Hypotheses.Remove(item);
+                await NullOutBuildsOnReferences(db, item.Id);
+                db.Hypotheses.Remove(item);
             }
-            await DbContext.SaveChangesAsync();
+            await db.SaveChangesAsync();
             Snackbar.Add($"Deleted {_selectedItems.Count} hypothesis/hypotheses", Severity.Success);
             _selectedItems.Clear();
             await _table!.ReloadServerData();
-            await LoadStats();
-            await LoadChartData();
+            await RefreshStatsAndChartAfterMutationAsync();
         }
     }
 
-    private async Task NullOutBuildsOnReferences(HypothesisId id)
+    private async Task NullOutBuildsOnReferences(AIOptimizeDbContext db, HypothesisId id)
     {
-        var dependents = await DbContext.Hypotheses
+        var dependents = await db.Hypotheses.AsTracking()
             .Where(h => h.BuildsOnHypothesisId == id)
             .ToListAsync();
         foreach (var h in dependents)
             h.BuildsOnHypothesisId = null;
+    }
+
+    private async Task RefreshStatsAndChartAfterMutationAsync()
+    {
+        await using var db = await DbContextFactory.CreateDbContextAsync();
+        await LoadStats(db, _pageCts.Token);
+        await LoadChartData(db, _pageCts.Token);
     }
 }

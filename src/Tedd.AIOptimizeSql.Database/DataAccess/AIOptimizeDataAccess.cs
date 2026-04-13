@@ -5,7 +5,7 @@ using Tedd.AIOptimizeSql.Database.Models.Enums;
 
 namespace Tedd.AIOptimizeSql.Database.DataAccess;
 
-public sealed class AIOptimizeDataAccess(AIOptimizeDbContext db) : IAIOptimizeDataAccess
+public sealed class AIOptimizeDataAccess(IDbContextFactory<AIOptimizeDbContext> dbFactory) : IAIOptimizeDataAccess
 {
     public async Task<(IReadOnlyList<ResearchIterationListRow> Items, int TotalCount)> GetResearchIterationsPageAsync(
         int skip,
@@ -14,6 +14,7 @@ public sealed class AIOptimizeDataAccess(AIOptimizeDbContext db) : IAIOptimizeDa
         ListSortDirection sortDirection,
         CancellationToken cancellationToken = default)
     {
+        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
         var query = db.ResearchIterations.AsNoTracking();
 
         var descending = sortDirection == ListSortDirection.Descending;
@@ -67,11 +68,14 @@ public sealed class AIOptimizeDataAccess(AIOptimizeDbContext db) : IAIOptimizeDa
         return (page, total);
     }
 
-    public Task<ResearchIteration?> GetResearchIterationForEditAsync(ResearchIterationId id, CancellationToken cancellationToken = default) =>
-        db.ResearchIterations
+    public async Task<ResearchIteration?> GetResearchIterationForEditAsync(ResearchIterationId id, CancellationToken cancellationToken = default)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
+        return await db.ResearchIterations
             .Include(b => b.Experiment)
             .Include(b => b.AIConnection)
             .FirstOrDefaultAsync(b => b.Id == id, cancellationToken);
+    }
 
     public async Task<ResearchIterationId> CreateResearchIterationAsync(
         ExperimentId experimentId,
@@ -79,6 +83,7 @@ public sealed class AIOptimizeDataAccess(AIOptimizeDbContext db) : IAIOptimizeDa
         int maxNumberOfHypotheses,
         CancellationToken cancellationToken = default)
     {
+        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
         var iteration = new ResearchIteration
         {
             ExperimentId = experimentId,
@@ -98,7 +103,9 @@ public sealed class AIOptimizeDataAccess(AIOptimizeDbContext db) : IAIOptimizeDa
         int maxNumberOfHypotheses,
         CancellationToken cancellationToken = default)
     {
-        var iteration = await db.ResearchIterations.FirstOrDefaultAsync(b => b.Id == id, cancellationToken)
+        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
+        var iteration = await db.ResearchIterations.AsTracking()
+                    .FirstOrDefaultAsync(b => b.Id == id, cancellationToken)
                     ?? throw new InvalidOperationException($"Research iteration {id} was not found.");
         iteration.Hints = hints;
         iteration.MaxNumberOfHypotheses = maxNumberOfHypotheses;
@@ -110,34 +117,60 @@ public sealed class AIOptimizeDataAccess(AIOptimizeDbContext db) : IAIOptimizeDa
         ResearchIterationState state,
         CancellationToken cancellationToken = default)
     {
-        var iteration = await db.ResearchIterations.FirstOrDefaultAsync(b => b.Id == id, cancellationToken)
+        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
+        var iteration = await db.ResearchIterations.AsTracking()
+                    .FirstOrDefaultAsync(b => b.Id == id, cancellationToken)
                     ?? throw new InvalidOperationException($"Research iteration {id} was not found.");
-        iteration.State = state;
-        await SyncRunQueueForIterationAsync(id, state, cancellationToken);
-        await db.SaveChangesAsync(cancellationToken);
+
+        await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
+        try
+        {
+            iteration.State = state;
+            await SyncRunQueueForIterationAsync(db, id, state, cancellationToken);
+            await db.SaveChangesAsync(cancellationToken);
+            await tx.CommitAsync(cancellationToken);
+        }
+        catch
+        {
+            await tx.RollbackAsync(cancellationToken);
+            throw;
+        }
     }
 
     public async Task BeginResearchIterationRunAsync(ResearchIterationId id, CancellationToken cancellationToken = default)
     {
-        var iteration = await db.ResearchIterations
+        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
+        var iteration = await db.ResearchIterations.AsTracking()
                        .Include(b => b.Experiment!)
                        .ThenInclude(e => e.AIConnection)
                        .FirstOrDefaultAsync(b => b.Id == id, cancellationToken)
                    ?? throw new InvalidOperationException($"Research iteration {id} was not found.");
 
-        ApplyAiSnapshotFromExperiment(iteration, iteration.Experiment!);
-        iteration.State = ResearchIterationState.Running;
-        iteration.StartedAt = DateTime.UtcNow;
-        iteration.EndedAt = null;
-        iteration.LastMessage = "Run started";
+        await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
+        try
+        {
+            ApplyAiSnapshotFromExperiment(iteration, iteration.Experiment!);
+            iteration.State = ResearchIterationState.Running;
+            iteration.StartedAt = DateTime.UtcNow;
+            iteration.EndedAt = null;
+            iteration.LastMessage = "Run started";
 
-        await RemoveRunQueueEntriesForIterationAsync(id, cancellationToken);
-        await db.SaveChangesAsync(cancellationToken);
+            await RemoveRunQueueEntriesForIterationAsync(db, id, cancellationToken);
+            await db.SaveChangesAsync(cancellationToken);
+            await tx.CommitAsync(cancellationToken);
+        }
+        catch
+        {
+            await tx.RollbackAsync(cancellationToken);
+            throw;
+        }
     }
 
     public async Task DeleteResearchIterationAsync(ResearchIterationId id, CancellationToken cancellationToken = default)
     {
-        var iteration = await db.ResearchIterations.FirstOrDefaultAsync(b => b.Id == id, cancellationToken);
+        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
+        var iteration = await db.ResearchIterations.AsTracking()
+            .FirstOrDefaultAsync(b => b.Id == id, cancellationToken);
         if (iteration is null)
             return;
         db.ResearchIterations.Remove(iteration);
@@ -146,14 +179,15 @@ public sealed class AIOptimizeDataAccess(AIOptimizeDbContext db) : IAIOptimizeDa
 
     public async Task ClearAiConnectionReferencesAsync(AIConnectionId id, CancellationToken cancellationToken = default)
     {
-        var experiments = await db.Experiments.Where(e => e.AIConnectionId == id).ToListAsync(cancellationToken);
+        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
+        var experiments = await db.Experiments.AsTracking().Where(e => e.AIConnectionId == id).ToListAsync(cancellationToken);
         foreach (var e in experiments)
         {
             e.AIConnectionId = null;
             e.ModifiedAt = DateTime.UtcNow;
         }
 
-        var iterations = await db.ResearchIterations.Where(b => b.AIConnectionId == id).ToListAsync(cancellationToken);
+        var iterations = await db.ResearchIterations.AsTracking().Where(b => b.AIConnectionId == id).ToListAsync(cancellationToken);
         foreach (var b in iterations)
             b.AIConnectionId = null;
 
@@ -175,27 +209,43 @@ public sealed class AIOptimizeDataAccess(AIOptimizeDbContext db) : IAIOptimizeDa
         }
     }
 
-    private async Task SyncRunQueueForIterationAsync(
+    private static async Task SyncRunQueueForIterationAsync(
+        AIOptimizeDbContext db,
         ResearchIterationId iterationId,
         ResearchIterationState state,
         CancellationToken cancellationToken)
     {
-        var existing = await db.RunQueue.Where(q => q.ResearchIterationId == iterationId).ToListAsync(cancellationToken);
+        await DeleteRunQueueRowsForIterationAsync(db, iterationId, cancellationToken);
+
         if (state == ResearchIterationState.Queued)
-        {
-            if (existing.Count == 0)
-                db.RunQueue.Add(new RunQueue { ResearchIterationId = iterationId });
-            else if (existing.Count > 1)
-                db.RunQueue.RemoveRange(existing.Skip(1).ToList());
-        }
-        else if (existing.Count > 0)
-            db.RunQueue.RemoveRange(existing);
+            db.RunQueue.Add(new RunQueue { ResearchIterationId = iterationId });
     }
 
-    private async Task RemoveRunQueueEntriesForIterationAsync(ResearchIterationId iterationId, CancellationToken cancellationToken)
+    private static Task RemoveRunQueueEntriesForIterationAsync(AIOptimizeDbContext db, ResearchIterationId iterationId, CancellationToken cancellationToken) =>
+        DeleteRunQueueRowsForIterationAsync(db, iterationId, cancellationToken);
+
+    private static async Task DeleteRunQueueRowsForIterationAsync(AIOptimizeDbContext db, ResearchIterationId iterationId, CancellationToken cancellationToken)
     {
-        var existing = await db.RunQueue.Where(q => q.ResearchIterationId == iterationId).ToListAsync(cancellationToken);
-        if (existing.Count > 0)
-            db.RunQueue.RemoveRange(existing);
+        if (db.Database.IsRelational())
+            await db.RunQueue.Where(q => q.ResearchIterationId == iterationId).ExecuteDeleteAsync(cancellationToken);
+        else
+        {
+            var rows = await db.RunQueue.AsTracking()
+                .Where(q => q.ResearchIterationId == iterationId)
+                .ToListAsync(cancellationToken);
+            if (rows.Count > 0)
+                db.RunQueue.RemoveRange(rows);
+        }
+
+        DetachStaleTrackedRunQueueForIteration(db, iterationId);
+    }
+
+    private static void DetachStaleTrackedRunQueueForIteration(AIOptimizeDbContext db, ResearchIterationId iterationId)
+    {
+        foreach (var entry in db.ChangeTracker.Entries<RunQueue>()
+                     .Where(e => e.Entity.ResearchIterationId == iterationId
+                                 && e.State is not EntityState.Deleted and not EntityState.Added)
+                     .ToList())
+            entry.State = EntityState.Detached;
     }
 }

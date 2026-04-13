@@ -2,10 +2,11 @@
 @page "/experiments/{Id:int}/edit"
 @implements IDisposable
 @rendermode InteractiveServer
-@inject Tedd.AIOptimizeSql.Database.AIOptimizeDbContext DbContext
+@inject IDbContextFactory<Tedd.AIOptimizeSql.Database.AIOptimizeDbContext> DbContextFactory
 @inject NavigationManager Navigation
 @inject ISnackbar Snackbar
 @using Microsoft.EntityFrameworkCore
+@using Tedd.AIOptimizeSql.Database
 
 <PageTitle>@(_isNew ? "New" : "Edit") Experiment</PageTitle>
 
@@ -79,27 +80,36 @@
 
                         <MudTabPanel Text="SQL">
                             <MudStack Spacing="0" Class="pt-4">
-                                <MudText Typo="Typo.subtitle2" Class="mb-2">Hypothesis SQL</MudText>
-                                <MudTextField @bind-Value="_model.HypothesisPreRunSql" Label="Hypothesis Pre-Run SQL"
-                                              Lines="3" Variant="Variant.Outlined" Class="mb-4"
-                                              HelperText="Executed before each hypothesis" />
+                                <SqlMonacoField EditorId="@_editorIdBenchmark"
+                                                Label="Benchmark SQL"
+                                                HelperText="SQL used to measure performance (required for experiments)."
+                                                Value="@_model.BenchmarkSql"
+                                                ValueChanged="OnBenchmarkSqlChanged"
+                                                Required="true"
+                                                RequiredError="Benchmark SQL is required"
+                                                ValidationAttempted="_benchmarkValidationAttempted" />
 
-                                <MudTextField @bind-Value="_model.HypothesisPostRunSql" Label="Hypothesis Post-Run SQL"
-                                              Lines="3" Variant="Variant.Outlined" Class="mb-4"
-                                              HelperText="Executed after each hypothesis" />
+                                <MudText Typo="Typo.subtitle2" Class="mb-2 mt-2">Hypothesis SQL</MudText>
+                                <SqlMonacoField EditorId="@_editorIdHypothesisPre"
+                                                Label="Hypothesis Pre-Run SQL"
+                                                HelperText="Executed before each hypothesis"
+                                                @bind-Value="_model.HypothesisPreRunSql" />
+
+                                <SqlMonacoField EditorId="@_editorIdHypothesisPost"
+                                                Label="Hypothesis Post-Run SQL"
+                                                HelperText="Executed after each hypothesis"
+                                                @bind-Value="_model.HypothesisPostRunSql" />
 
                                 <MudText Typo="Typo.subtitle2" Class="mb-2 mt-2">Experiment SQL</MudText>
-                                <MudTextField @bind-Value="_model.ExperimentPreRunSql" Label="Pre-Run SQL"
-                                              Lines="3" Variant="Variant.Outlined" Class="mb-4"
-                                              HelperText="Executed before optimization starts" />
+                                <SqlMonacoField EditorId="@_editorIdExperimentPre"
+                                                Label="Pre-Run SQL"
+                                                HelperText="Executed before optimization starts"
+                                                @bind-Value="_model.ExperimentPreRunSql" />
 
-                                <MudTextField @bind-Value="_model.ExperimentPostRunSql" Label="Post-Run SQL"
-                                              Lines="3" Variant="Variant.Outlined" Class="mb-4"
-                                              HelperText="Executed after each run" />
-
-                                <MudTextField @bind-Value="_model.BenchmarkSql" Label="Benchmark SQL"
-                                              Lines="3" Variant="Variant.Outlined" Class="mb-4"
-                                              HelperText="SQL used to benchmark performance" />
+                                <SqlMonacoField EditorId="@_editorIdExperimentPost"
+                                                Label="Post-Run SQL"
+                                                HelperText="Executed after each run"
+                                                @bind-Value="_model.ExperimentPostRunSql" />
 
                                 @TabActions(showResearchIterationsLink: false)
                             </MudStack>
@@ -125,6 +135,17 @@
     private DatabaseConnectionId? _selectedDbConnId;
     private AIConnectionId? _selectedAiConnId;
     private readonly CancellationTokenSource _pageCts = new();
+    private AIOptimizeDbContext? _db;
+    private bool _benchmarkValidationAttempted;
+
+    private string _editorIdBenchmark = "";
+    private string _editorIdHypothesisPre = "";
+    private string _editorIdHypothesisPost = "";
+    private string _editorIdExperimentPre = "";
+    private string _editorIdExperimentPost = "";
+
+    private bool CanSave =>
+        _formValid && !string.IsNullOrWhiteSpace(_model?.BenchmarkSql);
 
     private string _baselineName = "";
     private string _baselineDescription = "";
@@ -191,7 +212,7 @@
             <MudButton Variant="Variant.Text" OnClick="DiscardAsync" Disabled="@_discardBusy">
                 Discard
             </MudButton>
-            <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="@(!_formValid)"
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="@(!CanSave)"
                        OnClick="Save" StartIcon="@Icons.Material.Filled.Save">
                 Save
             </MudButton>
@@ -204,19 +225,22 @@
     {
         _pageCts.Cancel();
         _pageCts.Dispose();
+        _db?.Dispose();
+        _db = null;
     }
 
     protected override Task OnInitializedAsync() =>
         PageLoadCancellation.RunPageLoadAsync(async ct =>
         {
-            _dbConnections = await DbContext.DatabaseConnections.OrderBy(c => c.Name).ToListAsync(ct);
-            _aiConnections = await DbContext.AIConnections.OrderBy(c => c.Name).ToListAsync(ct);
+            _db = await DbContextFactory.CreateDbContextAsync(ct);
+            _dbConnections = await _db.DatabaseConnections.OrderBy(c => c.Name).ToListAsync(ct);
+            _aiConnections = await _db.AIConnections.OrderBy(c => c.Name).ToListAsync(ct);
 
             if (Id.HasValue)
             {
                 _isNew = false;
                 var id = (ExperimentId)(object)Id.Value;
-                _model = await DbContext.Experiments
+                _model = await _db.Experiments.AsTracking()
                     .Include(p => p.DatabaseConnection)
                     .Include(p => p.AIConnection)
                     .FirstOrDefaultAsync(p => p.Id == id, ct);
@@ -231,13 +255,30 @@
                 _isNew = true;
                 _model = new Experiment { Name = "" };
             }
+
+            var key = Id?.ToString() ?? "new";
+            _editorIdBenchmark = $"experiment-edit-benchmark-{key}";
+            _editorIdHypothesisPre = $"experiment-edit-hypothesis-pre-{key}";
+            _editorIdHypothesisPost = $"experiment-edit-hypothesis-post-{key}";
+            _editorIdExperimentPre = $"experiment-edit-experiment-pre-{key}";
+            _editorIdExperimentPost = $"experiment-edit-experiment-post-{key}";
+
             _loading = false;
             CaptureBaseline();
         }, _pageCts.Token);
 
+    private Task OnBenchmarkSqlChanged(string? value)
+    {
+        if (_model == null) return Task.CompletedTask;
+        _model.BenchmarkSql = value;
+        if (!string.IsNullOrWhiteSpace(value))
+            _benchmarkValidationAttempted = false;
+        return Task.CompletedTask;
+    }
+
     private async Task DiscardAsync()
     {
-        if (_model == null || _discardBusy) return;
+        if (_db is null || _model == null || _discardBusy) return;
         _discardBusy = true;
         await InvokeAsync(StateHasChanged);
         try
@@ -251,8 +292,8 @@
             else
             {
                 var experimentId = _model.Id;
-                DbContext.Entry(_model).State = EntityState.Detached;
-                _model = await DbContext.Experiments
+                _db.Entry(_model).State = EntityState.Detached;
+                _model = await _db.Experiments.AsTracking()
                     .Include(p => p.DatabaseConnection)
                     .Include(p => p.AIConnection)
                     .FirstOrDefaultAsync(p => p.Id == experimentId, _pageCts.Token);
@@ -265,6 +306,7 @@
                 _selectedAiConnId = _model.AIConnectionId;
             }
             Snackbar.Add("Changes discarded.", Severity.Info);
+            _benchmarkValidationAttempted = false;
             CaptureBaseline();
         }
         finally
@@ -275,9 +317,18 @@
 
     private async Task<bool> TryPersistAsync()
     {
-        if (_model == null) return false;
+        if (_db is null || _model == null) return false;
         await _form!.ValidateAsync();
         if (!_formValid) return false;
+
+        if (string.IsNullOrWhiteSpace(_model.BenchmarkSql))
+        {
+            _benchmarkValidationAttempted = true;
+            _activeTabIndex = 1;
+            await InvokeAsync(StateHasChanged);
+            Snackbar.Add("Benchmark SQL is required.", Severity.Warning);
+            return false;
+        }
 
         _model.DatabaseConnectionId = _selectedDbConnId;
         _model.AIConnectionId = _selectedAiConnId;
@@ -286,14 +337,14 @@
         {
             _model.CreatedAt = DateTime.UtcNow;
             _model.ModifiedAt = DateTime.UtcNow;
-            DbContext.Experiments.Add(_model);
+            _db.Experiments.Add(_model);
         }
         else
         {
             _model.ModifiedAt = DateTime.UtcNow;
         }
 
-        await DbContext.SaveChangesAsync();
+        await _db.SaveChangesAsync();
         Snackbar.Add(_isNew ? "Experiment created" : "Experiment saved", Severity.Success);
         CaptureBaseline();
         return true;

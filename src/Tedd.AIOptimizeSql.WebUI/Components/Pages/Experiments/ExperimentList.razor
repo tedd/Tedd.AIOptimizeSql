@@ -1,7 +1,7 @@
 @page "/experiments"
 @implements IDisposable
 @rendermode InteractiveServer
-@inject Tedd.AIOptimizeSql.Database.AIOptimizeDbContext DbContext
+@inject IDbContextFactory<Tedd.AIOptimizeSql.Database.AIOptimizeDbContext> DbContextFactory
 @inject NavigationManager Navigation
 @inject IDialogService DialogService
 @inject ISnackbar Snackbar
@@ -28,7 +28,7 @@
 
     <MudTable @ref="_table" T="Experiment" ServerData="LoadServerData" Hover="true" Elevation="3"
               Dense="true" FixedHeader="true" MultiSelection="true" @bind-SelectedItems="_selectedItems"
-              Class="rounded-lg">
+              OnRowClick="OnRowClick" RowClass="cursor-pointer" Class="rounded-lg">
         <HeaderContent>
             <MudTh><MudTableSortLabel SortLabel="Name" T="Experiment">Name</MudTableSortLabel></MudTh>
             <MudTh><MudTableSortLabel SortLabel="DatabaseConnection" T="Experiment">DB Connection</MudTableSortLabel></MudTh>
@@ -43,9 +43,11 @@
             <MudTd DataLabel="DB Connection">
                 @if (context.DatabaseConnection != null)
                 {
-                    <MudLink Href="@($"/database-connections/{(int)(object)context.DatabaseConnectionId!}")" Color="Color.Primary">
-                        @context.DatabaseConnection.Name
-                    </MudLink>
+                    <span @onclick:stopPropagation="true">
+                        <MudLink Href="@($"/database-connections/{(int)(object)context.DatabaseConnectionId!}")" Color="Color.Primary">
+                            @context.DatabaseConnection.Name
+                        </MudLink>
+                    </span>
                 }
                 else
                 {
@@ -55,9 +57,11 @@
             <MudTd DataLabel="AI Connection">
                 @if (context.AIConnection != null)
                 {
-                    <MudLink Href="@($"/ai-connections/{(int)(object)context.AIConnectionId!}")" Color="Color.Secondary">
-                        @context.AIConnection.Name
-                    </MudLink>
+                    <span @onclick:stopPropagation="true">
+                        <MudLink Href="@($"/ai-connections/{(int)(object)context.AIConnectionId!}")" Color="Color.Secondary">
+                            @context.AIConnection.Name
+                        </MudLink>
+                    </span>
                 }
                 else
                 {
@@ -69,7 +73,7 @@
             </MudTd>
             <MudTd DataLabel="Created">@context.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd")</MudTd>
             <MudTd DataLabel="Modified">@context.ModifiedAt.ToLocalTime().ToString("yyyy-MM-dd")</MudTd>
-            <MudTd>
+            <MudTd @onclick:stopPropagation="true">
                 <MudStack Row="true" Spacing="0">
                     <MudIconButton Icon="@Icons.Material.Filled.Edit" Color="Color.Primary" Size="Size.Small"
                                    OnClick="@(() => Navigation.NavigateTo($"/experiments/{(int)(object)context.Id}/edit"))"
@@ -107,7 +111,8 @@
 
     private async Task<TableData<Experiment>> LoadServerDataCore(TableState state, CancellationToken cancellationToken)
     {
-        IQueryable<Experiment> query = DbContext.Experiments
+        await using var db = await DbContextFactory.CreateDbContextAsync(cancellationToken);
+        IQueryable<Experiment> query = db.Experiments
             .Include(p => p.DatabaseConnection)
             .Include(p => p.AIConnection)
             .Include(p => p.ResearchIterations);
@@ -142,12 +147,16 @@
 
         if (confirm == true)
         {
-            DbContext.Experiments.Remove(item);
-            await DbContext.SaveChangesAsync();
+            await using var db = await DbContextFactory.CreateDbContextAsync();
+            db.Experiments.Remove(item);
+            await db.SaveChangesAsync();
             Snackbar.Add($"Deleted \"{item.Name}\"", Severity.Success);
             await _table!.ReloadServerData();
         }
     }
+
+    private void OnRowClick(TableRowClickEventArgs<Experiment> args) =>
+        Navigation.NavigateTo($"/experiments/{(int)(object)args.Item!.Id}/view");
 
     private async Task DeleteSelected()
     {
@@ -158,9 +167,10 @@
 
         if (confirm == true)
         {
+            await using var db = await DbContextFactory.CreateDbContextAsync();
             foreach (var item in _selectedItems)
-                DbContext.Experiments.Remove(item);
-            await DbContext.SaveChangesAsync();
+                db.Experiments.Remove(item);
+            await db.SaveChangesAsync();
             Snackbar.Add($"Deleted {_selectedItems.Count} experiment(s)", Severity.Success);
             _selectedItems.Clear();
             await _table!.ReloadServerData();

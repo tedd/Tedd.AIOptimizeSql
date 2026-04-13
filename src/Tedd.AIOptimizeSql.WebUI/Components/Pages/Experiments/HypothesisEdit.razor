@@ -2,10 +2,11 @@
 @page "/experiments/{ExperimentId:int}/research-iterations/{IterationId:int}/hypotheses/{HypothesisId:int}"
 @implements IDisposable
 @rendermode InteractiveServer
-@inject Tedd.AIOptimizeSql.Database.AIOptimizeDbContext DbContext
+@inject IDbContextFactory<Tedd.AIOptimizeSql.Database.AIOptimizeDbContext> DbContextFactory
 @inject NavigationManager Navigation
 @inject ISnackbar Snackbar
 @using Microsoft.EntityFrameworkCore
+@using Tedd.AIOptimizeSql.Database
 @using Tedd.AIOptimizeSql.Database.Models
 
 <PageTitle>@(_isNew ? "New" : "View") Hypothesis</PageTitle>
@@ -252,6 +253,7 @@
     private int? _benchDeltaServerElapsedMs;
     private int? _benchDeltaLogicalReads;
     private readonly CancellationTokenSource _pageCts = new();
+    private AIOptimizeDbContext? _db;
 
     private string _baselineDescription = "";
     private string _baselineBenchmarkSql = "";
@@ -281,14 +283,17 @@
     {
         _pageCts.Cancel();
         _pageCts.Dispose();
+        _db?.Dispose();
+        _db = null;
     }
 
     protected override Task OnInitializedAsync() =>
         PageLoadCancellation.RunPageLoadAsync(async ct =>
         {
+            _db = await DbContextFactory.CreateDbContextAsync(ct);
             var iterationId = (ResearchIterationId)(object)IterationId;
 
-            _iteration = await DbContext.ResearchIterations
+            _iteration = await _db.ResearchIterations.AsTracking()
                 .Include(b => b.Experiment)
                 .FirstOrDefaultAsync(b => b.Id == iterationId, ct);
 
@@ -296,7 +301,7 @@
             _benchmarkSql = _experiment?.BenchmarkSql;
             _benchmarkSqlEditorId = $"hypothesis-benchmark-sql-e{ExperimentId}-i{IterationId}";
 
-            _otherHypotheses = await DbContext.Hypotheses
+            _otherHypotheses = await _db.Hypotheses.AsNoTracking()
                 .Where(h => h.ResearchIterationId == iterationId)
                 .OrderBy(h => h.Id)
                 .ToListAsync(ct);
@@ -305,7 +310,7 @@
             {
                 _isNew = false;
                 var hId = (HypothesisId)(object)HypothesisId.Value;
-                _model = await DbContext.Hypotheses
+                _model = await _db.Hypotheses.AsTracking()
                     .Include(h => h.BenchmarkRunBefore)
                     .Include(h => h.BenchmarkRunAfter)
                     .FirstOrDefaultAsync(h => h.Id == hId, ct);
@@ -356,7 +361,7 @@
 
     private async Task<bool> TryPersistAsync()
     {
-        if (_model == null) return false;
+        if (_db is null || _model == null) return false;
         await _form!.ValidateAsync();
         if (!_formValid) return false;
 
@@ -368,10 +373,10 @@
         if (_isNew)
         {
             _model.CreatedAt = DateTime.UtcNow;
-            DbContext.Hypotheses.Add(_model);
+            _db.Hypotheses.Add(_model);
         }
 
-        await DbContext.SaveChangesAsync();
+        await _db.SaveChangesAsync();
         Snackbar.Add(_isNew ? "Hypothesis created" : "Hypothesis saved", Severity.Success);
         if (!_isNew)
             _editMode = false;
@@ -388,7 +393,7 @@
 
     private async Task DiscardChangesAsync()
     {
-        if (_model == null) return;
+        if (_db is null || _model == null) return;
         var iterationId = (ResearchIterationId)(object)IterationId;
 
         if (_isNew)
@@ -396,7 +401,7 @@
             _model = new Hypothesis { ResearchIterationId = iterationId };
             _selectedBuildsOn = null;
             _benchmarkSql = _experiment?.BenchmarkSql;
-            _otherHypotheses = await DbContext.Hypotheses
+            _otherHypotheses = await _db.Hypotheses.AsNoTracking()
                 .Where(h => h.ResearchIterationId == iterationId)
                 .OrderBy(h => h.Id)
                 .ToListAsync(_pageCts.Token);
@@ -404,8 +409,8 @@
         else
         {
             var hId = _model.Id;
-            DbContext.Entry(_model).State = EntityState.Detached;
-            _model = await DbContext.Hypotheses
+            _db.Entry(_model).State = EntityState.Detached;
+            _model = await _db.Hypotheses.AsTracking()
                 .Include(h => h.BenchmarkRunBefore)
                 .Include(h => h.BenchmarkRunAfter)
                 .FirstOrDefaultAsync(h => h.Id == hId, _pageCts.Token);
@@ -418,7 +423,7 @@
             _selectedBuildsOn = _model.BuildsOnHypothesisId;
             _benchmarkSql = _experiment?.BenchmarkSql;
             _editMode = false;
-            _otherHypotheses = await DbContext.Hypotheses
+            _otherHypotheses = await _db.Hypotheses.AsNoTracking()
                 .Where(h => h.ResearchIterationId == iterationId && h.Id != _model.Id)
                 .OrderBy(h => h.Id)
                 .ToListAsync(_pageCts.Token);

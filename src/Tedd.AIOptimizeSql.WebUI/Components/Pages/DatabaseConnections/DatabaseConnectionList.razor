@@ -1,11 +1,12 @@
 @page "/database-connections"
 @implements IDisposable
 @rendermode InteractiveServer
-@inject Tedd.AIOptimizeSql.Database.AIOptimizeDbContext DbContext
+@inject IDbContextFactory<Tedd.AIOptimizeSql.Database.AIOptimizeDbContext> DbContextFactory
 @inject NavigationManager Navigation
 @inject IDialogService DialogService
 @inject ISnackbar Snackbar
 @using Microsoft.EntityFrameworkCore
+@using Tedd.AIOptimizeSql.Database
 
 <PageTitle>Database Connections</PageTitle>
 
@@ -81,7 +82,8 @@
 
     private async Task<TableData<DatabaseConnection>> LoadServerDataCore(TableState state, CancellationToken cancellationToken)
     {
-        IQueryable<DatabaseConnection> query = DbContext.DatabaseConnections;
+        await using var db = await DbContextFactory.CreateDbContextAsync(cancellationToken);
+        IQueryable<DatabaseConnection> query = db.DatabaseConnections;
 
         query = state.SortLabel switch
         {
@@ -112,9 +114,10 @@
 
         if (confirm == true)
         {
-            await NullOutReferences(item.Id);
-            DbContext.DatabaseConnections.Remove(item);
-            await DbContext.SaveChangesAsync();
+            await using var db = await DbContextFactory.CreateDbContextAsync();
+            await NullOutReferences(db, item.Id);
+            db.DatabaseConnections.Remove(item);
+            await db.SaveChangesAsync();
             Snackbar.Add($"Deleted \"{item.Name}\"", Severity.Success);
             await _table!.ReloadServerData();
         }
@@ -129,21 +132,22 @@
 
         if (confirm == true)
         {
+            await using var db = await DbContextFactory.CreateDbContextAsync();
             foreach (var item in _selectedItems)
             {
-                await NullOutReferences(item.Id);
-                DbContext.DatabaseConnections.Remove(item);
+                await NullOutReferences(db, item.Id);
+                db.DatabaseConnections.Remove(item);
             }
-            await DbContext.SaveChangesAsync();
+            await db.SaveChangesAsync();
             Snackbar.Add($"Deleted {_selectedItems.Count} connection(s)", Severity.Success);
             _selectedItems.Clear();
             await _table!.ReloadServerData();
         }
     }
 
-    private async Task NullOutReferences(DatabaseConnectionId id)
+    private static async Task NullOutReferences(AIOptimizeDbContext db, DatabaseConnectionId id)
     {
-        var profiles = await DbContext.Experiments
+        var profiles = await db.Experiments.AsTracking()
             .Where(p => p.DatabaseConnectionId == id)
             .ToListAsync();
         foreach (var p in profiles)

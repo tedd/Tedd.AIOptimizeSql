@@ -1,11 +1,12 @@
 @page "/experiments/{ExperimentId:int}/research-iterations"
 @implements IDisposable
 @rendermode InteractiveServer
-@inject Tedd.AIOptimizeSql.Database.AIOptimizeDbContext DbContext
+@inject IDbContextFactory<Tedd.AIOptimizeSql.Database.AIOptimizeDbContext> DbContextFactory
 @inject NavigationManager Navigation
 @inject IDialogService DialogService
 @inject ISnackbar Snackbar
 @using Microsoft.EntityFrameworkCore
+@using Tedd.AIOptimizeSql.Database
 @using Tedd.AIOptimizeSql.Database.Models
 @using Tedd.AIOptimizeSql.WebUI.Mappers
 @using Tedd.AIOptimizeSql.WebUI.ViewModels
@@ -133,15 +134,16 @@
     protected override Task OnInitializedAsync() =>
         PageLoadCancellation.RunPageLoadAsync(async ct =>
         {
+            await using var db = await DbContextFactory.CreateDbContextAsync(ct);
             var experimentId = (ExperimentId)(object)ExperimentId;
-            _profile = await DbContext.Experiments.FindAsync(new object[] { experimentId }, ct);
-            await LoadChartData(ct);
+            _profile = await db.Experiments.AsNoTracking().FirstOrDefaultAsync(e => e.Id == experimentId, ct);
+            await LoadChartData(db, ct);
         }, _pageCts.Token);
 
-    private async Task LoadChartData(CancellationToken cancellationToken = default)
+    private async Task LoadChartData(AIOptimizeDbContext db, CancellationToken cancellationToken = default)
     {
         var experimentId = (ExperimentId)(object)ExperimentId;
-        var hypotheses = await DbContext.Hypotheses
+        var hypotheses = await db.Hypotheses
             .Where(h => h.ResearchIteration!.ExperimentId == experimentId)
             .OrderBy(h => h.CreatedAt)
             .Select(h => new { h.ImpovementPercentage, h.CreatedAt })
@@ -171,9 +173,10 @@
 
     private async Task<TableData<ResearchIterationRunRowViewModel>> LoadServerDataCore(TableState state, CancellationToken cancellationToken)
     {
+        await using var db = await DbContextFactory.CreateDbContextAsync(cancellationToken);
         var experimentId = (ExperimentId)(object)ExperimentId;
 
-        IQueryable<ResearchIteration> query = DbContext.ResearchIterations
+        IQueryable<ResearchIteration> query = db.ResearchIterations
             .Include(r => r.Hypotheses)
             .Where(r => r.ExperimentId == experimentId);
 
@@ -209,11 +212,12 @@
 
         if (confirm == true)
         {
-            DbContext.ResearchIterations.Remove(vm.Iteration);
-            await DbContext.SaveChangesAsync();
+            await using var db = await DbContextFactory.CreateDbContextAsync();
+            db.ResearchIterations.Remove(vm.Iteration);
+            await db.SaveChangesAsync();
             Snackbar.Add("Research iteration deleted", Severity.Success);
             await _table!.ReloadServerData();
-            await LoadChartData();
+            await RefreshChartAsync();
         }
     }
 
@@ -226,13 +230,20 @@
 
         if (confirm == true)
         {
+            await using var db = await DbContextFactory.CreateDbContextAsync();
             foreach (var vm in _selectedItems)
-                DbContext.ResearchIterations.Remove(vm.Iteration);
-            await DbContext.SaveChangesAsync();
+                db.ResearchIterations.Remove(vm.Iteration);
+            await db.SaveChangesAsync();
             Snackbar.Add($"Deleted {_selectedItems.Count} research iteration(s)", Severity.Success);
             _selectedItems.Clear();
             await _table!.ReloadServerData();
-            await LoadChartData();
+            await RefreshChartAsync();
         }
+    }
+
+    private async Task RefreshChartAsync(CancellationToken cancellationToken = default)
+    {
+        await using var db = await DbContextFactory.CreateDbContextAsync(cancellationToken);
+        await LoadChartData(db, cancellationToken);
     }
 }

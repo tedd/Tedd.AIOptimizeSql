@@ -1,7 +1,7 @@
 @page "/experiments/{ExperimentId:int}/research-iterations/{IterationId:int}/benchmarks/{BenchmarkRunId:int}"
 @implements IDisposable
 @rendermode InteractiveServer
-@inject Tedd.AIOptimizeSql.Database.AIOptimizeDbContext DbContext
+@inject IDbContextFactory<Tedd.AIOptimizeSql.Database.AIOptimizeDbContext> DbContextFactory
 @inject NavigationManager Navigation
 @using Microsoft.EntityFrameworkCore
 
@@ -118,8 +118,9 @@
     protected override Task OnInitializedAsync() =>
         PageLoadCancellation.RunPageLoadAsync(async ct =>
         {
+            await using var db = await DbContextFactory.CreateDbContextAsync(ct);
             var id = (BenchmarkRunId)(object)BenchmarkRunId;
-            _run = await DbContext.BenchmarkRuns.AsNoTracking().FirstOrDefaultAsync(b => b.Id == id, ct);
+            _run = await db.BenchmarkRuns.AsNoTracking().FirstOrDefaultAsync(b => b.Id == id, ct);
             if (_run != null)
                 BuildIoRows();
             _loading = false;

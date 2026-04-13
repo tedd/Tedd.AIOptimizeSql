@@ -2,10 +2,11 @@
 @page "/ai-connections/{Id:int}"
 @implements IDisposable
 @rendermode InteractiveServer
-@inject Tedd.AIOptimizeSql.Database.AIOptimizeDbContext DbContext
+@inject IDbContextFactory<Tedd.AIOptimizeSql.Database.AIOptimizeDbContext> DbContextFactory
 @inject NavigationManager Navigation
 @inject ISnackbar Snackbar
 @using Microsoft.EntityFrameworkCore
+@using Tedd.AIOptimizeSql.Database
 
 <PageTitle>@(_isNew ? "New" : "Edit") AI Connection</PageTitle>
 
@@ -88,6 +89,7 @@
     private bool _formValid;
     private MudForm? _form;
     private readonly CancellationTokenSource _pageCts = new();
+    private AIOptimizeDbContext? _db;
     private string _baselineName = "";
     private AiProvider _baselineProvider;
     private string _baselineModel = "";
@@ -116,16 +118,19 @@
     {
         _pageCts.Cancel();
         _pageCts.Dispose();
+        _db?.Dispose();
+        _db = null;
     }
 
     protected override Task OnInitializedAsync() =>
         PageLoadCancellation.RunPageLoadAsync(async ct =>
         {
+            _db = await DbContextFactory.CreateDbContextAsync(ct);
             if (Id.HasValue)
             {
                 _isNew = false;
                 var id = (AIConnectionId)(object)Id.Value;
-                _model = await DbContext.AIConnections.FindAsync(new object[] { id }, ct);
+                _model = await _db.AIConnections.AsTracking().FirstOrDefaultAsync(a => a.Id == id, ct);
             }
             else
             {
@@ -145,7 +150,7 @@
 
     private async Task<bool> TryPersistAsync()
     {
-        if (_model == null) return false;
+        if (_db is null || _model == null) return false;
         await _form!.ValidateAsync();
         if (!_formValid) return false;
 
@@ -153,14 +158,14 @@
         {
             _model.CreatedAt = DateTime.UtcNow;
             _model.ModifiedAt = DateTime.UtcNow;
-            DbContext.AIConnections.Add(_model);
+            _db.AIConnections.Add(_model);
         }
         else
         {
             _model.ModifiedAt = DateTime.UtcNow;
         }
 
-        await DbContext.SaveChangesAsync();
+        await _db.SaveChangesAsync();
         Snackbar.Add(_isNew ? "AI Connection created" : "AI Connection saved", Severity.Success);
         CaptureBaseline();
         return true;
@@ -174,7 +179,7 @@
 
     private async Task DiscardChangesAsync()
     {
-        if (_model == null) return;
+        if (_db is null || _model == null) return;
         if (_isNew)
         {
             _model = new AIConnection
@@ -189,8 +194,8 @@
         else
         {
             var id = (AIConnectionId)(object)_model.Id;
-            DbContext.Entry(_model).State = EntityState.Detached;
-            _model = await DbContext.AIConnections.FindAsync(new object[] { id }, _pageCts.Token);
+            _db.Entry(_model).State = EntityState.Detached;
+            _model = await _db.AIConnections.AsTracking().FirstOrDefaultAsync(a => a.Id == id, _pageCts.Token);
             if (_model == null)
             {
                 Snackbar.Add("AI Connection not found.", Severity.Error);

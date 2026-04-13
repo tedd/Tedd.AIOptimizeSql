@@ -2,10 +2,11 @@
 @page "/profiles/{Id:int}/edit"
 @implements IDisposable
 @rendermode InteractiveServer
-@inject Tedd.AIOptimizeSql.Database.AIOptimizeDbContext DbContext
+@inject IDbContextFactory<Tedd.AIOptimizeSql.Database.AIOptimizeDbContext> DbContextFactory
 @inject NavigationManager Navigation
 @inject ISnackbar Snackbar
 @using Microsoft.EntityFrameworkCore
+@using Tedd.AIOptimizeSql.Database
 
 <PageTitle>@(_isNew ? "New" : "Edit") Optimization Profile</PageTitle>
 
@@ -127,6 +128,7 @@
     private DatabaseConnectionId? _selectedDbConnId;
     private AIConnectionId? _selectedAiConnId;
     private readonly CancellationTokenSource _pageCts = new();
+    private AIOptimizeDbContext? _db;
 
     private string _baselineName = "";
     private string _baselineDescription = "";
@@ -171,18 +173,21 @@
     {
         _pageCts.Cancel();
         _pageCts.Dispose();
+        _db?.Dispose();
+        _db = null;
     }
 
     protected override async Task OnInitializedAsync()
     {
-        _dbConnections = await DbContext.DatabaseConnections.OrderBy(c => c.Name).ToListAsync();
-        _aiConnections = await DbContext.AIConnections.OrderBy(c => c.Name).ToListAsync();
+        _db = await DbContextFactory.CreateDbContextAsync(_pageCts.Token);
+        _dbConnections = await _db.DatabaseConnections.OrderBy(c => c.Name).ToListAsync();
+        _aiConnections = await _db.AIConnections.OrderBy(c => c.Name).ToListAsync();
 
         if (Id.HasValue)
         {
             _isNew = false;
             var id = (ExperimentId)(object)Id.Value;
-            _model = await DbContext.Experiments
+            _model = await _db.Experiments.AsTracking()
                 .Include(p => p.DatabaseConnection)
                 .Include(p => p.AIConnection)
                 .FirstOrDefaultAsync(p => p.Id == id);
@@ -203,7 +208,7 @@
 
     private async Task<bool> TryPersistAsync()
     {
-        if (_model == null) return false;
+        if (_db is null || _model == null) return false;
         await _form!.ValidateAsync();
         if (!_formValid) return false;
 
@@ -214,14 +219,14 @@
         {
             _model.CreatedAt = DateTime.UtcNow;
             _model.ModifiedAt = DateTime.UtcNow;
-            DbContext.Experiments.Add(_model);
+            _db.Experiments.Add(_model);
         }
         else
         {
             _model.ModifiedAt = DateTime.UtcNow;
         }
 
-        await DbContext.SaveChangesAsync();
+        await _db.SaveChangesAsync();
         Snackbar.Add(_isNew ? "Profile created" : "Profile saved", Severity.Success);
         CaptureBaseline();
         return true;
@@ -235,7 +240,7 @@
 
     private async Task DiscardChangesAsync()
     {
-        if (_model == null) return;
+        if (_db is null || _model == null) return;
         if (_isNew)
         {
             _model = new Experiment { Name = "" };
@@ -245,8 +250,8 @@
         else
         {
             var profileId = _model.Id;
-            DbContext.Entry(_model).State = EntityState.Detached;
-            _model = await DbContext.Experiments
+            _db.Entry(_model).State = EntityState.Detached;
+            _model = await _db.Experiments.AsTracking()
                 .Include(p => p.DatabaseConnection)
                 .Include(p => p.AIConnection)
                 .FirstOrDefaultAsync(p => p.Id == profileId, _pageCts.Token);

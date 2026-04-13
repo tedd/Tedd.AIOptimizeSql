@@ -1,0 +1,206 @@
+@page "/experiments/{Id:int}/view"
+@implements IDisposable
+@rendermode InteractiveServer
+@inject IDbContextFactory<Tedd.AIOptimizeSql.Database.AIOptimizeDbContext> DbContextFactory
+@inject NavigationManager Navigation
+@using Microsoft.EntityFrameworkCore
+@using Tedd.AIOptimizeSql.Database
+@using Tedd.AIOptimizeSql.Database.Models
+
+<PageTitle>Experiment results</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.ExtraLarge" Class="mt-4">
+    <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-4">
+        <MudIconButton Icon="@Icons.Material.Filled.ArrowBack" OnClick="@(() => Navigation.NavigateTo("/experiments"))" aria-label="Back to experiments" />
+        <MudText Typo="Typo.h4">@(_experiment?.Name ?? "Experiment")</MudText>
+        <MudSpacer />
+        <MudButton Variant="Variant.Outlined" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Edit"
+                   Href="@($"/experiments/{Id}/edit")">
+            Edit
+        </MudButton>
+        <MudButton Variant="Variant.Outlined" Color="Color.Secondary" StartIcon="@Icons.Material.Filled.PlayArrow"
+                   Href="@($"/experiments/{Id}/research-iterations")">
+            Iterations
+        </MudButton>
+    </MudStack>
+
+    @if (_loading)
+    {
+        <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+    }
+    else if (_experiment == null)
+    {
+        <MudAlert Severity="Severity.Error">Experiment not found.</MudAlert>
+    }
+    else
+    {
+        <MudText Typo="Typo.body2" Color="Color.Secondary" Class="mb-4">
+            Elapsed time uses SQL Server reported <strong>total server elapsed time (ms)</strong> from each hypothesis&rsquo;s &ldquo;after&rdquo; benchmark run.
+            The overview chart uses the <strong>best (minimum)</strong> such value per research iteration so you can compare runs.
+        </MudText>
+
+        @if (_iterationOverviewSeries.Count > 0)
+        {
+            <MudCard Elevation="3" Class="rounded-lg mb-6">
+                <MudCardHeader>
+                    <CardHeaderContent>
+                        <MudText Typo="Typo.h6">Research iterations &mdash; best server elapsed (after benchmark)</MudText>
+                        <MudText Typo="Typo.caption">Lower is faster. Each bar is the minimum &ldquo;after&rdquo; elapsed among hypotheses in that iteration. A height of zero means no completed &ldquo;after&rdquo; benchmark yet.</MudText>
+                    </CardHeaderContent>
+                </MudCardHeader>
+                <MudCardContent>
+                    <MudChart T="double" ChartType="ChartType.Bar"
+                              ChartSeries="@_iterationOverviewSeries"
+                              x-axis-labels="@_iterationOverviewLabels"
+                              Width="100%" Height="320px" />
+                </MudCardContent>
+            </MudCard>
+        }
+        else if (_orderedIterations.Count > 0)
+        {
+            <MudAlert Severity="Severity.Info" Class="mb-4" Dense="true">
+                Overview bars are zero until hypotheses finish with an &ldquo;after&rdquo; benchmark. Run research iterations to populate non-zero values.
+            </MudAlert>
+        }
+
+        @foreach (var block in _perIterationBlocks)
+        {
+            <MudCard Elevation="3" Class="rounded-lg mb-4">
+                <MudCardHeader>
+                    <CardHeaderContent>
+                        <MudText Typo="Typo.h6">Iteration #@((int)(object)block.IterationId) &mdash; server elapsed per hypothesis</MudText>
+                        <MudText Typo="Typo.caption">Hypotheses in run order. Each bar uses the &ldquo;after&rdquo; benchmark; zero means no completed after run for that hypothesis yet.</MudText>
+                    </CardHeaderContent>
+                </MudCardHeader>
+                <MudCardContent>
+                    <MudChart T="double" ChartType="ChartType.Bar"
+                              ChartSeries="@block.Series"
+                              x-axis-labels="@block.Labels"
+                              Width="100%" Height="280px" />
+                </MudCardContent>
+            </MudCard>
+        }
+
+        @if (_orderedIterations.Count == 0)
+        {
+            <MudText Typo="Typo.body1">No research iterations yet.</MudText>
+        }
+    }
+</MudContainer>
+
+@code {
+    [Parameter] public int Id { get; set; }
+
+    private readonly CancellationTokenSource _pageCts = new();
+
+    private Experiment? _experiment;
+    private bool _loading = true;
+
+    private List<ResearchIteration> _orderedIterations = new();
+
+    private string[] _iterationOverviewLabels = Array.Empty<string>();
+    private List<ChartSeries<double>> _iterationOverviewSeries = new();
+    private List<IterationElapsedChartBlock> _perIterationBlocks = new();
+
+    public void Dispose()
+    {
+        _pageCts.Cancel();
+        _pageCts.Dispose();
+    }
+
+    protected override Task OnInitializedAsync() =>
+        PageLoadCancellation.RunPageLoadAsync(LoadAsync, _pageCts.Token);
+
+    private async Task LoadAsync(CancellationToken ct)
+    {
+        await using var db = await DbContextFactory.CreateDbContextAsync(ct);
+        var experimentId = (ExperimentId)(object)Id;
+        _experiment = await db.Experiments.AsNoTracking()
+            .FirstOrDefaultAsync(e => e.Id == experimentId, ct);
+
+        if (_experiment == null)
+        {
+            _loading = false;
+            return;
+        }
+
+        _orderedIterations = await db.ResearchIterations.AsNoTracking()
+            .Where(r => r.ExperimentId == experimentId)
+            .OrderBy(r => r.CreatedAt)
+            .ToListAsync(ct);
+
+        if (_orderedIterations.Count == 0)
+        {
+            _loading = false;
+            return;
+        }
+
+        var iterationIds = _orderedIterations.Select(r => r.Id).ToList();
+
+        var hypotheses = await db.Hypotheses.AsNoTracking()
+            .Where(h => iterationIds.Contains(h.ResearchIterationId))
+            .Include(h => h.BenchmarkRunAfter)
+            .OrderBy(h => h.CreatedAt)
+            .ToListAsync(ct);
+
+        BuildOverviewCharts(hypotheses);
+        BuildPerIterationCharts(hypotheses);
+
+        _loading = false;
+    }
+
+    private void BuildOverviewCharts(List<Hypothesis> hypotheses)
+    {
+        var overviewLabels = new List<string>();
+        var overviewData = new List<double>();
+
+        foreach (var iteration in _orderedIterations)
+        {
+            overviewLabels.Add($"#{(int)(object)iteration.Id}");
+            var msValues = hypotheses
+                .Where(h => h.ResearchIterationId == iteration.Id && h.BenchmarkRunAfter != null)
+                .Select(h => (double)h.BenchmarkRunAfter!.TotalServerElapsedTimeMs)
+                .ToList();
+
+            overviewData.Add(msValues.Count == 0 ? 0 : msValues.Min());
+        }
+
+        _iterationOverviewLabels = overviewLabels.ToArray();
+        _iterationOverviewSeries = overviewData.Count == 0
+            ? new List<ChartSeries<double>>()
+            : new List<ChartSeries<double>> { new() { Name = "Best server elapsed (ms)", Data = overviewData } };
+    }
+
+    private void BuildPerIterationCharts(List<Hypothesis> hypotheses)
+    {
+        var blocks = new List<IterationElapsedChartBlock>();
+
+        foreach (var iteration in _orderedIterations)
+        {
+            var rows = hypotheses
+                .Where(h => h.ResearchIterationId == iteration.Id)
+                .OrderBy(h => h.CreatedAt)
+                .ToList();
+
+            if (rows.Count == 0)
+                continue;
+
+            var labels = rows.Select(h => $"#{(int)(object)h.Id}").ToArray();
+            var data = rows
+                .Select(h => h.BenchmarkRunAfter != null ? (double)h.BenchmarkRunAfter.TotalServerElapsedTimeMs : 0d)
+                .ToList();
+
+            blocks.Add(new IterationElapsedChartBlock(
+                iteration.Id,
+                labels,
+                new List<ChartSeries<double>> { new() { Name = "Server elapsed after (ms)", Data = data } }));
+        }
+
+        _perIterationBlocks = blocks;
+    }
+
+    private sealed record IterationElapsedChartBlock(
+        ResearchIterationId IterationId,
+        string[] Labels,
+        List<ChartSeries<double>> Series);
+}

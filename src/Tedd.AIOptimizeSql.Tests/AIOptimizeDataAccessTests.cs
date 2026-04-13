@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 
 using Tedd.AIOptimizeSql.Database;
 using Tedd.AIOptimizeSql.Database.DataAccess;
@@ -9,114 +10,151 @@ namespace Tedd.AIOptimizeSql.Tests;
 
 public class AIOptimizeDataAccessTests
 {
-    private static AIOptimizeDbContext CreateContext()
+    private sealed class TestDbContextFactory : IDbContextFactory<AIOptimizeDbContext>
     {
-        var options = new DbContextOptionsBuilder<AIOptimizeDbContext>()
+        private readonly DbContextOptions<AIOptimizeDbContext> _options;
+        public TestDbContextFactory(DbContextOptions<AIOptimizeDbContext> options) => _options = options;
+        public AIOptimizeDbContext CreateDbContext() => new(_options);
+    }
+
+    private static DbContextOptions<AIOptimizeDbContext> CreateOptions()
+    {
+        return new DbContextOptionsBuilder<AIOptimizeDbContext>()
             .UseInMemoryDatabase(Guid.NewGuid().ToString())
+            .ConfigureWarnings(w => w.Ignore(InMemoryEventId.TransactionIgnoredWarning))
             .Options;
-        return new AIOptimizeDbContext(options);
     }
 
     [Fact]
     public async Task SetResearchIterationStateAsync_Queued_adds_single_RunQueue_row()
     {
-        await using var db = CreateContext();
-        var ai = new AIConnection
+        var options = CreateOptions();
+        await using (var db = new AIOptimizeDbContext(options))
         {
-            Name = "conn",
-            Provider = AiProvider.Ollama,
-            Model = "llama",
-            Endpoint = "http://127.0.0.1:11434",
-            ApiKey = "x",
-        };
-        db.AIConnections.Add(ai);
-        await db.SaveChangesAsync();
+            var ai = new AIConnection
+            {
+                Name = "conn",
+                Provider = AiProvider.Ollama,
+                Model = "llama",
+                Endpoint = "http://127.0.0.1:11434",
+                ApiKey = "x",
+            };
+            db.AIConnections.Add(ai);
+            await db.SaveChangesAsync();
 
-        var experiment = new Experiment { Name = "exp", AIConnectionId = ai.Id };
-        db.Experiments.Add(experiment);
-        await db.SaveChangesAsync();
+            var experiment = new Experiment { Name = "exp", AIConnectionId = ai.Id };
+            db.Experiments.Add(experiment);
+            await db.SaveChangesAsync();
 
-        var iteration = new ResearchIteration
+            var iteration = new ResearchIteration
+            {
+                ExperimentId = experiment.Id,
+                MaxNumberOfHypotheses = 2,
+                State = ResearchIterationState.Stopped,
+            };
+            db.ResearchIterations.Add(iteration);
+            await db.SaveChangesAsync();
+        }
+
+        var access = new AIOptimizeDataAccess(new TestDbContextFactory(options));
+        ResearchIterationId iterationId;
+        await using (var readIds = new AIOptimizeDbContext(options))
         {
-            ExperimentId = experiment.Id,
-            MaxNumberOfHypotheses = 2,
-            State = ResearchIterationState.Stopped,
-        };
-        db.ResearchIterations.Add(iteration);
-        await db.SaveChangesAsync();
+            iterationId = readIds.ResearchIterations.Single().Id;
+        }
 
-        var access = new AIOptimizeDataAccess(db);
-        await access.SetResearchIterationStateAsync(iteration.Id, ResearchIterationState.Queued);
+        await access.SetResearchIterationStateAsync(iterationId, ResearchIterationState.Queued);
 
-        Assert.Equal(ResearchIterationState.Queued, db.ResearchIterations.Single().State);
-        var queue = await db.RunQueue.ToListAsync();
+        await using var verify = new AIOptimizeDbContext(options);
+        Assert.Equal(ResearchIterationState.Queued, verify.ResearchIterations.AsNoTracking().Single().State);
+        var queue = await verify.RunQueue.ToListAsync();
         Assert.Single(queue);
-        Assert.Equal(iteration.Id, queue[0].ResearchIterationId);
+        Assert.Equal(iterationId, queue[0].ResearchIterationId);
     }
 
     [Fact]
     public async Task SetResearchIterationStateAsync_non_Queued_removes_RunQueue_rows()
     {
-        await using var db = CreateContext();
-        var experiment = new Experiment { Name = "exp" };
-        db.Experiments.Add(experiment);
-        await db.SaveChangesAsync();
-
-        var iteration = new ResearchIteration
+        var options = CreateOptions();
+        await using (var db = new AIOptimizeDbContext(options))
         {
-            ExperimentId = experiment.Id,
-            State = ResearchIterationState.Queued,
-        };
-        db.ResearchIterations.Add(iteration);
-        await db.SaveChangesAsync();
-        db.RunQueue.Add(new RunQueue { ResearchIterationId = iteration.Id });
-        await db.SaveChangesAsync();
+            var experiment = new Experiment { Name = "exp" };
+            db.Experiments.Add(experiment);
+            await db.SaveChangesAsync();
 
-        var access = new AIOptimizeDataAccess(db);
-        await access.SetResearchIterationStateAsync(iteration.Id, ResearchIterationState.Stopped);
+            var iteration = new ResearchIteration
+            {
+                ExperimentId = experiment.Id,
+                State = ResearchIterationState.Queued,
+            };
+            db.ResearchIterations.Add(iteration);
+            await db.SaveChangesAsync();
+            db.RunQueue.Add(new RunQueue { ResearchIterationId = iteration.Id });
+            await db.SaveChangesAsync();
+        }
 
-        Assert.Empty(await db.RunQueue.ToListAsync());
+        var access = new AIOptimizeDataAccess(new TestDbContextFactory(options));
+        ResearchIterationId iterationId;
+        await using (var readIds = new AIOptimizeDbContext(options))
+            iterationId = readIds.ResearchIterations.Single().Id;
+
+        await access.SetResearchIterationStateAsync(iterationId, ResearchIterationState.Stopped);
+
+        await using var verify = new AIOptimizeDbContext(options);
+        Assert.Empty(await verify.RunQueue.ToListAsync());
     }
 
     [Fact]
     public async Task BeginResearchIterationRunAsync_sets_running_clears_queue_and_snapshots_ai_from_experiment()
     {
-        await using var db = CreateContext();
-        var ai = new AIConnection
+        var options = CreateOptions();
+        await using (var db = new AIOptimizeDbContext(options))
         {
-            Name = "conn",
-            Provider = AiProvider.OpenAI,
-            Model = "gpt-test",
-            Endpoint = "https://api.example.com",
-            ApiKey = "secret",
-        };
-        db.AIConnections.Add(ai);
-        await db.SaveChangesAsync();
+            var ai = new AIConnection
+            {
+                Name = "conn",
+                Provider = AiProvider.OpenAI,
+                Model = "gpt-test",
+                Endpoint = "https://api.example.com",
+                ApiKey = "secret",
+            };
+            db.AIConnections.Add(ai);
+            await db.SaveChangesAsync();
 
-        var experiment = new Experiment { Name = "exp", AIConnectionId = ai.Id, AIConnection = ai };
-        db.Experiments.Add(experiment);
-        await db.SaveChangesAsync();
+            var experiment = new Experiment { Name = "exp", AIConnectionId = ai.Id, AIConnection = ai };
+            db.Experiments.Add(experiment);
+            await db.SaveChangesAsync();
 
-        var iteration = new ResearchIteration
+            var iteration = new ResearchIteration
+            {
+                ExperimentId = experiment.Id,
+                State = ResearchIterationState.Queued,
+            };
+            db.ResearchIterations.Add(iteration);
+            db.RunQueue.Add(new RunQueue { ResearchIterationId = iteration.Id });
+            await db.SaveChangesAsync();
+        }
+
+        var access = new AIOptimizeDataAccess(new TestDbContextFactory(options));
+        ResearchIterationId iterationId;
+        AIConnectionId aiId;
+        await using (var readIds = new AIOptimizeDbContext(options))
         {
-            ExperimentId = experiment.Id,
-            State = ResearchIterationState.Queued,
-        };
-        db.ResearchIterations.Add(iteration);
-        db.RunQueue.Add(new RunQueue { ResearchIterationId = iteration.Id });
-        await db.SaveChangesAsync();
+            iterationId = readIds.ResearchIterations.Single().Id;
+            aiId = readIds.AIConnections.Single().Id;
+        }
 
-        var access = new AIOptimizeDataAccess(db);
-        await access.BeginResearchIterationRunAsync(iteration.Id);
+        await access.BeginResearchIterationRunAsync(iterationId);
 
-        var reloaded = await db.ResearchIterations.AsNoTracking().SingleAsync();
+        await using var verify = new AIOptimizeDbContext(options);
+        var reloaded = await verify.ResearchIterations.AsNoTracking().SingleAsync();
         Assert.Equal(ResearchIterationState.Running, reloaded.State);
         Assert.NotNull(reloaded.StartedAt);
         Assert.Null(reloaded.EndedAt);
         Assert.Equal("Run started", reloaded.LastMessage);
-        Assert.Equal(ai.Id, reloaded.AIConnectionId);
+        Assert.Equal(aiId, reloaded.AIConnectionId);
         Assert.Equal(AiProvider.OpenAI, reloaded.AiProviderUsed);
         Assert.Equal("gpt-test", reloaded.AiModelUsed);
-        Assert.Empty(await db.RunQueue.ToListAsync());
+        Assert.Empty(await verify.RunQueue.ToListAsync());
     }
 }

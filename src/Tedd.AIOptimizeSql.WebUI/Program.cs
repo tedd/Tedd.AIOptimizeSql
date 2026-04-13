@@ -20,10 +20,8 @@ public class Program
         var aiOptimizeCs = NormalizeSqlServerConnectionForEf(
             builder.Configuration.GetConnectionString("AIOptimizeDb"));
 
-        // AddDbContextFactory also registers AIOptimizeDbContext as a scoped service
-        // (since EF Core 6), so pages that @inject AIOptimizeDbContext still work.
-        // Do NOT also call AddDbContext — it registers conflicting scoped option
-        // services that the singleton factory cannot resolve.
+        // Blazor Interactive Server: UI uses IDbContextFactory<T> (short-lived or per-component contexts).
+        // Do NOT also call AddDbContext — it registers conflicting scoped option services.
         builder.Services.AddDbContextFactory<AIOptimizeDbContext>(options =>
             options.UseSqlServer(aiOptimizeCs));
 

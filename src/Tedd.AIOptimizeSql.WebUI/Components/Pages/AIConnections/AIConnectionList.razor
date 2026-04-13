@@ -1,7 +1,7 @@
 @page "/ai-connections"
 @implements IDisposable
 @rendermode InteractiveServer
-@inject Tedd.AIOptimizeSql.Database.AIOptimizeDbContext DbContext
+@inject IDbContextFactory<Tedd.AIOptimizeSql.Database.AIOptimizeDbContext> DbContextFactory
 @inject Tedd.AIOptimizeSql.Database.DataAccess.IAIOptimizeDataAccess DataAccess
 @inject NavigationManager Navigation
 @inject IDialogService DialogService
@@ -82,7 +82,8 @@
 
     private async Task<TableData<AIConnection>> LoadServerDataCore(TableState state, CancellationToken cancellationToken)
     {
-        IQueryable<AIConnection> query = DbContext.AIConnections;
+        await using var db = await DbContextFactory.CreateDbContextAsync(cancellationToken);
+        IQueryable<AIConnection> query = db.AIConnections;
 
         query = state.SortLabel switch
         {
@@ -116,8 +117,9 @@
         if (confirm == true)
         {
             await DataAccess.ClearAiConnectionReferencesAsync(item.Id);
-            DbContext.AIConnections.Remove(item);
-            await DbContext.SaveChangesAsync();
+            await using var db = await DbContextFactory.CreateDbContextAsync();
+            db.AIConnections.Remove(item);
+            await db.SaveChangesAsync();
             Snackbar.Add($"Deleted \"{item.Name}\"", Severity.Success);
             await _table!.ReloadServerData();
         }
@@ -132,12 +134,13 @@
 
         if (confirm == true)
         {
+            await using var db = await DbContextFactory.CreateDbContextAsync();
             foreach (var item in _selectedItems)
             {
                 await DataAccess.ClearAiConnectionReferencesAsync(item.Id);
-                DbContext.AIConnections.Remove(item);
+                db.AIConnections.Remove(item);
             }
-            await DbContext.SaveChangesAsync();
+            await db.SaveChangesAsync();
             Snackbar.Add($"Deleted {_selectedItems.Count} AI connection(s)", Severity.Success);
             _selectedItems.Clear();
             await _table!.ReloadServerData();

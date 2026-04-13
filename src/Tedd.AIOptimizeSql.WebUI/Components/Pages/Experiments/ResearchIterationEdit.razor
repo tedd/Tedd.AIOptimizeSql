@@ -9,7 +9,7 @@
 @using Tedd.AIOptimizeSql.Database.DataAccess
 @using Tedd.AIOptimizeSql.Database.Models
 @using Tedd.AIOptimizeSql.Database.Models.Enums
-@inject AIOptimizeDbContext DbContext
+@inject IDbContextFactory<AIOptimizeDbContext> DbContextFactory
 @inject IAIOptimizeDataAccess DataAccess
 @inject NavigationManager Navigation
 @inject ISnackbar Snackbar
@@ -220,7 +220,8 @@
 
         try
         {
-            _experiments = await DbContext.Experiments.OrderBy(e => e.Name).ToListAsync(ct);
+            await using var db = await DbContextFactory.CreateDbContextAsync(ct);
+            _experiments = await db.Experiments.AsNoTracking().OrderBy(e => e.Name).ToListAsync(ct);
 
             if (_isNew)
             {
