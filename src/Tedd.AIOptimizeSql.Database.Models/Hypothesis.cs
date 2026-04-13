@@ -34,7 +34,20 @@ public record Hypothesis
 
     public string? Description { get; set; }
 
+    /// <summary>
+    /// The AI-generated optimization SQL script to apply.
+    /// </summary>
+    public string? OptimizeSql { get; set; }
+
+    /// <summary>
+    /// The AI-generated revert SQL script that undoes <see cref="OptimizeSql"/>.
+    /// </summary>
+    public string? RevertSql { get; set; }
+
     public string? ErrorMessage { get; set; }
+
+    public int OptimizeRetryCount { get; set; }
+    public int RevertRetryCount { get; set; }
 
     public long TimeUsedMs { get; set; } = 0;
 

@@ -37,7 +37,7 @@ public class AIOptimizeDbContext : DbContext
         // AiProvider enum stored as string in DB
         builder.Properties<AiProvider>().HaveConversion<string>().HaveMaxLength(128);
         builder.Properties<ResearchIterationState>().HaveConversion<string>().HaveMaxLength(16);
-        builder.Properties<HypothesisState>().HaveConversion<string>().HaveMaxLength(16);
+        builder.Properties<HypothesisState>().HaveConversion<string>().HaveMaxLength(32);
     }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -66,6 +66,11 @@ public class AIOptimizeDbContext : DbContext
                 .WithMany()
                 .HasForeignKey(r => r.AIConnectionId)
                 .OnDelete(DeleteBehavior.SetNull);
+
+            entity.HasOne(r => r.BaselineBenchmarkRun)
+                .WithMany()
+                .HasForeignKey(r => r.BaselineBenchmarkRunId)
+                .OnDelete(DeleteBehavior.NoAction);
         });
 
         modelBuilder.Entity<BenchmarkRun>(entity =>

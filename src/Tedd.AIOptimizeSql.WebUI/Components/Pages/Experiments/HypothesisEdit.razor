@@ -8,6 +8,7 @@
 @using Microsoft.EntityFrameworkCore
 @using Tedd.AIOptimizeSql.Database
 @using Tedd.AIOptimizeSql.Database.Models
+@using Tedd.AIOptimizeSql.Database.Models.Enums
 
 <PageTitle>@(_isNew ? "New" : "View") Hypothesis</PageTitle>
 
@@ -64,7 +65,7 @@
         @if (!_isNew && !_editMode)
         {
             <MudGrid Class="mb-4">
-                <MudItem xs="12" sm="4">
+                <MudItem xs="6" sm="3">
                     <MudPaper Elevation="2" Class="pa-4 rounded-lg d-flex flex-column align-center">
                         @{
                             var pct = _model.ImpovementPercentage;
@@ -76,19 +77,73 @@
                         <MudText Typo="Typo.caption">Improvement</MudText>
                     </MudPaper>
                 </MudItem>
-                <MudItem xs="12" sm="4">
+                <MudItem xs="6" sm="3">
+                    <MudPaper Elevation="2" Class="pa-4 rounded-lg d-flex flex-column align-center">
+                        <MudChip T="string" Size="Size.Medium" Color="@StatusColor(_model.Status)">@_model.Status</MudChip>
+                        <MudText Typo="Typo.caption">Status</MudText>
+                    </MudPaper>
+                </MudItem>
+                <MudItem xs="6" sm="3">
                     <MudPaper Elevation="2" Class="pa-4 rounded-lg d-flex flex-column align-center">
                         <MudText Typo="Typo.h4" Color="Color.Info">@FormatTime(_model.TimeUsedMs)</MudText>
                         <MudText Typo="Typo.caption">Time Used</MudText>
                     </MudPaper>
                 </MudItem>
-                <MudItem xs="12" sm="4">
+                <MudItem xs="6" sm="3">
                     <MudPaper Elevation="2" Class="pa-4 rounded-lg d-flex flex-column align-center">
                         <MudText Typo="Typo.h4">@(_iteration?.AiProviderUsed?.ToString() ?? "N/A")</MudText>
                         <MudText Typo="Typo.caption">@(_iteration?.AiModelUsed ?? "No model")</MudText>
                     </MudPaper>
                 </MudItem>
             </MudGrid>
+
+            @if (!string.IsNullOrWhiteSpace(_model.OptimizeSql))
+            {
+                <MudCard Elevation="3" Class="rounded-lg mb-4">
+                    <MudCardHeader>
+                        <CardHeaderContent>
+                            <MudText Typo="Typo.h6">Optimization SQL</MudText>
+                            <MudText Typo="Typo.caption">
+                                Applied to the database during testing.
+                                @if (_model.OptimizeRetryCount > 1)
+                                {
+                                    <text> (required @_model.OptimizeRetryCount retries)</text>
+                                }
+                            </MudText>
+                        </CardHeaderContent>
+                    </MudCardHeader>
+                    <MudCardContent Class="pt-0">
+                        <SqlMonacoField EditorId="@($"optimize-sql-{(int)(object)_model.Id}")"
+                                        Label=""
+                                        @bind-Value="_model.OptimizeSql"
+                                        ReadOnly="true" />
+                    </MudCardContent>
+                </MudCard>
+            }
+
+            @if (!string.IsNullOrWhiteSpace(_model.RevertSql))
+            {
+                <MudCard Elevation="3" Class="rounded-lg mb-4">
+                    <MudCardHeader>
+                        <CardHeaderContent>
+                            <MudText Typo="Typo.h6">Revert SQL</MudText>
+                            <MudText Typo="Typo.caption">
+                                Undoes the optimization above.
+                                @if (_model.RevertRetryCount > 1)
+                                {
+                                    <text> (required @_model.RevertRetryCount retries)</text>
+                                }
+                            </MudText>
+                        </CardHeaderContent>
+                    </MudCardHeader>
+                    <MudCardContent Class="pt-0">
+                        <SqlMonacoField EditorId="@($"revert-sql-{(int)(object)_model.Id}")"
+                                        Label=""
+                                        @bind-Value="_model.RevertSql"
+                                        ReadOnly="true" />
+                    </MudCardContent>
+                </MudCard>
+            }
 
             @if (_model.BenchmarkRunBefore != null || _model.BenchmarkRunAfter != null)
             {
@@ -373,6 +428,15 @@
         if (ms < 60000) return $"{ms / 1000.0:F1}s";
         return $"{ms / 60000.0:F1}m";
     }
+
+    private static Color StatusColor(HypothesisState state) => state switch
+    {
+        HypothesisState.Completed => Color.Success,
+        HypothesisState.Failed => Color.Error,
+        HypothesisState.Generating or HypothesisState.Applying or HypothesisState.Benchmarking or HypothesisState.Reverting => Color.Info,
+        HypothesisState.Pending => Color.Default,
+        _ => Color.Default
+    };
 
     private void ComputeBenchDeltas()
     {

@@ -30,6 +30,28 @@ public record ResearchIteration
     public ResearchIterationState State { get; set; } = ResearchIterationState.Stopped;
 
     /// <summary>
+    /// Human-readable markdown summary produced by schema discovery.
+    /// </summary>
+    public string? SchemaDiscoveryMarkdown { get; set; }
+
+    /// <summary>
+    /// Serialized <c>SchemaDiscoveryResult</c> JSON for programmatic access.
+    /// </summary>
+    public string? SchemaDiscoveryResultJson { get; set; }
+
+    /// <summary>
+    /// JSON list of <c>[{schema, table}]</c> computed deterministically from the dependency graph.
+    /// Used for data integrity checking (checksum comparison).
+    /// </summary>
+    public string? RegisteredBaseTables { get; set; }
+
+    /// <summary>
+    /// The baseline benchmark run (before any optimization) shared by all hypotheses in this iteration.
+    /// </summary>
+    public BenchmarkRunId? BaselineBenchmarkRunId { get; set; }
+    public BenchmarkRun? BaselineBenchmarkRun { get; set; }
+
+    /// <summary>
     /// The date and time the run queue started.
     /// </summary>
     public DateTime? StartedAt { get; set; }

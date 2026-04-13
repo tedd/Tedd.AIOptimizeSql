@@ -7,6 +7,7 @@
 @inject ISnackbar Snackbar
 @using Microsoft.EntityFrameworkCore
 @using Tedd.AIOptimizeSql.Database
+@using Tedd.AIOptimizeSql.Database.Models.Enums
 
 <PageTitle>Hypotheses</PageTitle>
 
@@ -99,6 +100,7 @@
               OnRowClick="OnRowClick" RowClass="cursor-pointer" Class="rounded-lg">
         <HeaderContent>
             <MudTh><MudTableSortLabel SortLabel="Id" T="Hypothesis">#</MudTableSortLabel></MudTh>
+            <MudTh><MudTableSortLabel SortLabel="Status" T="Hypothesis">Status</MudTableSortLabel></MudTh>
             <MudTh><MudTableSortLabel SortLabel="Hypothesis" T="Hypothesis">Hypothesis</MudTableSortLabel></MudTh>
             <MudTh><MudTableSortLabel SortLabel="Improvement" T="Hypothesis">Improvement</MudTableSortLabel></MudTh>
             <MudTh>Builds On</MudTh>
@@ -108,6 +110,9 @@
         </HeaderContent>
         <RowTemplate>
             <MudTd DataLabel="#">@((int)(object)context.Id)</MudTd>
+            <MudTd DataLabel="Status">
+                <MudChip T="string" Size="Size.Small" Color="@StatusColor(context.Status)">@context.Status</MudChip>
+            </MudTd>
             <MudTd DataLabel="Hypothesis">
                 <MudText Typo="Typo.body2" Style="max-width:300px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
                     @(context.Description ?? "--")
@@ -217,6 +222,15 @@
         return $"{ms / 60000.0:F1}m";
     }
 
+    private static Color StatusColor(HypothesisState state) => state switch
+    {
+        HypothesisState.Completed => Color.Success,
+        HypothesisState.Failed => Color.Error,
+        HypothesisState.Generating or HypothesisState.Applying or HypothesisState.Benchmarking or HypothesisState.Reverting => Color.Info,
+        HypothesisState.Pending => Color.Default,
+        _ => Color.Default
+    };
+
     private Task<TableData<Hypothesis>> LoadServerData(TableState state, CancellationToken ct) =>
         PageLoadCancellation.RunTableLoadAsync(t => LoadServerDataCore(state, t), _pageCts.Token, ct);
 
@@ -231,6 +245,7 @@
         query = state.SortLabel switch
         {
             "Id" => state.SortDirection == SortDirection.Descending ? query.OrderByDescending(x => x.Id) : query.OrderBy(x => x.Id),
+            "Status" => state.SortDirection == SortDirection.Descending ? query.OrderByDescending(x => x.Status) : query.OrderBy(x => x.Status),
             "Hypothesis" => state.SortDirection == SortDirection.Descending ? query.OrderByDescending(x => x.Description) : query.OrderBy(x => x.Description),
             "Improvement" => state.SortDirection == SortDirection.Descending ? query.OrderByDescending(x => x.ImpovementPercentage) : query.OrderBy(x => x.ImpovementPercentage),
             "TimeUsedMs" => state.SortDirection == SortDirection.Descending ? query.OrderByDescending(x => x.TimeUsedMs) : query.OrderBy(x => x.TimeUsedMs),

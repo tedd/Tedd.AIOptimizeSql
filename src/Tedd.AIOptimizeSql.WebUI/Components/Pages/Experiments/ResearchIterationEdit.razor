@@ -94,6 +94,31 @@
                     <MudNumericField @bind-Value="_maxHypotheses" Label="Max number of hypotheses" Variant="Variant.Outlined"
                                      Min="1" Max="10000" Class="mb-4" Required="true" />
                 </MudForm>
+
+                @if (!_isNew && _iteration != null)
+                {
+                    @if (_iteration.BaselineBenchmarkRunId.HasValue)
+                    {
+                        <MudDivider Class="my-4" />
+                        <MudText Typo="Typo.subtitle2" Class="mb-2">Baseline Benchmark</MudText>
+                        <MudButton Variant="Variant.Outlined" Size="Size.Small" Color="Color.Primary"
+                                   Href="@($"/experiments/{(int)(object)_iteration.ExperimentId}/research-iterations/{(int)(object)_iteration.Id}/benchmarks/{(int)(object)_iteration.BaselineBenchmarkRunId}")">
+                            View baseline benchmark
+                        </MudButton>
+                    }
+
+                    @if (!string.IsNullOrWhiteSpace(_iteration.SchemaDiscoveryMarkdown))
+                    {
+                        <MudDivider Class="my-4" />
+                        <MudExpansionPanels Class="mb-2">
+                            <MudExpansionPanel Text="Schema Discovery Output" Expanded="false">
+                                <MudPaper Class="pa-3" Elevation="0" Outlined="true" Style="max-height:600px;overflow:auto;">
+                                    <pre style="white-space:pre-wrap;word-break:break-word;margin:0;font-size:0.85rem;">@_iteration.SchemaDiscoveryMarkdown</pre>
+                                </MudPaper>
+                            </MudExpansionPanel>
+                        </MudExpansionPanels>
+                    }
+                }
             </MudCardContent>
             <MudCardActions Class="pa-4 flex-wrap" Style="gap: 8px;">
                 @if (!_isNew && _iteration != null)

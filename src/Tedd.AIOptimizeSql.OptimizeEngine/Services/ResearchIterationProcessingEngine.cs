@@ -5,6 +5,7 @@ using Microsoft.Extensions.Logging;
 using Tedd.AIOptimizeSql.Database;
 using Tedd.AIOptimizeSql.Database.Models;
 using Tedd.AIOptimizeSql.Database.Models.Enums;
+using Tedd.AIOptimizeSql.OptimizeEngine.Utils;
 
 namespace Tedd.AIOptimizeSql.OptimizeEngine.Services;
 
@@ -23,7 +24,9 @@ public sealed class ResearchIterationProcessingEngine(
                 iterationId,
                 cancellationToken,
                 runStartedLogLine: "[QueueMonitor] Iteration dequeued from run queue; hypothesis generation started.");
-            await CompleteIterationAsync(iterationId, "All hypotheses generated");
+
+            await RunExperimentPostRunSqlAsync(iterationId, cancellationToken);
+            await CompleteIterationAsync(iterationId, "All hypotheses generated and tested");
             logger.LogInformation("Research iteration {IterationId} completed", iterationId);
         }
         catch (OperationCanceledException)
@@ -45,6 +48,39 @@ public sealed class ResearchIterationProcessingEngine(
                 "ProcessingEngine",
                 CancellationToken.None);
             await SetIterationStoppedAsync(iterationId, $"Error: {ex.Message}");
+        }
+    }
+
+    private async Task RunExperimentPostRunSqlAsync(ResearchIterationId iterationId, CancellationToken ct)
+    {
+        try
+        {
+            using var scope = scopeFactory.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<AIOptimizeDbContext>();
+            var iteration = await db.ResearchIterations
+                .AsNoTracking()
+                .Include(r => r.Experiment!)
+                    .ThenInclude(e => e.DatabaseConnection)
+                .FirstOrDefaultAsync(r => r.Id == iterationId, ct);
+
+            if (iteration?.Experiment is null) return;
+            var postRunSql = iteration.Experiment.ExperimentPostRunSql;
+            if (string.IsNullOrWhiteSpace(postRunSql)) return;
+            var connStr = iteration.Experiment.DatabaseConnection?.ConnectionString;
+            if (string.IsNullOrWhiteSpace(connStr)) return;
+
+            logger.LogInformation("Running ExperimentPostRunSql for iteration {IterationId}", iterationId);
+
+            var executor = DatabaseExecutorFactory.Create(
+                new OptimizeEngine.Models.BenchmarkConfig { DatabaseType = "MSSQL" },
+                msg => logger.LogDebug("{SqlLog}", msg));
+
+            await using var conn = await executor.OpenConnectionAsync(connStr, ct);
+            executor.ExecuteNonQuery(conn, postRunSql);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "ExperimentPostRunSql failed for iteration {IterationId}", iterationId);
         }
     }
 

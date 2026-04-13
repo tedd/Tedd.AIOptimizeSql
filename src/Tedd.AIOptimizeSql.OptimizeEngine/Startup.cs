@@ -16,6 +16,8 @@ public static class Startup
             builder.Configuration.GetSection(OptimizeEngineConfigurationSectionName));
 
         builder.Services.AddSingleton<AiAgentFactory>();
+        builder.Services.AddSingleton<ISchemaDiscoveryService, SchemaDiscoveryService>();
+        builder.Services.AddSingleton<HypothesisTestingService>();
         builder.Services.AddSingleton<IAiHypothesisService, AiHypothesisService>();
         builder.Services.AddSingleton<ResearchIterationProcessingEngine>();
         builder.Services.AddHostedService<QueueMonitorService>();

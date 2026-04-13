@@ -4,6 +4,10 @@ public enum HypothesisState
 {
     Pending,
     Generating,
+    Applying,
+    Benchmarking,
+    Reverting,
+    Completed,
     Generated,
     Failed
 }
