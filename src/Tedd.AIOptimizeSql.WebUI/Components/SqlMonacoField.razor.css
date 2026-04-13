@@ -1,3 +1,7 @@
+.sql-monaco-required-mark {
+    color: var(--mud-palette-error);
+}
+
 .sql-monaco-resize-wrap {
     resize: both;
     overflow: hidden;
@@ -8,6 +12,10 @@
     border: 1px solid var(--mud-palette-lines-default);
     border-radius: var(--mud-default-borderradius);
     box-sizing: border-box;
+}
+
+.sql-monaco-resize-wrap--error {
+    border-color: var(--mud-palette-error);
 }
 
 ::deep .sql-monaco-editor-inner.monaco-editor-container {

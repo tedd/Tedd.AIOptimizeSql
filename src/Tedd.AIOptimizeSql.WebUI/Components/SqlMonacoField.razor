@@ -3,9 +3,15 @@
 <div class="sql-monaco-field mb-4">
     @if (!string.IsNullOrWhiteSpace(Label))
     {
-        <MudText Typo="Typo.subtitle2" Class="mb-2">@Label</MudText>
+        <MudText Typo="Typo.subtitle2" Class="mb-2">
+            @Label
+            @if (Required)
+            {
+                <span class="sql-monaco-required-mark"> *</span>
+            }
+        </MudText>
     }
-    <div class="sql-monaco-resize-wrap">
+    <div class="@ResizeWrapClass">
         <StandaloneCodeEditor @ref="_editor"
                               @key="@($"{EditorId}-{ReadOnly}")"
                               Id="@EditorId"
@@ -13,7 +19,11 @@
                               ConstructionOptions="BuildOptions"
                               OnDidChangeModelContent="OnModelContentChanged" />
     </div>
-    @if (!string.IsNullOrWhiteSpace(HelperText))
+    @if (ShowRequiredError)
+    {
+        <MudText Typo="Typo.caption" Color="Color.Error" Class="mt-1">@RequiredError</MudText>
+    }
+    else if (!string.IsNullOrWhiteSpace(HelperText))
     {
         <MudText Typo="Typo.caption" Class="mt-1">@HelperText</MudText>
     }
@@ -26,9 +36,19 @@
     [Parameter] public string? Value { get; set; }
     [Parameter] public EventCallback<string?> ValueChanged { get; set; }
     [Parameter] public bool ReadOnly { get; set; }
+    [Parameter] public bool Required { get; set; }
+    [Parameter] public string RequiredError { get; set; } = "This field is required";
+    /// <summary>When true and <see cref="Required"/> is set, shows error if value is empty/whitespace.</summary>
+    [Parameter] public bool ValidationAttempted { get; set; }
 
     private StandaloneCodeEditor? _editor;
     private bool _suppressChange;
+
+    private bool ShowRequiredError =>
+        Required && ValidationAttempted && string.IsNullOrWhiteSpace(Value);
+
+    private string ResizeWrapClass =>
+        ShowRequiredError ? "sql-monaco-resize-wrap sql-monaco-resize-wrap--error" : "sql-monaco-resize-wrap";
 
     private StandaloneEditorConstructionOptions BuildOptions(StandaloneCodeEditor _) =>
         new()
