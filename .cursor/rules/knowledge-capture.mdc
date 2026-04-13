@@ -1,0 +1,14 @@
+---
+description: >-
+  Earned fixes → minimal hint or narrow rule/skill; tiny new rules; structure
+  docs self-update; bad rules/skills → propose only, no silent delete.
+alwaysApply: true
+---
+
+# Knowledge capture (agent)
+
+- **Repeat failures → fix:** One line in `.cursor/project-hints.md` (see `project-hints.mdc`) **or** a new **single-topic** `.mdc` / skill—whichever is smaller. No essays.
+- **New rules you add:** Extreme brevity; default `globs` + `alwaysApply: false` unless it must be universal.
+- **Recurring “where is what?”:** Add a scoped **structure** skill/rule; first lines = when to load + what it does; add **one line** telling future edits to **update this file** when layout changes.
+- **Commands/build stuck** (e.g. files locked): Try a **variant** (Release vs Debug, different project, clean, path); record only what **worked** as a short hint.
+- **Rule/skill wrong or stale:** Tell the user; **propose** edit or removal. **Do not** remove or rewrite without **explicit** approval.
