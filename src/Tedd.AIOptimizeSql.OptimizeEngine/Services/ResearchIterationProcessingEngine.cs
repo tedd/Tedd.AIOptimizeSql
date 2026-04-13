@@ -54,14 +54,13 @@ public sealed class ResearchIterationProcessingEngine(
         {
             using var scope = scopeFactory.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<AIOptimizeDbContext>();
-            var iteration = await db.ResearchIterations.AsTracking().FirstOrDefaultAsync(b => b.Id == iterationId);
-            if (iteration is not null)
-            {
-                iteration.State = ResearchIterationState.Stopped;
-                iteration.EndedAt = DateTime.UtcNow;
-                iteration.LastMessage = message;
-                await db.SaveChangesAsync();
-            }
+            var ended = DateTime.UtcNow;
+            await db.ResearchIterations
+                .Where(b => b.Id == iterationId)
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(b => b.State, ResearchIterationState.Stopped)
+                    .SetProperty(b => b.EndedAt, ended)
+                    .SetProperty(b => b.LastMessage, message));
         }
         catch (Exception ex)
         {
@@ -75,14 +74,13 @@ public sealed class ResearchIterationProcessingEngine(
         {
             using var scope = scopeFactory.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<AIOptimizeDbContext>();
-            var iteration = await db.ResearchIterations.AsTracking().FirstOrDefaultAsync(b => b.Id == iterationId);
-            if (iteration is not null)
-            {
-                iteration.State = ResearchIterationState.Stopped;
-                iteration.EndedAt = DateTime.UtcNow;
-                iteration.LastMessage = message;
-                await db.SaveChangesAsync();
-            }
+            var ended = DateTime.UtcNow;
+            await db.ResearchIterations
+                .Where(b => b.Id == iterationId)
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(b => b.State, ResearchIterationState.Stopped)
+                    .SetProperty(b => b.EndedAt, ended)
+                    .SetProperty(b => b.LastMessage, message));
         }
         catch (Exception ex)
         {

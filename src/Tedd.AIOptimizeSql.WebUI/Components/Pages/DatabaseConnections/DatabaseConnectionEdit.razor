@@ -7,6 +7,7 @@
 @inject ISnackbar Snackbar
 @using Microsoft.EntityFrameworkCore
 @using Tedd.AIOptimizeSql.Database
+@using Tedd.AIOptimizeSql.Database.Models
 
 <PageTitle>@(_isNew ? "New" : "Edit") Database Connection</PageTitle>
 
@@ -101,7 +102,7 @@
             {
                 _isNew = false;
                 var id = (DatabaseConnectionId)(object)Id.Value;
-                _model = await _db.DatabaseConnections.AsTracking().FirstOrDefaultAsync(c => c.Id == id, ct);
+                _model = await _db.DatabaseConnections.AsNoTracking().FirstOrDefaultAsync(c => c.Id == id, ct);
             }
             else
             {
@@ -123,13 +124,25 @@
             _model.CreatedAt = DateTime.UtcNow;
             _model.ModifiedAt = DateTime.UtcNow;
             _db.DatabaseConnections.Add(_model);
+            await _db.SaveChangesAsync();
+            _db.ChangeTracker.Clear();
         }
         else
         {
-            _model.ModifiedAt = DateTime.UtcNow;
-        }
+            var id = (DatabaseConnectionId)(object)_model.Id;
+            var now = DateTime.UtcNow;
+            var n = await _db.DatabaseConnections.Where(c => c.Id == id).ExecuteUpdateAsync(s => s
+                .SetProperty(c => c.Name, _model.Name)
+                .SetProperty(c => c.ConnectionString, _model.ConnectionString)
+                .SetProperty(c => c.ModifiedAt, now));
+            if (n != 1)
+            {
+                Snackbar.Add("Connection not found or was deleted.", Severity.Error);
+                return false;
+            }
 
-        await _db.SaveChangesAsync();
+            _model.ModifiedAt = now;
+        }
         Snackbar.Add(_isNew ? "Connection created" : "Connection saved", Severity.Success);
         CaptureBaseline();
         return true;
@@ -151,8 +164,7 @@
         else
         {
             var id = (DatabaseConnectionId)(object)_model.Id;
-            _db.Entry(_model).State = EntityState.Detached;
-            _model = await _db.DatabaseConnections.AsTracking().FirstOrDefaultAsync(c => c.Id == id, _pageCts.Token);
+            _model = await _db.DatabaseConnections.AsNoTracking().FirstOrDefaultAsync(c => c.Id == id, _pageCts.Token);
             if (_model == null)
             {
                 Snackbar.Add("Connection not found.", Severity.Error);

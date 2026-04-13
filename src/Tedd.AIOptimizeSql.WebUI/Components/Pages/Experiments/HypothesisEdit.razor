@@ -323,7 +323,7 @@
             _db = await DbContextFactory.CreateDbContextAsync(ct);
             var iterationId = (ResearchIterationId)(object)IterationId;
 
-            _iteration = await _db.ResearchIterations.AsTracking()
+            _iteration = await _db.ResearchIterations.AsNoTracking()
                 .Include(b => b.Experiment)
                 .FirstOrDefaultAsync(b => b.Id == iterationId, ct);
 
@@ -340,7 +340,7 @@
             {
                 _isNew = false;
                 var hId = (HypothesisId)(object)HypothesisId.Value;
-                _model = await _db.Hypotheses.AsTracking()
+                _model = await _db.Hypotheses.AsNoTracking()
                     .Include(h => h.BenchmarkRunBefore)
                     .Include(h => h.BenchmarkRunAfter)
                     .Include(h => h.Logs)
@@ -400,15 +400,31 @@
         _model.BuildsOnHypothesisId = _selectedBuildsOn;
 
         if (_experiment != null && (_isNew || _editMode))
-            _experiment.BenchmarkSql = _benchmarkSql;
+        {
+            await _db.Experiments
+                .Where(e => e.Id == _experiment.Id)
+                .ExecuteUpdateAsync(s => s.SetProperty(e => e.BenchmarkSql, _benchmarkSql));
+        }
 
         if (_isNew)
         {
             _model.CreatedAt = DateTime.UtcNow;
             _db.Hypotheses.Add(_model);
+            await _db.SaveChangesAsync();
+            _db.ChangeTracker.Clear();
         }
-
-        await _db.SaveChangesAsync();
+        else
+        {
+            var hid = _model.Id;
+            var n = await _db.Hypotheses.Where(h => h.Id == hid).ExecuteUpdateAsync(s => s
+                .SetProperty(h => h.Description, _model.Description)
+                .SetProperty(h => h.BuildsOnHypothesisId, _selectedBuildsOn));
+            if (n != 1)
+            {
+                Snackbar.Add("Hypothesis not found or was deleted.", Severity.Error);
+                return false;
+            }
+        }
         Snackbar.Add(_isNew ? "Hypothesis created" : "Hypothesis saved", Severity.Success);
         if (!_isNew)
             _editMode = false;
@@ -441,8 +457,7 @@
         else
         {
             var hId = _model.Id;
-            _db.Entry(_model).State = EntityState.Detached;
-            _model = await _db.Hypotheses.AsTracking()
+            _model = await _db.Hypotheses.AsNoTracking()
                 .Include(h => h.BenchmarkRunBefore)
                 .Include(h => h.BenchmarkRunAfter)
                 .Include(h => h.Logs)

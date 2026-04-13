@@ -118,8 +118,9 @@
         {
             await DataAccess.ClearAiConnectionReferencesAsync(item.Id);
             await using var db = await DbContextFactory.CreateDbContextAsync();
-            db.AIConnections.Remove(item);
-            await db.SaveChangesAsync();
+            var deleted = await db.AIConnections.Where(a => a.Id == item.Id).ExecuteDeleteAsync();
+            if (deleted == 0)
+                return;
             Snackbar.Add($"Deleted \"{item.Name}\"", Severity.Success);
             await _table!.ReloadServerData();
         }
@@ -134,14 +135,12 @@
 
         if (confirm == true)
         {
+            var ids = _selectedItems.Select(i => i.Id).ToList();
+            foreach (var id in ids)
+                await DataAccess.ClearAiConnectionReferencesAsync(id);
             await using var db = await DbContextFactory.CreateDbContextAsync();
-            foreach (var item in _selectedItems)
-            {
-                await DataAccess.ClearAiConnectionReferencesAsync(item.Id);
-                db.AIConnections.Remove(item);
-            }
-            await db.SaveChangesAsync();
-            Snackbar.Add($"Deleted {_selectedItems.Count} AI connection(s)", Severity.Success);
+            var deleted = await db.AIConnections.Where(a => ids.Contains(a.Id)).ExecuteDeleteAsync();
+            Snackbar.Add(deleted == 0 ? "Nothing deleted" : $"Deleted {deleted} AI connection(s)", deleted == 0 ? Severity.Info : Severity.Success);
             _selectedItems.Clear();
             await _table!.ReloadServerData();
         }

@@ -7,6 +7,7 @@
 @inject ISnackbar Snackbar
 @using Microsoft.EntityFrameworkCore
 @using Tedd.AIOptimizeSql.Database
+@using Tedd.AIOptimizeSql.Database.Models
 
 <PageTitle>@(_isNew ? "New" : "Edit") AI Connection</PageTitle>
 
@@ -141,7 +142,7 @@
             {
                 _isNew = false;
                 var id = (AIConnectionId)(object)Id.Value;
-                _model = await _db.AIConnections.AsTracking().FirstOrDefaultAsync(a => a.Id == id, ct);
+                _model = await _db.AIConnections.AsNoTracking().FirstOrDefaultAsync(a => a.Id == id, ct);
             }
             else
             {
@@ -170,13 +171,28 @@
             _model.CreatedAt = DateTime.UtcNow;
             _model.ModifiedAt = DateTime.UtcNow;
             _db.AIConnections.Add(_model);
+            await _db.SaveChangesAsync();
+            _db.ChangeTracker.Clear();
         }
         else
         {
-            _model.ModifiedAt = DateTime.UtcNow;
-        }
+            var id = (AIConnectionId)(object)_model.Id;
+            var now = DateTime.UtcNow;
+            var n = await _db.AIConnections.Where(a => a.Id == id).ExecuteUpdateAsync(s => s
+                .SetProperty(a => a.Name, _model.Name)
+                .SetProperty(a => a.Provider, _model.Provider)
+                .SetProperty(a => a.Model, _model.Model)
+                .SetProperty(a => a.Endpoint, _model.Endpoint)
+                .SetProperty(a => a.ApiKey, _model.ApiKey)
+                .SetProperty(a => a.ModifiedAt, now));
+            if (n != 1)
+            {
+                Snackbar.Add("AI Connection not found or was deleted.", Severity.Error);
+                return false;
+            }
 
-        await _db.SaveChangesAsync();
+            _model.ModifiedAt = now;
+        }
         Snackbar.Add(_isNew ? "AI Connection created" : "AI Connection saved", Severity.Success);
         CaptureBaseline();
         return true;
@@ -205,8 +221,7 @@
         else
         {
             var id = (AIConnectionId)(object)_model.Id;
-            _db.Entry(_model).State = EntityState.Detached;
-            _model = await _db.AIConnections.AsTracking().FirstOrDefaultAsync(a => a.Id == id, _pageCts.Token);
+            _model = await _db.AIConnections.AsNoTracking().FirstOrDefaultAsync(a => a.Id == id, _pageCts.Token);
             if (_model == null)
             {
                 Snackbar.Add("AI Connection not found.", Severity.Error);

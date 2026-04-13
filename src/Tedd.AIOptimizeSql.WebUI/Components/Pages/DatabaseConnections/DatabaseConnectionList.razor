@@ -7,6 +7,7 @@
 @inject ISnackbar Snackbar
 @using Microsoft.EntityFrameworkCore
 @using Tedd.AIOptimizeSql.Database
+@using Tedd.AIOptimizeSql.Database.Models
 
 <PageTitle>Database Connections</PageTitle>
 
@@ -116,8 +117,9 @@
         {
             await using var db = await DbContextFactory.CreateDbContextAsync();
             await NullOutReferences(db, item.Id);
-            db.DatabaseConnections.Remove(item);
-            await db.SaveChangesAsync();
+            var deleted = await db.DatabaseConnections.Where(c => c.Id == item.Id).ExecuteDeleteAsync();
+            if (deleted == 0)
+                return;
             Snackbar.Add($"Deleted \"{item.Name}\"", Severity.Success);
             await _table!.ReloadServerData();
         }
@@ -132,28 +134,24 @@
 
         if (confirm == true)
         {
+            var ids = _selectedItems.Select(i => i.Id).ToList();
             await using var db = await DbContextFactory.CreateDbContextAsync();
-            foreach (var item in _selectedItems)
-            {
-                await NullOutReferences(db, item.Id);
-                db.DatabaseConnections.Remove(item);
-            }
-            await db.SaveChangesAsync();
-            Snackbar.Add($"Deleted {_selectedItems.Count} connection(s)", Severity.Success);
+            await db.Experiments
+                .Where(p => p.DatabaseConnectionId != null && ids.Contains(p.DatabaseConnectionId.Value))
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(p => p.DatabaseConnectionId, (DatabaseConnectionId?)null)
+                    .SetProperty(p => p.ModifiedAt, DateTime.UtcNow));
+            var deleted = await db.DatabaseConnections.Where(c => ids.Contains(c.Id)).ExecuteDeleteAsync();
+            Snackbar.Add(deleted == 0 ? "Nothing deleted" : $"Deleted {deleted} connection(s)", deleted == 0 ? Severity.Info : Severity.Success);
             _selectedItems.Clear();
             await _table!.ReloadServerData();
         }
     }
 
-    private static async Task NullOutReferences(AIOptimizeDbContext db, DatabaseConnectionId id)
-    {
-        var profiles = await db.Experiments.AsTracking()
+    private static Task NullOutReferences(AIOptimizeDbContext db, DatabaseConnectionId id) =>
+        db.Experiments
             .Where(p => p.DatabaseConnectionId == id)
-            .ToListAsync();
-        foreach (var p in profiles)
-        {
-            p.DatabaseConnectionId = null;
-            p.ModifiedAt = DateTime.UtcNow;
-        }
-    }
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(p => p.DatabaseConnectionId, (DatabaseConnectionId?)null)
+                .SetProperty(p => p.ModifiedAt, DateTime.UtcNow));
 }

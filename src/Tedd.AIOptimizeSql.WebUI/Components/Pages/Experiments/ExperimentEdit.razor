@@ -7,6 +7,7 @@
 @inject ISnackbar Snackbar
 @using Microsoft.EntityFrameworkCore
 @using Tedd.AIOptimizeSql.Database
+@using Tedd.AIOptimizeSql.Database.Models
 
 <PageTitle>@(_isNew ? "New" : "Edit") Experiment</PageTitle>
 
@@ -240,7 +241,7 @@
             {
                 _isNew = false;
                 var id = (ExperimentId)(object)Id.Value;
-                _model = await _db.Experiments.AsTracking()
+                _model = await _db.Experiments.AsNoTracking()
                     .Include(p => p.DatabaseConnection)
                     .Include(p => p.AIConnection)
                     .FirstOrDefaultAsync(p => p.Id == id, ct);
@@ -292,8 +293,7 @@
             else
             {
                 var experimentId = _model.Id;
-                _db.Entry(_model).State = EntityState.Detached;
-                _model = await _db.Experiments.AsTracking()
+                _model = await _db.Experiments.AsNoTracking()
                     .Include(p => p.DatabaseConnection)
                     .Include(p => p.AIConnection)
                     .FirstOrDefaultAsync(p => p.Id == experimentId, _pageCts.Token);
@@ -338,13 +338,33 @@
             _model.CreatedAt = DateTime.UtcNow;
             _model.ModifiedAt = DateTime.UtcNow;
             _db.Experiments.Add(_model);
+            await _db.SaveChangesAsync();
+            _db.ChangeTracker.Clear();
         }
         else
         {
-            _model.ModifiedAt = DateTime.UtcNow;
-        }
+            var id = _model.Id;
+            var now = DateTime.UtcNow;
+            var n = await _db.Experiments.Where(p => p.Id == id).ExecuteUpdateAsync(s => s
+                .SetProperty(p => p.Name, _model.Name)
+                .SetProperty(p => p.Description, _model.Description)
+                .SetProperty(p => p.Instructions, _model.Instructions)
+                .SetProperty(p => p.ExperimentPreRunSql, _model.ExperimentPreRunSql)
+                .SetProperty(p => p.ExperimentPostRunSql, _model.ExperimentPostRunSql)
+                .SetProperty(p => p.HypothesisPreRunSql, _model.HypothesisPreRunSql)
+                .SetProperty(p => p.HypothesisPostRunSql, _model.HypothesisPostRunSql)
+                .SetProperty(p => p.BenchmarkSql, _model.BenchmarkSql)
+                .SetProperty(p => p.DatabaseConnectionId, _selectedDbConnId)
+                .SetProperty(p => p.AIConnectionId, _selectedAiConnId)
+                .SetProperty(p => p.ModifiedAt, now));
+            if (n != 1)
+            {
+                Snackbar.Add("Experiment not found or was deleted.", Severity.Error);
+                return false;
+            }
 
-        await _db.SaveChangesAsync();
+            _model.ModifiedAt = now;
+        }
         Snackbar.Add(_isNew ? "Experiment created" : "Experiment saved", Severity.Success);
         CaptureBaseline();
         return true;

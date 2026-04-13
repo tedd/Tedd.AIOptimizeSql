@@ -213,8 +213,9 @@
         if (confirm == true)
         {
             await using var db = await DbContextFactory.CreateDbContextAsync();
-            db.ResearchIterations.Remove(vm.Iteration);
-            await db.SaveChangesAsync();
+            var deleted = await db.ResearchIterations.Where(r => r.Id == vm.Iteration.Id).ExecuteDeleteAsync();
+            if (deleted == 0)
+                return;
             Snackbar.Add("Research iteration deleted", Severity.Success);
             await _table!.ReloadServerData();
             await RefreshChartAsync();
@@ -230,11 +231,10 @@
 
         if (confirm == true)
         {
+            var ids = _selectedItems.Select(vm => vm.Iteration.Id).ToList();
             await using var db = await DbContextFactory.CreateDbContextAsync();
-            foreach (var vm in _selectedItems)
-                db.ResearchIterations.Remove(vm.Iteration);
-            await db.SaveChangesAsync();
-            Snackbar.Add($"Deleted {_selectedItems.Count} research iteration(s)", Severity.Success);
+            var deleted = await db.ResearchIterations.Where(r => ids.Contains(r.Id)).ExecuteDeleteAsync();
+            Snackbar.Add(deleted == 0 ? "Nothing deleted" : $"Deleted {deleted} research iteration(s)", deleted == 0 ? Severity.Info : Severity.Success);
             _selectedItems.Clear();
             await _table!.ReloadServerData();
             await RefreshChartAsync();

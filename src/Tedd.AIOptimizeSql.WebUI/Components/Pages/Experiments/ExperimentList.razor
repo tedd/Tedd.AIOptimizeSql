@@ -148,8 +148,9 @@
         if (confirm == true)
         {
             await using var db = await DbContextFactory.CreateDbContextAsync();
-            db.Experiments.Remove(item);
-            await db.SaveChangesAsync();
+            var deleted = await db.Experiments.Where(e => e.Id == item.Id).ExecuteDeleteAsync();
+            if (deleted == 0)
+                return;
             Snackbar.Add($"Deleted \"{item.Name}\"", Severity.Success);
             await _table!.ReloadServerData();
         }
@@ -167,11 +168,10 @@
 
         if (confirm == true)
         {
+            var ids = _selectedItems.Select(i => i.Id).ToList();
             await using var db = await DbContextFactory.CreateDbContextAsync();
-            foreach (var item in _selectedItems)
-                db.Experiments.Remove(item);
-            await db.SaveChangesAsync();
-            Snackbar.Add($"Deleted {_selectedItems.Count} experiment(s)", Severity.Success);
+            var deleted = await db.Experiments.Where(e => ids.Contains(e.Id)).ExecuteDeleteAsync();
+            Snackbar.Add(deleted == 0 ? "Nothing deleted" : $"Deleted {deleted} experiment(s)", deleted == 0 ? Severity.Info : Severity.Success);
             _selectedItems.Clear();
             await _table!.ReloadServerData();
         }

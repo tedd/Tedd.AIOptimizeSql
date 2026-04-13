@@ -256,6 +256,7 @@ public sealed class AiHypothesisService(
                 CreatedAt = DateTime.UtcNow,
             });
             await db.SaveChangesAsync(cancellationToken);
+            db.ChangeTracker.Clear();
         }
         catch (Exception ex)
         {
@@ -270,6 +271,7 @@ public sealed class AiHypothesisService(
         using var scope = scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AIOptimizeDbContext>();
         return await db.ResearchIterations
+            .AsNoTracking()
             .Include(b => b.Experiment!)
                 .ThenInclude(e => e.DatabaseConnection)
             .Include(b => b.Experiment!)
@@ -313,6 +315,7 @@ public sealed class AiHypothesisService(
         };
         db.Hypotheses.Add(hypothesis);
         await db.SaveChangesAsync(ct);
+        db.ChangeTracker.Clear();
         return hypothesis;
     }
 
@@ -320,26 +323,21 @@ public sealed class AiHypothesisService(
     {
         using var scope = scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AIOptimizeDbContext>();
-        var h = await db.Hypotheses.AsTracking().FirstOrDefaultAsync(x => x.Id == id, ct);
-        if (h is not null)
-        {
-            h.Status = state;
-            await db.SaveChangesAsync(ct);
-        }
+        await db.Hypotheses
+            .Where(x => x.Id == id)
+            .ExecuteUpdateAsync(s => s.SetProperty(x => x.Status, state), ct);
     }
 
     private async Task FinalizeHypothesisAsync(HypothesisId id, string? description, long timeUsedMs, CancellationToken ct)
     {
         using var scope = scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AIOptimizeDbContext>();
-        var h = await db.Hypotheses.AsTracking().FirstOrDefaultAsync(x => x.Id == id, ct);
-        if (h is not null)
-        {
-            h.Status = HypothesisState.Generated;
-            h.Description = description;
-            h.TimeUsedMs = timeUsedMs;
-            await db.SaveChangesAsync(ct);
-        }
+        await db.Hypotheses
+            .Where(x => x.Id == id)
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(x => x.Status, HypothesisState.Generated)
+                .SetProperty(x => x.Description, description)
+                .SetProperty(x => x.TimeUsedMs, timeUsedMs), ct);
     }
 
     private async Task FailHypothesisAsync(HypothesisId id, string errorMessage, CancellationToken ct)
@@ -348,13 +346,11 @@ public sealed class AiHypothesisService(
         {
             using var scope = scopeFactory.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<AIOptimizeDbContext>();
-            var h = await db.Hypotheses.AsTracking().FirstOrDefaultAsync(x => x.Id == id, ct);
-            if (h is not null)
-            {
-                h.Status = HypothesisState.Failed;
-                h.ErrorMessage = errorMessage;
-                await db.SaveChangesAsync(ct);
-            }
+            await db.Hypotheses
+                .Where(x => x.Id == id)
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(x => x.Status, HypothesisState.Failed)
+                    .SetProperty(x => x.ErrorMessage, errorMessage), ct);
         }
         catch (Exception ex)
         {
@@ -368,12 +364,9 @@ public sealed class AiHypothesisService(
         {
             using var scope = scopeFactory.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<AIOptimizeDbContext>();
-            var iteration = await db.ResearchIterations.AsTracking().FirstOrDefaultAsync(b => b.Id == iterationId, ct);
-            if (iteration is not null)
-            {
-                iteration.LastMessage = message;
-                await db.SaveChangesAsync(ct);
-            }
+            await db.ResearchIterations
+                .Where(b => b.Id == iterationId)
+                .ExecuteUpdateAsync(s => s.SetProperty(b => b.LastMessage, message), ct);
         }
         catch (Exception ex)
         {
