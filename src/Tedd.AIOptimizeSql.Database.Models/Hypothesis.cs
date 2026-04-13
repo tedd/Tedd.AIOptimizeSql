@@ -43,4 +43,5 @@ public record Hypothesis
     /// </summary>
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
+    public List<HypothesisLog> Logs { get; set; } = new();
 }

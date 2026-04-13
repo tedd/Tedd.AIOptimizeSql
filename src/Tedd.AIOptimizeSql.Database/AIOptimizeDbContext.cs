@@ -11,11 +11,15 @@ public class AIOptimizeDbContext : DbContext
 {
     public AIOptimizeDbContext(DbContextOptions<AIOptimizeDbContext> options) : base(options) { }
 
+    protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder) =>
+        optionsBuilder.UseQueryTrackingBehavior(QueryTrackingBehavior.NoTracking);
+
     public DbSet<DatabaseConnection> DatabaseConnections => Set<DatabaseConnection>();
     public DbSet<AIConnection> AIConnections => Set<AIConnection>();
     public DbSet<Experiment> Experiments => Set<Experiment>();
     public DbSet<ResearchIteration> ResearchIterations => Set<ResearchIteration>();
     public DbSet<Hypothesis> Hypotheses => Set<Hypothesis>();
+    public DbSet<HypothesisLog> HypothesisLogs => Set<HypothesisLog>();
     public DbSet<BenchmarkRun> BenchmarkRuns => Set<BenchmarkRun>();
     public DbSet<RunQueue> RunQueue => Set<RunQueue>();
 
@@ -26,6 +30,7 @@ public class AIOptimizeDbContext : DbContext
         builder.Properties<ExperimentId>().HaveConversion<int>();
         builder.Properties<ResearchIterationId>().HaveConversion<int>();
         builder.Properties<HypothesisId>().HaveConversion<int>();
+        builder.Properties<HypothesisLogId>().HaveConversion<int>();
         builder.Properties<BenchmarkRunId>().HaveConversion<int>();
         builder.Properties<RunQueueId>().HaveConversion<int>();
 
@@ -86,6 +91,8 @@ public class AIOptimizeDbContext : DbContext
 
         modelBuilder.Entity<Hypothesis>(entity =>
         {
+            entity.Property(h => h.Id).ValueGeneratedOnAdd();
+
             entity.HasOne(h => h.ResearchIteration)
                 .WithMany(r => r.Hypotheses)
                 .HasForeignKey(h => h.ResearchIterationId)
@@ -107,6 +114,18 @@ public class AIOptimizeDbContext : DbContext
                 .WithMany()
                 .HasForeignKey(h => h.BenchmarkRunIdAfter)
                 .OnDelete(DeleteBehavior.NoAction);
+        });
+
+        modelBuilder.Entity<HypothesisLog>(entity =>
+        {
+            entity.Property(l => l.Id).ValueGeneratedOnAdd();
+
+            entity.Property(l => l.Message).HasColumnType("nvarchar(max)");
+
+            entity.HasOne(l => l.Hypothesis)
+                .WithMany(h => h.Logs)
+                .HasForeignKey(l => l.HypothesisId)
+                .OnDelete(DeleteBehavior.Cascade);
         });
     }
 }

@@ -169,6 +169,35 @@
             }
         }
 
+        @if (!_isNew && !_editMode && _hypothesisLogs.Count > 0)
+        {
+            <MudCard Elevation="3" Class="rounded-lg mb-4">
+                <MudCardHeader>
+                    <CardHeaderContent>
+                        <MudText Typo="Typo.h6">Activity log</MudText>
+                        <MudText Typo="Typo.caption">Generation and worker steps recorded for this hypothesis.</MudText>
+                    </CardHeaderContent>
+                </MudCardHeader>
+                <MudCardContent Class="pt-0">
+                    <MudStack Spacing="2">
+                        @foreach (var line in _hypothesisLogs)
+                        {
+                            <MudPaper Elevation="0" Class="pa-2 rounded" Style="background: var(--mud-palette-background-grey);">
+                                <MudText Typo="Typo.caption" Class="mud-text-secondary">
+                                    @line.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")
+                                    @if (!string.IsNullOrEmpty(line.Source))
+                                    {
+                                        <text> · @line.Source</text>
+                                    }
+                                </MudText>
+                                <MudText Typo="Typo.body2" Style="white-space: pre-wrap; word-break: break-word;">@line.Message</MudText>
+                            </MudPaper>
+                        }
+                    </MudStack>
+                </MudCardContent>
+            </MudCard>
+        }
+
         <MudCard Elevation="3" Class="rounded-lg">
             <MudCardContent>
                 <MudForm @ref="_form" @bind-IsValid="_formValid">
@@ -252,6 +281,7 @@
     private int? _benchDeltaTotalMs;
     private int? _benchDeltaServerElapsedMs;
     private int? _benchDeltaLogicalReads;
+    private List<HypothesisLog> _hypothesisLogs = new();
     private readonly CancellationTokenSource _pageCts = new();
     private AIOptimizeDbContext? _db;
 
@@ -313,12 +343,14 @@
                 _model = await _db.Hypotheses.AsTracking()
                     .Include(h => h.BenchmarkRunBefore)
                     .Include(h => h.BenchmarkRunAfter)
+                    .Include(h => h.Logs)
                     .FirstOrDefaultAsync(h => h.Id == hId, ct);
 
                 if (_model != null)
                 {
                     _selectedBuildsOn = _model.BuildsOnHypothesisId;
                     _otherHypotheses = _otherHypotheses.Where(h => h.Id != _model.Id).ToList();
+                    _hypothesisLogs = _model.Logs.OrderBy(l => l.CreatedAt).ThenBy(l => l.Id).ToList();
                     ComputeBenchDeltas();
                 }
             }
@@ -413,6 +445,7 @@
             _model = await _db.Hypotheses.AsTracking()
                 .Include(h => h.BenchmarkRunBefore)
                 .Include(h => h.BenchmarkRunAfter)
+                .Include(h => h.Logs)
                 .FirstOrDefaultAsync(h => h.Id == hId, _pageCts.Token);
             if (_model == null)
             {
@@ -420,6 +453,7 @@
                 return;
             }
 
+            _hypothesisLogs = _model.Logs.OrderBy(l => l.CreatedAt).ThenBy(l => l.Id).ToList();
             _selectedBuildsOn = _model.BuildsOnHypothesisId;
             _benchmarkSql = _experiment?.BenchmarkSql;
             _editMode = false;

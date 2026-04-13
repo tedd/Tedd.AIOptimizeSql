@@ -52,7 +52,7 @@
 
                     <MudTextField @bind-Value="_model.Endpoint" Label="Endpoint" Required="true"
                                   RequiredError="Endpoint is required" MaxLength="512"
-                                  HelperText="Base URL for the AI provider"
+                                  HelperText="@GetEndpointHelperText()"
                                   Variant="Variant.Outlined" Class="mb-4" />
 
                     <MudTextField @bind-Value="_model.ApiKey" Label="API Key" Required="true"
@@ -113,6 +113,17 @@
         _baselineEndpoint = _model.Endpoint;
         _baselineApiKey = _model.ApiKey;
     }
+
+    private string GetEndpointHelperText() => _model?.Provider switch
+    {
+        AiProvider.OpenAI =>
+            "API base URL only, e.g. https://api.openai.com/v1 — do not add /models or /chat/completions.",
+        AiProvider.AzureOpenAI =>
+            "Resource endpoint, e.g. https://YOUR_RESOURCE.openai.azure.com — not the deployment URL.",
+        AiProvider.Anthropic => "Not used for Anthropic (SDK uses default); you may put any placeholder.",
+        AiProvider.Ollama or AiProvider.Local => "Ollama base URL, e.g. http://127.0.0.1:11434",
+        _ => "Base URL for the AI provider",
+    };
 
     public void Dispose()
     {

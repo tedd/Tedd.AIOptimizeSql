@@ -19,18 +19,31 @@ public sealed class ResearchIterationProcessingEngine(
 
         try
         {
-            await hypothesisService.RunIterationAsync(iterationId, cancellationToken);
+            await hypothesisService.RunIterationAsync(
+                iterationId,
+                cancellationToken,
+                runStartedLogLine: "[QueueMonitor] Iteration dequeued from run queue; hypothesis generation started.");
             await CompleteIterationAsync(iterationId, "All hypotheses generated");
             logger.LogInformation("Research iteration {IterationId} completed", iterationId);
         }
         catch (OperationCanceledException)
         {
             logger.LogInformation("Research iteration {IterationId} cancelled due to shutdown", iterationId);
+            await hypothesisService.AppendLogToLatestHypothesisInIterationAsync(
+                iterationId,
+                "Research iteration cancelled (host shutdown or token cancelled).",
+                "ProcessingEngine",
+                CancellationToken.None);
             await SetIterationStoppedAsync(iterationId, "Cancelled due to shutdown");
         }
         catch (Exception ex)
         {
             logger.LogError(ex, "Research iteration {IterationId} failed with error", iterationId);
+            await hypothesisService.AppendLogToLatestHypothesisInIterationAsync(
+                iterationId,
+                $"Research iteration processing failed: {ex}",
+                "ProcessingEngine",
+                CancellationToken.None);
             await SetIterationStoppedAsync(iterationId, $"Error: {ex.Message}");
         }
     }
@@ -41,7 +54,7 @@ public sealed class ResearchIterationProcessingEngine(
         {
             using var scope = scopeFactory.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<AIOptimizeDbContext>();
-            var iteration = await db.ResearchIterations.FirstOrDefaultAsync(b => b.Id == iterationId);
+            var iteration = await db.ResearchIterations.AsTracking().FirstOrDefaultAsync(b => b.Id == iterationId);
             if (iteration is not null)
             {
                 iteration.State = ResearchIterationState.Stopped;
@@ -62,7 +75,7 @@ public sealed class ResearchIterationProcessingEngine(
         {
             using var scope = scopeFactory.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<AIOptimizeDbContext>();
-            var iteration = await db.ResearchIterations.FirstOrDefaultAsync(b => b.Id == iterationId);
+            var iteration = await db.ResearchIterations.AsTracking().FirstOrDefaultAsync(b => b.Id == iterationId);
             if (iteration is not null)
             {
                 iteration.State = ResearchIterationState.Stopped;

@@ -20,9 +20,14 @@ public sealed class AiHypothesisService(
     IOptions<OptimizeEngineSettings> settings,
     ILoggerFactory loggerFactory) : IAiHypothesisService
 {
+    private const int MaxLogMessageChars = 48_000;
+
     private readonly ILogger _logger = loggerFactory.CreateLogger<AiHypothesisService>();
 
-    public async Task RunIterationAsync(ResearchIterationId iterationId, CancellationToken cancellationToken = default)
+    public async Task RunIterationAsync(
+        ResearchIterationId iterationId,
+        CancellationToken cancellationToken = default,
+        string? runStartedLogLine = null)
     {
         _logger.LogInformation("Starting hypothesis generation loop for research iteration {IterationId}", iterationId);
 
@@ -34,6 +39,7 @@ public sealed class AiHypothesisService(
         }
 
         var hypothesesCreated = iteration.Hypotheses.Count;
+        var pendingRunStartedLog = runStartedLogLine;
 
         while (hypothesesCreated < iteration.MaxNumberOfHypotheses)
         {
@@ -60,19 +66,65 @@ public sealed class AiHypothesisService(
 
             var placeholder = await InsertPendingHypothesisAsync(iterationId, hypothesesCreated + 1, cancellationToken);
 
+            if (pendingRunStartedLog is not null)
+            {
+                await AppendHypothesisLogAsync(
+                    placeholder.Id,
+                    pendingRunStartedLog,
+                    "QueueMonitor",
+                    cancellationToken);
+                pendingRunStartedLog = null;
+            }
+
+            await AppendHypothesisLogAsync(
+                placeholder.Id,
+                $"Hypothesis record created (pending). Target slot {hypothesesCreated + 1} of {iteration.MaxNumberOfHypotheses}.",
+                "HypothesisService",
+                cancellationToken);
+
             try
             {
                 await UpdateHypothesisStatusAsync(placeholder.Id, HypothesisState.Generating, cancellationToken);
+                await AppendHypothesisLogAsync(
+                    placeholder.Id,
+                    "Status set to Generating; preparing AI agent and database tools.",
+                    "HypothesisService",
+                    cancellationToken);
 
-                var result = await GenerateSingleHypothesisAsync(iteration, priorHypotheses, cancellationToken);
+                var result = await GenerateSingleHypothesisAsync(iteration, priorHypotheses, placeholder.Id, cancellationToken);
+
+                await AppendHypothesisLogAsync(
+                    placeholder.Id,
+                    $"AI agent finished in {result.TimeUsedMs} ms. Output length: {result.Description?.Length ?? 0} characters.",
+                    "HypothesisService",
+                    cancellationToken);
+
+                if (!string.IsNullOrWhiteSpace(result.Description))
+                {
+                    await AppendHypothesisLogAsync(
+                        placeholder.Id,
+                        $"AI output (preview):\n{TruncateForLog(result.Description!, maxChars: 6_000)}",
+                        "HypothesisService",
+                        cancellationToken);
+                }
 
                 await FinalizeHypothesisAsync(placeholder.Id, result.Description, result.TimeUsedMs, cancellationToken);
+                await AppendHypothesisLogAsync(
+                    placeholder.Id,
+                    "Hypothesis finalized (Generated).",
+                    "HypothesisService",
+                    cancellationToken);
                 hypothesesCreated++;
 
                 _logger.LogInformation("Hypothesis #{Number} created for research iteration {IterationId}", hypothesesCreated, iterationId);
             }
             catch (OperationCanceledException)
             {
+                await AppendHypothesisLogAsync(
+                    placeholder.Id,
+                    "Generation cancelled (operation aborted).",
+                    "HypothesisService",
+                    CancellationToken.None);
                 await FailHypothesisAsync(placeholder.Id, "Cancelled", CancellationToken.None);
                 throw;
             }
@@ -80,6 +132,11 @@ public sealed class AiHypothesisService(
             {
                 _logger.LogError(ex, "Failed to generate hypothesis #{Number} for research iteration {IterationId}",
                     hypothesesCreated + 1, iterationId);
+                await AppendHypothesisLogAsync(
+                    placeholder.Id,
+                    $"Generation failed:\n{TruncateForLog(ex.ToString())}",
+                    "HypothesisService",
+                    CancellationToken.None);
                 await FailHypothesisAsync(placeholder.Id, ex.Message, CancellationToken.None);
                 hypothesesCreated++;
             }
@@ -102,9 +159,30 @@ public sealed class AiHypothesisService(
         _logger.LogInformation("Research iteration {IterationId} hypothesis loop completed ({Count} hypotheses)", iterationId, hypothesesCreated);
     }
 
+    public async Task AppendLogToLatestHypothesisInIterationAsync(
+        ResearchIterationId iterationId,
+        string message,
+        string? source = null,
+        CancellationToken cancellationToken = default)
+    {
+        using var scope = scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AIOptimizeDbContext>();
+        if (!await db.Hypotheses.AnyAsync(h => h.ResearchIterationId == iterationId, cancellationToken))
+            return;
+
+        var latestId = await db.Hypotheses.AsNoTracking()
+            .Where(h => h.ResearchIterationId == iterationId)
+            .OrderByDescending(h => h.Id)
+            .Select(h => h.Id)
+            .FirstAsync(cancellationToken);
+
+        await AppendHypothesisLogAsync(latestId, message, source, cancellationToken);
+    }
+
     private async Task<(string? Description, long TimeUsedMs)> GenerateSingleHypothesisAsync(
         ResearchIteration iteration,
         IReadOnlyList<Hypothesis> priorHypotheses,
+        HypothesisId hypothesisId,
         CancellationToken cancellationToken)
     {
         var experiment = iteration.Experiment
@@ -139,12 +217,50 @@ public sealed class AiHypothesisService(
         _logger.LogInformation("Invoking AI agent for research iteration {IterationId}, hypothesis #{Number}",
             iteration.Id, priorHypotheses.Count + 1);
 
+        await AppendHypothesisLogAsync(
+            hypothesisId,
+            $"Invoking AI agent (model context from iteration). Prior hypotheses in iteration: {priorHypotheses.Count}.",
+            "HypothesisService",
+            cancellationToken);
+
         var result = await agent.RunAsync(prompt, cancellationToken: cancellationToken);
         sw.Stop();
 
         _logger.LogInformation("AI agent returned in {ElapsedMs}ms", sw.ElapsedMilliseconds);
 
         return (result?.ToString() ?? "(no response)", sw.ElapsedMilliseconds);
+    }
+
+    private static string TruncateForLog(string message, int maxChars = MaxLogMessageChars)
+    {
+        if (message.Length <= maxChars)
+            return message;
+        return message[..maxChars] + "\n… (truncated)";
+    }
+
+    private async Task AppendHypothesisLogAsync(
+        HypothesisId hypothesisId,
+        string message,
+        string? source,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var scope = scopeFactory.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<AIOptimizeDbContext>();
+            db.HypothesisLogs.Add(new HypothesisLog
+            {
+                HypothesisId = hypothesisId,
+                Message = TruncateForLog(message),
+                Source = source,
+                CreatedAt = DateTime.UtcNow,
+            });
+            await db.SaveChangesAsync(cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to append hypothesis log for {HypothesisId}", hypothesisId);
+        }
     }
 
     #region Database helpers
@@ -204,7 +320,7 @@ public sealed class AiHypothesisService(
     {
         using var scope = scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AIOptimizeDbContext>();
-        var h = await db.Hypotheses.FirstOrDefaultAsync(x => x.Id == id, ct);
+        var h = await db.Hypotheses.AsTracking().FirstOrDefaultAsync(x => x.Id == id, ct);
         if (h is not null)
         {
             h.Status = state;
@@ -216,7 +332,7 @@ public sealed class AiHypothesisService(
     {
         using var scope = scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AIOptimizeDbContext>();
-        var h = await db.Hypotheses.FirstOrDefaultAsync(x => x.Id == id, ct);
+        var h = await db.Hypotheses.AsTracking().FirstOrDefaultAsync(x => x.Id == id, ct);
         if (h is not null)
         {
             h.Status = HypothesisState.Generated;
@@ -232,7 +348,7 @@ public sealed class AiHypothesisService(
         {
             using var scope = scopeFactory.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<AIOptimizeDbContext>();
-            var h = await db.Hypotheses.FirstOrDefaultAsync(x => x.Id == id, ct);
+            var h = await db.Hypotheses.AsTracking().FirstOrDefaultAsync(x => x.Id == id, ct);
             if (h is not null)
             {
                 h.Status = HypothesisState.Failed;
@@ -252,7 +368,7 @@ public sealed class AiHypothesisService(
         {
             using var scope = scopeFactory.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<AIOptimizeDbContext>();
-            var iteration = await db.ResearchIterations.FirstOrDefaultAsync(b => b.Id == iterationId, ct);
+            var iteration = await db.ResearchIterations.AsTracking().FirstOrDefaultAsync(b => b.Id == iterationId, ct);
             if (iteration is not null)
             {
                 iteration.LastMessage = message;

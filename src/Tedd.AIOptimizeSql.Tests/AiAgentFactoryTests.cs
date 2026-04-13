@@ -45,4 +45,18 @@ public class AiAgentFactoryTests
 
         Assert.NotNull(agent);
     }
+
+    [Theory]
+    [InlineData("https://api.openai.com/v1/models", "https://api.openai.com/v1")]
+    [InlineData("https://api.openai.com/v1/models/", "https://api.openai.com/v1")]
+    [InlineData("https://api.openai.com/v1/chat/completions", "https://api.openai.com/v1")]
+    [InlineData("https://api.openai.com", "https://api.openai.com/v1")]
+    [InlineData("https://api.openai.com/", "https://api.openai.com/v1")]
+    [InlineData("https://api.openai.com/v1", "https://api.openai.com/v1")]
+    [InlineData("https://gateway.example/v1/models", "https://gateway.example/v1")]
+    public void NormalizeOpenAIBaseEndpoint_fixes_common_misconfigured_bases(string input, string expected)
+    {
+        var normalized = AiAgentFactory.NormalizeOpenAIBaseEndpoint(new Uri(input));
+        Assert.Equal(new Uri(expected), normalized);
+    }
 }
