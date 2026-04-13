@@ -260,7 +260,10 @@
         {
             await using var db = await DbContextFactory.CreateDbContextAsync();
             await NullOutBuildsOnReferences(db, item.Id);
-            db.Hypotheses.Remove(item);
+            var tracked = await db.Hypotheses.AsTracking().FirstOrDefaultAsync(h => h.Id == item.Id);
+            if (tracked is null)
+                return;
+            db.Hypotheses.Remove(tracked);
             await db.SaveChangesAsync();
             Snackbar.Add("Hypothesis deleted", Severity.Success);
             await _table!.ReloadServerData();
@@ -277,12 +280,12 @@
 
         if (confirm == true)
         {
+            var ids = _selectedItems.Select(i => i.Id).ToList();
             await using var db = await DbContextFactory.CreateDbContextAsync();
-            foreach (var item in _selectedItems)
-            {
-                await NullOutBuildsOnReferences(db, item.Id);
-                db.Hypotheses.Remove(item);
-            }
+            foreach (var id in ids)
+                await NullOutBuildsOnReferences(db, id);
+            var tracked = await db.Hypotheses.AsTracking().Where(h => ids.Contains(h.Id)).ToListAsync();
+            db.Hypotheses.RemoveRange(tracked);
             await db.SaveChangesAsync();
             Snackbar.Add($"Deleted {_selectedItems.Count} hypothesis/hypotheses", Severity.Success);
             _selectedItems.Clear();
