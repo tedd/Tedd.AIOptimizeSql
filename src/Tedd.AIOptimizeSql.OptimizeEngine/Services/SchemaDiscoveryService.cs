@@ -13,7 +13,7 @@ namespace Tedd.AIOptimizeSql.OptimizeEngine.Services;
 /// <summary>
 /// Deterministic schema discovery that traverses SQL Server catalog metadata
 /// to build a normalized object graph. Does not use AI -- catalog views
-/// (<c>sys.sql_expression_dependencies</c>, <c>sys.sql_modules</c>, etc.)
+/// (<c>sys.sql_expression_dependencies</c> joined to <c>sys.objects</c>, <c>sys.sql_modules</c>, etc.)
 /// are the sole source of truth.
 /// </summary>
 public sealed partial class SchemaDiscoveryService(ILogger<SchemaDiscoveryService> logger)
@@ -407,17 +407,27 @@ public sealed partial class SchemaDiscoveryService(ILogger<SchemaDiscoveryServic
     private async Task<List<DependencyRow>> LoadDependenciesAsync(
         string schema, string objectName, DbConnection conn, CancellationToken ct)
     {
+        // sys.sql_expression_dependencies exposes referenced_id / referenced_minor_id, not
+        // referenced_schema_id / referenced_entity_name (those exist on dm_sql_referenced_entities).
+        // Join sys.objects (and sys.columns for column-level refs). Cross-db names are not
+        // available here; is_schema_bound_reference is omitted on some SQL Server builds.
         const string sql = """
             SELECT
-                ISNULL(SCHEMA_NAME(d.referenced_schema_id), 'dbo') AS referenced_schema,
-                d.referenced_entity_name,
-                d.referenced_minor_name,
-                d.referenced_database_name,
-                d.is_schema_bound_reference,
+                ISNULL(SCHEMA_NAME(ro.schema_id), 'dbo') AS referenced_schema,
+                ro.name AS referenced_entity_name,
+                rc.name AS referenced_minor_name,
+                CAST(NULL AS nvarchar(128)) AS referenced_database_name,
+                CAST(0 AS bit) AS is_schema_bound_reference,
                 d.is_ambiguous
             FROM sys.sql_expression_dependencies d
             JOIN sys.objects o ON o.object_id = d.referencing_id
+            LEFT JOIN sys.objects ro ON ro.object_id = d.referenced_id
+            LEFT JOIN sys.columns rc
+                ON rc.object_id = d.referenced_id
+                AND rc.column_id = d.referenced_minor_id
+                AND d.referenced_minor_id > 0
             WHERE SCHEMA_NAME(o.schema_id) = @schema AND o.name = @name
+              AND ro.object_id IS NOT NULL
             """;
 
         using var cmd = conn.CreateCommand();

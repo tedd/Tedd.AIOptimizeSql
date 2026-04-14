@@ -57,12 +57,14 @@ public sealed class SchemaInspectionToolWrapper : IDisposable
         try
         {
             var sql = $"""
-                SELECT 'references' AS direction, 
-                       ISNULL(SCHEMA_NAME(d.referenced_schema_id),'dbo') AS dep_schema,
-                       d.referenced_entity_name AS dep_name
+                SELECT 'references' AS direction,
+                       ISNULL(SCHEMA_NAME(ro.schema_id),'dbo') AS dep_schema,
+                       ro.name AS dep_name
                 FROM sys.sql_expression_dependencies d
                 JOIN sys.objects o ON o.object_id = d.referencing_id
+                LEFT JOIN sys.objects ro ON ro.object_id = d.referenced_id
                 WHERE SCHEMA_NAME(o.schema_id) = '{Escape(schemaName)}' AND o.name = '{Escape(objectName)}'
+                  AND ro.object_id IS NOT NULL
                 UNION ALL
                 SELECT 'referenced_by', SCHEMA_NAME(o.schema_id), o.name
                 FROM sys.sql_expression_dependencies d
