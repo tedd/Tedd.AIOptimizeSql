@@ -42,8 +42,20 @@ public class AIOptimizeDbContext : DbContext
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
+        modelBuilder.Entity<DatabaseConnection>(entity =>
+        {
+            entity.Property(e => e.Id).ValueGeneratedOnAdd();
+        });
+
+        modelBuilder.Entity<AIConnection>(entity =>
+        {
+            entity.Property(e => e.Id).ValueGeneratedOnAdd();
+        });
+
         modelBuilder.Entity<Experiment>(entity =>
         {
+            entity.Property(e => e.Id).ValueGeneratedOnAdd();
+
             entity.HasOne(p => p.DatabaseConnection)
                 .WithMany()
                 .HasForeignKey(p => p.DatabaseConnectionId)
@@ -57,6 +69,9 @@ public class AIOptimizeDbContext : DbContext
 
         modelBuilder.Entity<ResearchIteration>(entity =>
         {
+            // Strongly typed enum keys do not get int PK identity conventions; match Hypothesis configuration.
+            entity.Property(r => r.Id).ValueGeneratedOnAdd();
+
             entity.HasOne(r => r.Experiment)
                 .WithMany(p => p.ResearchIterations)
                 .HasForeignKey(r => r.ExperimentId)
@@ -75,6 +90,8 @@ public class AIOptimizeDbContext : DbContext
 
         modelBuilder.Entity<BenchmarkRun>(entity =>
         {
+            entity.Property(e => e.Id).ValueGeneratedOnAdd();
+
             entity.Property(e => e.ActualPlanXml)
                 .HasConversion(
                     v => JsonSerializer.Serialize(v),
@@ -86,6 +103,8 @@ public class AIOptimizeDbContext : DbContext
 
         modelBuilder.Entity<RunQueue>(entity =>
         {
+            entity.Property(r => r.Id).ValueGeneratedOnAdd();
+
             entity.HasOne(r => r.ResearchIteration)
                 .WithMany()
                 .HasForeignKey(r => r.ResearchIterationId)
