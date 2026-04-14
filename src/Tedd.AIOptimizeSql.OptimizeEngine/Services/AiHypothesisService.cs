@@ -432,8 +432,12 @@ public sealed class AiHypothesisService(
                 AIFunctionFactory.Create(toolWrapper.GetExecutionPlan, nameof(toolWrapper.GetExecutionPlan)),
                 AIFunctionFactory.Create(schemaTools.GetObjectDefinition, nameof(schemaTools.GetObjectDefinition)),
                 AIFunctionFactory.Create(schemaTools.GetObjectDependencies, nameof(schemaTools.GetObjectDependencies)),
+                AIFunctionFactory.Create(schemaTools.GetObjectParameters, nameof(schemaTools.GetObjectParameters)),
+                AIFunctionFactory.Create(schemaTools.GetObjectColumns, nameof(schemaTools.GetObjectColumns)),
                 AIFunctionFactory.Create(schemaTools.GetTableIndexes, nameof(schemaTools.GetTableIndexes)),
                 AIFunctionFactory.Create(schemaTools.GetTableStorage, nameof(schemaTools.GetTableStorage)),
+                AIFunctionFactory.Create(schemaTools.GetTriggerInfo, nameof(schemaTools.GetTriggerInfo)),
+                AIFunctionFactory.Create(schemaTools.GetSynonymTarget, nameof(schemaTools.GetSynonymTarget)),
             };
 
             var combinedPrompt = HypothesisPromptBuilder.BuildCombinedPrompt(

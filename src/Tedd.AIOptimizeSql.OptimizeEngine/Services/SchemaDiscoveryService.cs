@@ -460,8 +460,9 @@ public sealed partial class SchemaDiscoveryService(ILogger<SchemaDiscoveryServic
         CancellationToken ct)
     {
         const string sql = """
-            SELECT SCHEMA_NAME(tr.schema_id) AS trigger_schema, tr.name AS trigger_name
+            SELECT SCHEMA_NAME(tro.schema_id) AS trigger_schema, tr.name AS trigger_name
             FROM sys.triggers tr
+            JOIN sys.objects tro ON tro.object_id = tr.object_id
             JOIN sys.objects o ON o.object_id = tr.parent_id
             WHERE SCHEMA_NAME(o.schema_id) = @schema AND o.name = @table
               AND tr.is_disabled = 0
