@@ -9,8 +9,12 @@
 @using Tedd.AIOptimizeSql.Database.DataAccess
 @using Tedd.AIOptimizeSql.Database.Models
 @using Tedd.AIOptimizeSql.Database.Models.Enums
+@using Microsoft.Extensions.Options
+@using Tedd.AIOptimizeSql.WebUI.Options
+@using Tedd.AIOptimizeSql.WebUI.Services
 @inject IDbContextFactory<AIOptimizeDbContext> DbContextFactory
 @inject IAIOptimizeDataAccess DataAccess
+@inject IOptions<UiPollingOptions> UiPolling
 @inject NavigationManager Navigation
 @inject ISnackbar Snackbar
 
@@ -221,6 +225,9 @@
     }
 
     private CancellationTokenSource? _loadCts;
+    private CancellationTokenSource _pageCts = new();
+    private bool _pollStarted;
+    private int? _wiredPollIterationId;
 
     private CancellationToken StartNewLoad()
     {
@@ -234,10 +241,23 @@
     {
         _loadCts?.Cancel();
         _loadCts?.Dispose();
+        _pageCts.Cancel();
+        _pageCts.Dispose();
     }
 
     protected override async Task OnParametersSetAsync()
     {
+        var nextIsNew = !IterationId.HasValue;
+        if (_pollStarted && (nextIsNew || IterationId != _wiredPollIterationId))
+        {
+            _pageCts.Cancel();
+            _pageCts.Dispose();
+            _pageCts = new CancellationTokenSource();
+            _pollStarted = false;
+            if (nextIsNew)
+                _wiredPollIterationId = null;
+        }
+
         var ct = StartNewLoad();
         _loading = true;
         _iteration = null;
@@ -294,6 +314,60 @@
                 _loading = false;
                 CaptureBaseline();
             }
+        }
+    }
+
+    protected override Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_loading || _isNew || !IterationId.HasValue)
+            return Task.CompletedTask;
+
+        if (_wiredPollIterationId == IterationId && _pollStarted)
+            return Task.CompletedTask;
+
+        if (_pollStarted)
+        {
+            _pageCts.Cancel();
+            _pageCts.Dispose();
+            _pageCts = new CancellationTokenSource();
+        }
+
+        _pollStarted = true;
+        _wiredPollIterationId = IterationId;
+        var sec = Math.Max(1, UiPolling.Value.ResearchFlowRefreshSeconds);
+        var iid = (ResearchIterationId)(object)IterationId.Value;
+        WatermarkBackgroundReload.Start(
+            TimeSpan.FromSeconds(sec),
+            _pageCts.Token,
+            () => DataAccess.GetResearchIterationModifiedAtAsync(iid, _pageCts.Token),
+            work => InvokeAsync(work),
+            RefreshIterationFromDatabaseAsync,
+            () => InvokeAsync(StateHasChanged));
+        return Task.CompletedTask;
+    }
+
+    private async Task RefreshIterationFromDatabaseAsync()
+    {
+        if (_iteration == null || !IterationId.HasValue || _isNew)
+            return;
+        var iid = (ResearchIterationId)(object)IterationId.Value;
+        var fresh = await DataAccess.GetResearchIterationForEditAsync(iid, _pageCts.Token);
+        if (fresh == null)
+            return;
+        if (ExperimentIdFromRoute.HasValue)
+        {
+            var expected = (ExperimentId)(object)ExperimentIdFromRoute.Value;
+            if (fresh.ExperimentId != expected)
+                return;
+        }
+
+        var userEditedForm = IsModified;
+        _iteration = fresh;
+        if (!userEditedForm)
+        {
+            _hints = fresh.Hints;
+            _maxHypotheses = fresh.MaxNumberOfHypotheses;
+            CaptureBaseline();
         }
     }
 
