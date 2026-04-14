@@ -36,57 +36,148 @@
     }
     else
     {
-        <MudText Typo="Typo.body2" Color="Color.Secondary" Class="mb-4">
-            Elapsed time uses SQL Server reported <strong>total server elapsed time (ms)</strong> from each hypothesis&rsquo;s &ldquo;after&rdquo; benchmark run.
-            The overview chart uses the <strong>best (minimum)</strong> such value per research iteration so you can compare runs.
-        </MudText>
+        <MudTabs @bind-ActivePanelIndex="_activeTabIndex" Rounded="true" Border="true" Class="mb-2">
+            <MudTabPanel Text="Results">
+                <MudStack Spacing="0" Class="pt-4">
+                    <MudCard Elevation="2" Class="rounded-lg mb-4">
+                        <MudCardHeader>
+                            <CardHeaderContent>
+                                <MudText Typo="Typo.h6">Experiment</MudText>
+                            </CardHeaderContent>
+                        </MudCardHeader>
+                        <MudCardContent>
+                            <MudStack Spacing="2">
+                                @if (!string.IsNullOrWhiteSpace(_experiment.Description))
+                                {
+                                    <div>
+                                        <MudText Typo="Typo.caption" Color="Color.Secondary">Description</MudText>
+                                        <MudText Typo="Typo.body2" Style="white-space: pre-wrap;">@_experiment.Description</MudText>
+                                    </div>
+                                }
+                                @if (!string.IsNullOrWhiteSpace(_experiment.Instructions))
+                                {
+                                    <div>
+                                        <MudText Typo="Typo.caption" Color="Color.Secondary">AI instructions</MudText>
+                                        <MudText Typo="Typo.body2" Style="white-space: pre-wrap;">@_experiment.Instructions</MudText>
+                                    </div>
+                                }
+                                <MudStack Row="true" Spacing="6" Wrap="Wrap.Wrap">
+                                    <div>
+                                        <MudText Typo="Typo.caption" Color="Color.Secondary">Database connection</MudText>
+                                        <MudText Typo="Typo.body2">@(_experiment.DatabaseConnection?.Name ?? "—")</MudText>
+                                    </div>
+                                    <div>
+                                        <MudText Typo="Typo.caption" Color="Color.Secondary">AI connection</MudText>
+                                        <MudText Typo="Typo.body2">
+                                            @if (_experiment.AIConnection is { } ai)
+                                            {
+                                                @($"{ai.Name} ({ai.Provider} / {ai.Model})")
+                                            }
+                                            else
+                                            {
+                                                <text>—</text>
+                                            }
+                                        </MudText>
+                                    </div>
+                                </MudStack>
+                                <MudStack Row="true" Spacing="4" Wrap="Wrap.Wrap">
+                                    <MudText Typo="Typo.caption">Created @_experiment.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</MudText>
+                                    <MudText Typo="Typo.caption">Modified @_experiment.ModifiedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</MudText>
+                                </MudStack>
+                            </MudStack>
+                        </MudCardContent>
+                    </MudCard>
 
-        @if (_iterationOverviewSeries.Count > 0)
-        {
-            <MudCard Elevation="3" Class="rounded-lg mb-6">
-                <MudCardHeader>
-                    <CardHeaderContent>
-                        <MudText Typo="Typo.h6">Research iterations &mdash; best server elapsed (after benchmark)</MudText>
-                        <MudText Typo="Typo.caption">Lower is faster. Each bar is the minimum &ldquo;after&rdquo; elapsed among hypotheses in that iteration. A height of zero means no completed &ldquo;after&rdquo; benchmark yet.</MudText>
-                    </CardHeaderContent>
-                </MudCardHeader>
-                <MudCardContent>
-                    <MudChart T="double" ChartType="ChartType.Bar"
-                              ChartSeries="@_iterationOverviewSeries"
-                              x-axis-labels="@_iterationOverviewLabels"
-                              Width="100%" Height="320px" />
-                </MudCardContent>
-            </MudCard>
-        }
-        else if (_orderedIterations.Count > 0)
-        {
-            <MudAlert Severity="Severity.Info" Class="mb-4" Dense="true">
-                Overview bars are zero until hypotheses finish with an &ldquo;after&rdquo; benchmark. Run research iterations to populate non-zero values.
-            </MudAlert>
-        }
+                    <MudText Typo="Typo.body2" Color="Color.Secondary" Class="mb-4">
+                        Elapsed time uses SQL Server reported <strong>total server elapsed time (ms)</strong> from each hypothesis&rsquo;s &ldquo;after&rdquo; benchmark run.
+                        The overview chart uses the <strong>best (minimum)</strong> such value per research iteration so you can compare runs.
+                    </MudText>
 
-        @foreach (var block in _perIterationBlocks)
-        {
-            <MudCard Elevation="3" Class="rounded-lg mb-4">
-                <MudCardHeader>
-                    <CardHeaderContent>
-                        <MudText Typo="Typo.h6">Iteration #@((int)(object)block.IterationId) &mdash; server elapsed per hypothesis</MudText>
-                        <MudText Typo="Typo.caption">Hypotheses in run order. Each bar uses the &ldquo;after&rdquo; benchmark; zero means no completed after run for that hypothesis yet.</MudText>
-                    </CardHeaderContent>
-                </MudCardHeader>
-                <MudCardContent>
-                    <MudChart T="double" ChartType="ChartType.Bar"
-                              ChartSeries="@block.Series"
-                              x-axis-labels="@block.Labels"
-                              Width="100%" Height="280px" />
-                </MudCardContent>
-            </MudCard>
-        }
+                    @if (_iterationOverviewSeries.Count > 0)
+                    {
+                        <MudCard Elevation="3" Class="rounded-lg mb-6">
+                            <MudCardHeader>
+                                <CardHeaderContent>
+                                    <MudText Typo="Typo.h6">Research iterations &mdash; best server elapsed (after benchmark)</MudText>
+                                    <MudText Typo="Typo.caption">Lower is faster. Each bar is the minimum &ldquo;after&rdquo; elapsed among hypotheses in that iteration. A height of zero means no completed &ldquo;after&rdquo; benchmark yet.</MudText>
+                                </CardHeaderContent>
+                            </MudCardHeader>
+                            <MudCardContent>
+                                <MudChart T="double" ChartType="ChartType.Bar"
+                                          ChartSeries="@_iterationOverviewSeries"
+                                          x-axis-labels="@_iterationOverviewLabels"
+                                          Width="100%" Height="320px" />
+                            </MudCardContent>
+                        </MudCard>
+                    }
+                    else if (_orderedIterations.Count > 0)
+                    {
+                        <MudAlert Severity="Severity.Info" Class="mb-4" Dense="true">
+                            Overview bars are zero until hypotheses finish with an &ldquo;after&rdquo; benchmark. Run research iterations to populate non-zero values.
+                        </MudAlert>
+                    }
 
-        @if (_orderedIterations.Count == 0)
-        {
-            <MudText Typo="Typo.body1">No research iterations yet.</MudText>
-        }
+                    @foreach (var block in _perIterationBlocks)
+                    {
+                        <MudCard Elevation="3" Class="rounded-lg mb-4">
+                            <MudCardHeader>
+                                <CardHeaderContent>
+                                    <MudText Typo="Typo.h6">Iteration #@((int)(object)block.IterationId) &mdash; server elapsed per hypothesis</MudText>
+                                    <MudText Typo="Typo.caption">Hypotheses in run order. Each bar uses the &ldquo;after&rdquo; benchmark; zero means no completed after run for that hypothesis yet.</MudText>
+                                </CardHeaderContent>
+                            </MudCardHeader>
+                            <MudCardContent>
+                                <MudChart T="double" ChartType="ChartType.Bar"
+                                          ChartSeries="@block.Series"
+                                          x-axis-labels="@block.Labels"
+                                          Width="100%" Height="280px" />
+                            </MudCardContent>
+                        </MudCard>
+                    }
+
+                    @if (_orderedIterations.Count == 0)
+                    {
+                        <MudText Typo="Typo.body1">No research iterations yet.</MudText>
+                    }
+                </MudStack>
+            </MudTabPanel>
+
+            <MudTabPanel Text="SQL">
+                <MudStack Spacing="0" Class="pt-4">
+                    <SqlMonacoField EditorId="@($"experiment-view-e{Id}-benchmark")"
+                                    Label="Benchmark SQL"
+                                    HelperText="SQL used to measure performance."
+                                    Value="@_experiment.BenchmarkSql"
+                                    ReadOnly="true" />
+
+                    <MudText Typo="Typo.subtitle2" Class="mb-2 mt-2">Hypothesis SQL</MudText>
+                    <SqlMonacoField EditorId="@($"experiment-view-e{Id}-hypothesis-pre")"
+                                    Label="Hypothesis Pre-Run SQL"
+                                    HelperText="Executed before each hypothesis"
+                                    Value="@_experiment.HypothesisPreRunSql"
+                                    ReadOnly="true" />
+
+                    <SqlMonacoField EditorId="@($"experiment-view-e{Id}-hypothesis-post")"
+                                    Label="Hypothesis Post-Run SQL"
+                                    HelperText="Executed after each hypothesis"
+                                    Value="@_experiment.HypothesisPostRunSql"
+                                    ReadOnly="true" />
+
+                    <MudText Typo="Typo.subtitle2" Class="mb-2 mt-2">Experiment SQL</MudText>
+                    <SqlMonacoField EditorId="@($"experiment-view-e{Id}-experiment-pre")"
+                                    Label="Pre-Run SQL"
+                                    HelperText="Executed before optimization starts"
+                                    Value="@_experiment.ExperimentPreRunSql"
+                                    ReadOnly="true" />
+
+                    <SqlMonacoField EditorId="@($"experiment-view-e{Id}-experiment-post")"
+                                    Label="Post-Run SQL"
+                                    HelperText="Executed after each run"
+                                    Value="@_experiment.ExperimentPostRunSql"
+                                    ReadOnly="true" />
+                </MudStack>
+            </MudTabPanel>
+        </MudTabs>
     }
 </MudContainer>
 
@@ -94,6 +185,8 @@
     [Parameter] public int Id { get; set; }
 
     private readonly CancellationTokenSource _pageCts = new();
+
+    private int _activeTabIndex;
 
     private Experiment? _experiment;
     private bool _loading = true;
@@ -136,6 +229,8 @@
         await using var db = await DbContextFactory.CreateDbContextAsync(ct);
         var experimentId = (ExperimentId)(object)Id;
         _experiment = await db.Experiments.AsNoTracking()
+            .Include(e => e.DatabaseConnection)
+            .Include(e => e.AIConnection)
             .FirstOrDefaultAsync(e => e.Id == experimentId, ct);
 
         if (_experiment == null)
