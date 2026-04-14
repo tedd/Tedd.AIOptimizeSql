@@ -56,5 +56,10 @@ public record Hypothesis
     /// </summary>
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
+    /// <summary>
+    /// Updated on any write to this hypothesis or its logs.
+    /// </summary>
+    public DateTime ModifiedAt { get; set; } = DateTime.UtcNow;
+
     public List<HypothesisLog> Logs { get; set; } = new();
 }

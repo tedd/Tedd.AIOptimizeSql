@@ -18,7 +18,8 @@ public class Program
             builder.Configuration.GetConnectionString("AIOptimizeDb"));
 
         builder.Services.AddDbContextFactory<AIOptimizeDbContext>(options =>
-            options.UseSqlServer(aiOptimizeCs));
+            options.UseSqlServer(aiOptimizeCs)
+                .AddInterceptors(ModifiedAtSaveChangesInterceptor.Instance));
 
         builder.Services.AddScoped<IAIOptimizeDataAccess, AIOptimizeDataAccess>();
 

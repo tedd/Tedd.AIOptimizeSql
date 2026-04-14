@@ -6,6 +6,7 @@ using MudBlazor.Services;
 using Tedd.AIOptimizeSql.Database;
 using Tedd.AIOptimizeSql.Database.DataAccess;
 using Tedd.AIOptimizeSql.WebUI.Components;
+using Tedd.AIOptimizeSql.WebUI.Options;
 using Tedd.AIOptimizeSql.WebUI.Services;
 
 namespace Tedd.AIOptimizeSql.WebUI;
@@ -23,12 +24,14 @@ public class Program
         // Blazor Interactive Server: UI uses IDbContextFactory<T> (short-lived or per-component contexts).
         // Do NOT also call AddDbContext — it registers conflicting scoped option services.
         builder.Services.AddDbContextFactory<AIOptimizeDbContext>(options =>
-            options.UseSqlServer(aiOptimizeCs));
+            options.UseSqlServer(aiOptimizeCs)
+                .AddInterceptors(ModifiedAtSaveChangesInterceptor.Instance));
 
         builder.Services.AddMudServices();
 
         builder.Services.AddScoped<IDatabaseReadinessService, DatabaseReadinessService>();
         builder.Services.AddScoped<IAIOptimizeDataAccess, AIOptimizeDataAccess>();
+        builder.Services.Configure<UiPollingOptions>(builder.Configuration.GetSection(UiPollingOptions.SectionName));
 
         builder.Services.AddRazorComponents()
             .AddInteractiveServerComponents();

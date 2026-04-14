@@ -2,6 +2,8 @@
 @implements IDisposable
 @rendermode InteractiveServer
 @inject IDbContextFactory<Tedd.AIOptimizeSql.Database.AIOptimizeDbContext> DbContextFactory
+@inject IAIOptimizeDataAccess DataAccess
+@inject IOptions<UiPollingOptions> UiPolling
 @inject NavigationManager Navigation
 @using Microsoft.EntityFrameworkCore
 @using Tedd.AIOptimizeSql.Database
@@ -106,6 +108,23 @@
     {
         _pageCts.Cancel();
         _pageCts.Dispose();
+    }
+
+    protected override Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            var sec = Math.Max(1, UiPolling.Value.ResearchFlowRefreshSeconds);
+            var experimentId = (ExperimentId)(object)Id;
+            WatermarkBackgroundReload.Start(
+                TimeSpan.FromSeconds(sec),
+                _pageCts.Token,
+                () => DataAccess.GetExperimentResultsWatermarkAsync(experimentId, _pageCts.Token),
+                work => InvokeAsync(work),
+                () => PageLoadCancellation.RunPageLoadAsync(LoadAsync, _pageCts.Token));
+        }
+
+        return Task.CompletedTask;
     }
 
     protected override Task OnInitializedAsync() =>

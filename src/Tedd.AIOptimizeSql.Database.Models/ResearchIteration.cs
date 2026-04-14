@@ -64,4 +64,9 @@ public record ResearchIteration
     /// Created UTC
     /// </summary>
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+
+    /// <summary>
+    /// Updated on any write affecting this iteration or its hypotheses (for UI refresh).
+    /// </summary>
+    public DateTime ModifiedAt { get; set; } = DateTime.UtcNow;
 }

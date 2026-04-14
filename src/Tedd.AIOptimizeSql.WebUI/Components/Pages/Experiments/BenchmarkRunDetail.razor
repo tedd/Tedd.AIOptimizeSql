@@ -2,8 +2,12 @@
 @implements IDisposable
 @rendermode InteractiveServer
 @inject IDbContextFactory<Tedd.AIOptimizeSql.Database.AIOptimizeDbContext> DbContextFactory
+@inject IAIOptimizeDataAccess DataAccess
+@inject IOptions<UiPollingOptions> UiPolling
 @inject NavigationManager Navigation
 @using Microsoft.EntityFrameworkCore
+@using Tedd.AIOptimizeSql.Database
+@using Tedd.AIOptimizeSql.Database.Models
 
 <PageTitle>Benchmark run</PageTitle>
 
@@ -113,6 +117,32 @@
     {
         _pageCts.Cancel();
         _pageCts.Dispose();
+    }
+
+    protected override Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            var sec = Math.Max(1, UiPolling.Value.ResearchFlowRefreshSeconds);
+            var benchId = (BenchmarkRunId)(object)BenchmarkRunId;
+            WatermarkBackgroundReload.Start(
+                TimeSpan.FromSeconds(sec),
+                _pageCts.Token,
+                () => DataAccess.GetBenchmarkRunModifiedAtAsync(benchId, _pageCts.Token),
+                work => InvokeAsync(work),
+                ReloadBenchmarkAsync);
+        }
+
+        return Task.CompletedTask;
+    }
+
+    private async Task ReloadBenchmarkAsync()
+    {
+        await using var db = await DbContextFactory.CreateDbContextAsync(_pageCts.Token);
+        var id = (BenchmarkRunId)(object)BenchmarkRunId;
+        _run = await db.BenchmarkRuns.AsNoTracking().FirstOrDefaultAsync(b => b.Id == id, _pageCts.Token);
+        if (_run != null)
+            BuildIoRows();
     }
 
     protected override Task OnInitializedAsync() =>

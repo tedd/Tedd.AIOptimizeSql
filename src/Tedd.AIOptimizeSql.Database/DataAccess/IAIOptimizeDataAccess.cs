@@ -42,4 +42,29 @@ public interface IAIOptimizeDataAccess
     Task DeleteResearchIterationAsync(ResearchIterationId id, CancellationToken cancellationToken = default);
 
     Task ClearAiConnectionReferencesAsync(AIConnectionId id, CancellationToken cancellationToken = default);
+
+    Task<DateTime?> GetMaxAiConnectionModifiedAtAsync(CancellationToken cancellationToken = default);
+
+    Task<DateTime?> GetMaxDatabaseConnectionModifiedAtAsync(CancellationToken cancellationToken = default);
+
+    Task<DateTime?> GetMaxExperimentModifiedAtAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Max of experiment <see cref="Experiment.ModifiedAt"/> and any research iteration under it (for experiment results view).
+    /// </summary>
+    Task<DateTime?> GetExperimentResultsWatermarkAsync(ExperimentId experimentId, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Max <see cref="ResearchIteration.ModifiedAt"/> for all iterations, or for one experiment when <paramref name="experimentId"/> is set.
+    /// </summary>
+    Task<DateTime?> GetResearchIterationsScopeWatermarkAsync(ExperimentId? experimentId, CancellationToken cancellationToken = default);
+
+    Task<DateTime?> GetResearchIterationModifiedAtAsync(ResearchIterationId id, CancellationToken cancellationToken = default);
+
+    Task<DateTime?> GetBenchmarkRunModifiedAtAsync(BenchmarkRunId id, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Latest change relevant to hypothesis detail (hypothesis row or any log line).
+    /// </summary>
+    Task<DateTime?> GetHypothesisDetailWatermarkAsync(HypothesisId id, CancellationToken cancellationToken = default);
 }

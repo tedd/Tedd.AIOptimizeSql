@@ -96,7 +96,8 @@ public sealed class ResearchIterationProcessingEngine(
                 .ExecuteUpdateAsync(s => s
                     .SetProperty(b => b.State, ResearchIterationState.Stopped)
                     .SetProperty(b => b.EndedAt, ended)
-                    .SetProperty(b => b.LastMessage, message));
+                    .SetProperty(b => b.LastMessage, message)
+                    .SetProperty(b => b.ModifiedAt, ended));
         }
         catch (Exception ex)
         {
@@ -116,7 +117,8 @@ public sealed class ResearchIterationProcessingEngine(
                 .ExecuteUpdateAsync(s => s
                     .SetProperty(b => b.State, ResearchIterationState.Stopped)
                     .SetProperty(b => b.EndedAt, ended)
-                    .SetProperty(b => b.LastMessage, message));
+                    .SetProperty(b => b.LastMessage, message)
+                    .SetProperty(b => b.ModifiedAt, ended));
         }
         catch (Exception ex)
         {

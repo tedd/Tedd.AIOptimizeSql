@@ -3,6 +3,8 @@
 @implements IDisposable
 @rendermode InteractiveServer
 @inject IDbContextFactory<Tedd.AIOptimizeSql.Database.AIOptimizeDbContext> DbContextFactory
+@inject IAIOptimizeDataAccess DataAccess
+@inject IOptions<UiPollingOptions> UiPolling
 @inject NavigationManager Navigation
 @inject ISnackbar Snackbar
 @using Microsoft.EntityFrameworkCore
@@ -343,6 +345,7 @@
     private string _baselineDescription = "";
     private string _baselineBenchmarkSql = "";
     private HypothesisId? _baselineBuildsOn;
+    private bool _pollStarted;
 
     private bool IsModified =>
         _model != null && !_loading && (_isNew || _editMode) &&
@@ -370,6 +373,44 @@
         _pageCts.Dispose();
         _db?.Dispose();
         _db = null;
+    }
+
+    protected override Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_pollStarted || _loading || !HypothesisId.HasValue || _isNew)
+            return Task.CompletedTask;
+        _pollStarted = true;
+        var sec = Math.Max(1, UiPolling.Value.ResearchFlowRefreshSeconds);
+        var hId = (HypothesisId)(object)HypothesisId!.Value;
+        WatermarkBackgroundReload.Start(
+            TimeSpan.FromSeconds(sec),
+            _pageCts.Token,
+            () => DataAccess.GetHypothesisDetailWatermarkAsync(hId, _pageCts.Token),
+            work => InvokeAsync(work),
+            async () =>
+            {
+                if (_isNew || _editMode || _db is null)
+                    return;
+                await RefreshViewFromDatabaseAsync();
+            });
+        return Task.CompletedTask;
+    }
+
+    private async Task RefreshViewFromDatabaseAsync()
+    {
+        if (_db is null || !HypothesisId.HasValue)
+            return;
+        var hId = (HypothesisId)(object)HypothesisId.Value;
+        _model = await _db.Hypotheses.AsNoTracking()
+            .Include(h => h.BenchmarkRunBefore)
+            .Include(h => h.BenchmarkRunAfter)
+            .Include(h => h.Logs)
+            .FirstOrDefaultAsync(h => h.Id == hId, _pageCts.Token);
+        if (_model == null)
+            return;
+        _hypothesisLogs = _model.Logs.OrderBy(l => l.CreatedAt).ThenBy(l => l.Id).ToList();
+        _selectedBuildsOn = _model.BuildsOnHypothesisId;
+        ComputeBenchDeltas();
     }
 
     protected override Task OnInitializedAsync() =>
@@ -463,11 +504,15 @@
 
         _model.BuildsOnHypothesisId = _selectedBuildsOn;
 
+        var now = DateTime.UtcNow;
+        var iterationId = (ResearchIterationId)(object)IterationId;
         if (_experiment != null && (_isNew || _editMode))
         {
             await _db.Experiments
                 .Where(e => e.Id == _experiment.Id)
-                .ExecuteUpdateAsync(s => s.SetProperty(e => e.BenchmarkSql, _benchmarkSql));
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(e => e.BenchmarkSql, _benchmarkSql)
+                    .SetProperty(e => e.ModifiedAt, now));
         }
 
         if (_isNew)
@@ -476,18 +521,22 @@
             _db.Hypotheses.Add(_model);
             await _db.SaveChangesAsync();
             _db.ChangeTracker.Clear();
+            await ModifiedAtStamping.TouchResearchIterationAsync(_db, iterationId);
         }
         else
         {
             var hid = _model.Id;
             var n = await _db.Hypotheses.Where(h => h.Id == hid).ExecuteUpdateAsync(s => s
                 .SetProperty(h => h.Description, _model.Description)
-                .SetProperty(h => h.BuildsOnHypothesisId, _selectedBuildsOn));
+                .SetProperty(h => h.BuildsOnHypothesisId, _selectedBuildsOn)
+                .SetProperty(h => h.ModifiedAt, now));
             if (n != 1)
             {
                 Snackbar.Add("Hypothesis not found or was deleted.", Severity.Error);
                 return false;
             }
+
+            await ModifiedAtStamping.TouchResearchIterationAsync(_db, iterationId);
         }
         Snackbar.Add(_isNew ? "Hypothesis created" : "Hypothesis saved", Severity.Success);
         if (!_isNew)

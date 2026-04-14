@@ -44,4 +44,9 @@ public record BenchmarkRun
     /// Created UTC
     /// </summary>
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+
+    /// <summary>
+    /// Updated when the benchmark row is written or changed.
+    /// </summary>
+    public DateTime ModifiedAt { get; set; } = DateTime.UtcNow;
 }

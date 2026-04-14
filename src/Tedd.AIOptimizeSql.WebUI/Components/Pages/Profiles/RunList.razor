@@ -2,11 +2,14 @@
 @implements IDisposable
 @rendermode InteractiveServer
 @inject IDbContextFactory<Tedd.AIOptimizeSql.Database.AIOptimizeDbContext> DbContextFactory
+@inject IAIOptimizeDataAccess DataAccess
+@inject IOptions<UiPollingOptions> UiPolling
 @inject NavigationManager Navigation
 @inject IDialogService DialogService
 @inject ISnackbar Snackbar
 @using Microsoft.EntityFrameworkCore
 @using Tedd.AIOptimizeSql.Database
+@using Tedd.AIOptimizeSql.Database.Models
 <PageTitle>Research iterations</PageTitle>
 
 <MudContainer MaxWidth="MaxWidth.ExtraLarge" Class="mt-4">
@@ -97,6 +100,29 @@
     {
         _pageCts.Cancel();
         _pageCts.Dispose();
+    }
+
+    protected override Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            var sec = Math.Max(1, UiPolling.Value.ResearchFlowRefreshSeconds);
+            var experimentId = (ExperimentId)(object)ExperimentId;
+            WatermarkBackgroundReload.Start(
+                TimeSpan.FromSeconds(sec),
+                _pageCts.Token,
+                () => DataAccess.GetResearchIterationsScopeWatermarkAsync(experimentId, _pageCts.Token),
+                work => InvokeAsync(work),
+                async () =>
+                {
+                    await using var db = await DbContextFactory.CreateDbContextAsync(_pageCts.Token);
+                    await LoadChartData(db, _pageCts.Token);
+                    if (_table is not null)
+                        await _table.ReloadServerData();
+                });
+        }
+
+        return Task.CompletedTask;
     }
 
     protected override Task OnInitializedAsync() =>

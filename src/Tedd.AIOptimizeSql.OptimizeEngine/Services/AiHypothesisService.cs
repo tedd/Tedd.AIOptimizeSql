@@ -340,15 +340,18 @@ public sealed class AiHypothesisService(
         {
             using var scope = scopeFactory.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<AIOptimizeDbContext>();
+            var logNow = DateTime.UtcNow;
             db.HypothesisLogs.Add(new HypothesisLog
             {
                 HypothesisId = hypothesisId,
                 Message = TruncateForLog(message),
                 Source = source,
-                CreatedAt = DateTime.UtcNow,
+                CreatedAt = logNow,
+                ModifiedAt = logNow,
             });
             await db.SaveChangesAsync(cancellationToken);
             db.ChangeTracker.Clear();
+            await ModifiedAtStamping.StampHypothesisAndParentIterationAsync(db, hypothesisId, cancellationToken);
         }
         catch (Exception ex)
         {
@@ -393,11 +396,14 @@ public sealed class AiHypothesisService(
         using (var scope = scopeFactory.CreateScope())
         {
             var db = scope.ServiceProvider.GetRequiredService<AIOptimizeDbContext>();
+            var now = DateTime.UtcNow;
             await db.Hypotheses
                 .Where(h => h.Id == placeholder.Id)
                 .ExecuteUpdateAsync(s => s
                     .SetProperty(h => h.BuildsOnHypothesisId, bestHypothesis.Id)
-                    .SetProperty(h => h.Description, "Combined optimization (generating...)"), ct);
+                    .SetProperty(h => h.Description, "Combined optimization (generating...)")
+                    .SetProperty(h => h.ModifiedAt, now), ct);
+            await ModifiedAtStamping.TouchResearchIterationForHypothesisAsync(db, placeholder.Id, ct);
         }
 
         try
@@ -521,12 +527,14 @@ public sealed class AiHypothesisService(
 
         using var scope = scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AIOptimizeDbContext>();
+        var now = DateTime.UtcNow;
         await db.ResearchIterations
             .Where(r => r.Id == iteration.Id)
             .ExecuteUpdateAsync(s => s
                 .SetProperty(r => r.SchemaDiscoveryMarkdown, discoveryResult.MarkdownSummary)
                 .SetProperty(r => r.SchemaDiscoveryResultJson, resultJson)
-                .SetProperty(r => r.RegisteredBaseTables, baseTables), ct);
+                .SetProperty(r => r.RegisteredBaseTables, baseTables)
+                .SetProperty(r => r.ModifiedAt, now), ct);
 
         // Update in-memory object so the rest of the loop sees the data
         iteration.SchemaDiscoveryMarkdown = discoveryResult.MarkdownSummary;
@@ -598,6 +606,7 @@ public sealed class AiHypothesisService(
         db.Hypotheses.Add(hypothesis);
         await db.SaveChangesAsync(ct);
         db.ChangeTracker.Clear();
+        await ModifiedAtStamping.TouchResearchIterationAsync(db, iterationId, ct);
         return hypothesis;
     }
 
@@ -605,9 +614,13 @@ public sealed class AiHypothesisService(
     {
         using var scope = scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AIOptimizeDbContext>();
+        var now = DateTime.UtcNow;
         await db.Hypotheses
             .Where(x => x.Id == id)
-            .ExecuteUpdateAsync(s => s.SetProperty(x => x.Status, state), ct);
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(x => x.Status, state)
+                .SetProperty(x => x.ModifiedAt, now), ct);
+        await ModifiedAtStamping.TouchResearchIterationForHypothesisAsync(db, id, ct);
     }
 
     private async Task FinalizeHypothesisAsync(
@@ -617,6 +630,7 @@ public sealed class AiHypothesisService(
     {
         using var scope = scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AIOptimizeDbContext>();
+        var now = DateTime.UtcNow;
         await db.Hypotheses
             .Where(x => x.Id == id)
             .ExecuteUpdateAsync(s => s
@@ -624,7 +638,9 @@ public sealed class AiHypothesisService(
                 .SetProperty(x => x.Description, description)
                 .SetProperty(x => x.OptimizeSql, optimizeSql)
                 .SetProperty(x => x.RevertSql, revertSql)
-                .SetProperty(x => x.TimeUsedMs, timeUsedMs), ct);
+                .SetProperty(x => x.TimeUsedMs, timeUsedMs)
+                .SetProperty(x => x.ModifiedAt, now), ct);
+        await ModifiedAtStamping.TouchResearchIterationForHypothesisAsync(db, id, ct);
     }
 
     private async Task FailHypothesisAsync(HypothesisId id, string errorMessage, CancellationToken ct)
@@ -633,11 +649,14 @@ public sealed class AiHypothesisService(
         {
             using var scope = scopeFactory.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<AIOptimizeDbContext>();
+            var now = DateTime.UtcNow;
             await db.Hypotheses
                 .Where(x => x.Id == id)
                 .ExecuteUpdateAsync(s => s
                     .SetProperty(x => x.Status, HypothesisState.Failed)
-                    .SetProperty(x => x.ErrorMessage, errorMessage), ct);
+                    .SetProperty(x => x.ErrorMessage, errorMessage)
+                    .SetProperty(x => x.ModifiedAt, now), ct);
+            await ModifiedAtStamping.TouchResearchIterationForHypothesisAsync(db, id, ct);
         }
         catch (Exception ex)
         {
@@ -651,9 +670,12 @@ public sealed class AiHypothesisService(
         {
             using var scope = scopeFactory.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<AIOptimizeDbContext>();
+            var now = DateTime.UtcNow;
             await db.ResearchIterations
                 .Where(b => b.Id == iterationId)
-                .ExecuteUpdateAsync(s => s.SetProperty(b => b.LastMessage, message), ct);
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(b => b.LastMessage, message)
+                    .SetProperty(b => b.ModifiedAt, now), ct);
         }
         catch (Exception ex)
         {

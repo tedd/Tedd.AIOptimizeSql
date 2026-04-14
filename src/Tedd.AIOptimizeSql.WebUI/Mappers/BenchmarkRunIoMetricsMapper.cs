@@ -13,5 +13,6 @@ public static partial class BenchmarkRunIoMetricsMapper
     [MapperIgnoreSource(nameof(BenchmarkRun.ActualPlanXml))]
     [MapperIgnoreSource(nameof(BenchmarkRun.Messages))]
     [MapperIgnoreSource(nameof(BenchmarkRun.CreatedAt))]
+    [MapperIgnoreSource(nameof(BenchmarkRun.ModifiedAt))]
     public static partial BenchmarkRunIoMetricsSource ToMetricsSource(BenchmarkRun run);
 }

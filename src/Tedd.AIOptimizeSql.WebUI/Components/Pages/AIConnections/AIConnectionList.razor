@@ -2,7 +2,8 @@
 @implements IDisposable
 @rendermode InteractiveServer
 @inject IDbContextFactory<Tedd.AIOptimizeSql.Database.AIOptimizeDbContext> DbContextFactory
-@inject Tedd.AIOptimizeSql.Database.DataAccess.IAIOptimizeDataAccess DataAccess
+@inject IAIOptimizeDataAccess DataAccess
+@inject IOptions<UiPollingOptions> UiPolling
 @inject NavigationManager Navigation
 @inject IDialogService DialogService
 @inject ISnackbar Snackbar
@@ -75,6 +76,26 @@
     {
         _pageCts.Cancel();
         _pageCts.Dispose();
+    }
+
+    protected override Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            var sec = Math.Max(1, UiPolling.Value.EntityListRefreshSeconds);
+            WatermarkBackgroundReload.Start(
+                TimeSpan.FromSeconds(sec),
+                _pageCts.Token,
+                () => DataAccess.GetMaxAiConnectionModifiedAtAsync(_pageCts.Token),
+                work => InvokeAsync(work),
+                async () =>
+                {
+                    if (_table is not null)
+                        await _table.ReloadServerData();
+                });
+        }
+
+        return Task.CompletedTask;
     }
 
     private Task<TableData<AIConnection>> LoadServerData(TableState state, CancellationToken ct) =>

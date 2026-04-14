@@ -106,6 +106,7 @@ public sealed class AIOptimizeDataAccess(IDbContextFactory<AIOptimizeDbContext> 
         CancellationToken cancellationToken = default)
     {
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
+        var now = DateTime.UtcNow;
         if (db.Database.IsRelational())
         {
             var n = await db.ResearchIterations
@@ -113,7 +114,8 @@ public sealed class AIOptimizeDataAccess(IDbContextFactory<AIOptimizeDbContext> 
                 .ExecuteUpdateAsync(
                     s => s
                         .SetProperty(b => b.Hints, hints)
-                        .SetProperty(b => b.MaxNumberOfHypotheses, maxNumberOfHypotheses),
+                        .SetProperty(b => b.MaxNumberOfHypotheses, maxNumberOfHypotheses)
+                        .SetProperty(b => b.ModifiedAt, now),
                     cancellationToken);
             if (n != 1)
                 throw new InvalidOperationException($"Research iteration {id} was not found.");
@@ -125,6 +127,7 @@ public sealed class AIOptimizeDataAccess(IDbContextFactory<AIOptimizeDbContext> 
             ?? throw new InvalidOperationException($"Research iteration {id} was not found.");
         iteration.Hints = hints;
         iteration.MaxNumberOfHypotheses = maxNumberOfHypotheses;
+        iteration.ModifiedAt = now;
         await db.SaveChangesAsync(cancellationToken);
     }
 
@@ -137,19 +140,22 @@ public sealed class AIOptimizeDataAccess(IDbContextFactory<AIOptimizeDbContext> 
         if (!await db.ResearchIterations.AnyAsync(b => b.Id == id, cancellationToken))
             throw new InvalidOperationException($"Research iteration {id} was not found.");
 
+        var now = DateTime.UtcNow;
         await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
         try
         {
             await DeleteRunQueueRowsForIterationAsync(db, id, cancellationToken);
 
             if (state == ResearchIterationState.Queued)
-                db.RunQueue.Add(new RunQueue { ResearchIterationId = id });
+                db.RunQueue.Add(new RunQueue { ResearchIterationId = id, CreatedAt = now, ModifiedAt = now });
 
             if (db.Database.IsRelational())
             {
                 var n = await db.ResearchIterations
                     .Where(b => b.Id == id)
-                    .ExecuteUpdateAsync(s => s.SetProperty(b => b.State, state), cancellationToken);
+                    .ExecuteUpdateAsync(s => s
+                        .SetProperty(b => b.State, state)
+                        .SetProperty(b => b.ModifiedAt, now), cancellationToken);
                 if (n != 1)
                     throw new InvalidOperationException($"Research iteration {id} was not found.");
 
@@ -161,6 +167,7 @@ public sealed class AIOptimizeDataAccess(IDbContextFactory<AIOptimizeDbContext> 
                 var iteration = await db.ResearchIterations.AsTracking()
                     .FirstAsync(b => b.Id == id, cancellationToken);
                 iteration.State = state;
+                iteration.ModifiedAt = now;
                 await db.SaveChangesAsync(cancellationToken);
             }
 
@@ -191,6 +198,7 @@ public sealed class AIOptimizeDataAccess(IDbContextFactory<AIOptimizeDbContext> 
             AiProvider? aiProv = experiment.AIConnection?.Provider;
             string? aiModel = experiment.AIConnection?.Model;
 
+            var now = DateTime.UtcNow;
             await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
             try
             {
@@ -204,9 +212,10 @@ public sealed class AIOptimizeDataAccess(IDbContextFactory<AIOptimizeDbContext> 
                             .SetProperty(b => b.AiProviderUsed, aiProv)
                             .SetProperty(b => b.AiModelUsed, aiModel)
                             .SetProperty(b => b.State, ResearchIterationState.Running)
-                            .SetProperty(b => b.StartedAt, DateTime.UtcNow)
+                            .SetProperty(b => b.StartedAt, now)
                             .SetProperty(b => b.EndedAt, (DateTime?)null)
-                            .SetProperty(b => b.LastMessage, "Run started"),
+                            .SetProperty(b => b.LastMessage, "Run started")
+                            .SetProperty(b => b.ModifiedAt, now),
                         cancellationToken);
 
                 await tx.CommitAsync(cancellationToken);
@@ -283,7 +292,9 @@ public sealed class AIOptimizeDataAccess(IDbContextFactory<AIOptimizeDbContext> 
             await db.ResearchIterations
                 .Where(b => b.AIConnectionId == id)
                 .ExecuteUpdateAsync(
-                    s => s.SetProperty(b => b.AIConnectionId, (AIConnectionId?)null),
+                    s => s
+                        .SetProperty(b => b.AIConnectionId, (AIConnectionId?)null)
+                        .SetProperty(b => b.ModifiedAt, now),
                     cancellationToken);
             return;
         }
@@ -297,7 +308,10 @@ public sealed class AIOptimizeDataAccess(IDbContextFactory<AIOptimizeDbContext> 
 
         var iterations = await db.ResearchIterations.AsTracking().Where(b => b.AIConnectionId == id).ToListAsync(cancellationToken);
         foreach (var b in iterations)
+        {
             b.AIConnectionId = null;
+            b.ModifiedAt = now;
+        }
 
         await db.SaveChangesAsync(cancellationToken);
     }
@@ -342,5 +356,102 @@ public sealed class AIOptimizeDataAccess(IDbContextFactory<AIOptimizeDbContext> 
 
         if (ids.Count > 0)
             await db.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task<DateTime?> GetMaxAiConnectionModifiedAtAsync(CancellationToken cancellationToken = default)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
+        if (!await db.AIConnections.AnyAsync(cancellationToken))
+            return null;
+        return await db.AIConnections.MaxAsync(a => a.ModifiedAt, cancellationToken);
+    }
+
+    public async Task<DateTime?> GetMaxDatabaseConnectionModifiedAtAsync(CancellationToken cancellationToken = default)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
+        if (!await db.DatabaseConnections.AnyAsync(cancellationToken))
+            return null;
+        return await db.DatabaseConnections.MaxAsync(c => c.ModifiedAt, cancellationToken);
+    }
+
+    public async Task<DateTime?> GetMaxExperimentModifiedAtAsync(CancellationToken cancellationToken = default)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
+        if (!await db.Experiments.AnyAsync(cancellationToken))
+            return null;
+        return await db.Experiments.MaxAsync(e => e.ModifiedAt, cancellationToken);
+    }
+
+    public async Task<DateTime?> GetExperimentResultsWatermarkAsync(
+        ExperimentId experimentId,
+        CancellationToken cancellationToken = default)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
+        var expMod = await db.Experiments.AsNoTracking()
+            .Where(e => e.Id == experimentId)
+            .Select(e => (DateTime?)e.ModifiedAt)
+            .FirstOrDefaultAsync(cancellationToken);
+        if (expMod is null)
+            return null;
+
+        if (!await db.ResearchIterations.AnyAsync(r => r.ExperimentId == experimentId, cancellationToken))
+            return expMod;
+
+        var iterMax = await db.ResearchIterations
+            .Where(r => r.ExperimentId == experimentId)
+            .MaxAsync(r => r.ModifiedAt, cancellationToken);
+        return expMod.Value >= iterMax ? expMod.Value : iterMax;
+    }
+
+    public async Task<DateTime?> GetResearchIterationsScopeWatermarkAsync(
+        ExperimentId? experimentId,
+        CancellationToken cancellationToken = default)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
+        var q = db.ResearchIterations.AsNoTracking();
+        if (experimentId.HasValue)
+            q = q.Where(r => r.ExperimentId == experimentId.Value);
+        if (!await q.AnyAsync(cancellationToken))
+            return null;
+        return await q.MaxAsync(r => r.ModifiedAt, cancellationToken);
+    }
+
+    public async Task<DateTime?> GetResearchIterationModifiedAtAsync(
+        ResearchIterationId id,
+        CancellationToken cancellationToken = default)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
+        return await db.ResearchIterations.AsNoTracking()
+            .Where(r => r.Id == id)
+            .Select(r => (DateTime?)r.ModifiedAt)
+            .FirstOrDefaultAsync(cancellationToken);
+    }
+
+    public async Task<DateTime?> GetBenchmarkRunModifiedAtAsync(BenchmarkRunId id, CancellationToken cancellationToken = default)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
+        return await db.BenchmarkRuns.AsNoTracking()
+            .Where(b => b.Id == id)
+            .Select(b => (DateTime?)b.ModifiedAt)
+            .FirstOrDefaultAsync(cancellationToken);
+    }
+
+    public async Task<DateTime?> GetHypothesisDetailWatermarkAsync(HypothesisId id, CancellationToken cancellationToken = default)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
+        var hMod = await db.Hypotheses.AsNoTracking()
+            .Where(h => h.Id == id)
+            .Select(h => (DateTime?)h.ModifiedAt)
+            .FirstOrDefaultAsync(cancellationToken);
+        if (hMod is null)
+            return null;
+
+        if (!await db.HypothesisLogs.AnyAsync(l => l.HypothesisId == id, cancellationToken))
+            return hMod;
+
+        var logMax = await db.HypothesisLogs
+            .Where(l => l.HypothesisId == id)
+            .MaxAsync(l => l.ModifiedAt, cancellationToken);
+        return hMod.Value >= logMax ? hMod.Value : logMax;
     }
 }

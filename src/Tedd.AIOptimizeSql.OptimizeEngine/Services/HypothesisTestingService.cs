@@ -96,9 +96,12 @@ public sealed class HypothesisTestingService(
         db.ChangeTracker.Clear();
 
         // Link to iteration
+        var linkNow = DateTime.UtcNow;
         await db.ResearchIterations
             .Where(r => r.Id == iteration.Id)
-            .ExecuteUpdateAsync(s => s.SetProperty(r => r.BaselineBenchmarkRunId, aggregated.Id), ct);
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(r => r.BaselineBenchmarkRunId, aggregated.Id)
+                .SetProperty(r => r.ModifiedAt, linkNow), ct);
 
         _logger.LogInformation("Baseline benchmark complete: CPU={Cpu}ms, Elapsed={Elapsed}ms over {Iters} iterations",
             aggregated.TotalServerCpuTimeMs, aggregated.TotalServerElapsedTimeMs, settings.Value.BenchmarkIterations);
@@ -255,10 +258,13 @@ public sealed class HypothesisTestingService(
             await db.SaveChangesAsync(ct);
             db.ChangeTracker.Clear();
 
+            var afterNow = DateTime.UtcNow;
             await db.Hypotheses
                 .Where(h => h.Id == hypothesisId)
                 .ExecuteUpdateAsync(s => s
-                    .SetProperty(h => h.BenchmarkRunIdAfter, afterBenchmark.Id), ct);
+                    .SetProperty(h => h.BenchmarkRunIdAfter, afterBenchmark.Id)
+                    .SetProperty(h => h.ModifiedAt, afterNow), ct);
+            await ModifiedAtStamping.TouchResearchIterationForHypothesisAsync(db, hypothesisId, ct);
         }
 
         // 6. REVERT with retry loop
@@ -491,9 +497,13 @@ public sealed class HypothesisTestingService(
     {
         using var scope = scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AIOptimizeDbContext>();
+        var now = DateTime.UtcNow;
         await db.Hypotheses
             .Where(h => h.Id == id)
-            .ExecuteUpdateAsync(s => s.SetProperty(h => h.Status, state), ct);
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(h => h.Status, state)
+                .SetProperty(h => h.ModifiedAt, now), ct);
+        await ModifiedAtStamping.TouchResearchIterationForHypothesisAsync(db, id, ct);
     }
 
     private async Task UpdateHypothesisSqlAsync(
@@ -501,12 +511,15 @@ public sealed class HypothesisTestingService(
     {
         using var scope = scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AIOptimizeDbContext>();
+        var now = DateTime.UtcNow;
         await db.Hypotheses
             .Where(h => h.Id == id)
             .ExecuteUpdateAsync(s => s
                 .SetProperty(h => h.OptimizeSql, optimizeSql)
                 .SetProperty(h => h.RevertSql, revertSql)
-                .SetProperty(h => h.OptimizeRetryCount, optimizeRetries), ct);
+                .SetProperty(h => h.OptimizeRetryCount, optimizeRetries)
+                .SetProperty(h => h.ModifiedAt, now), ct);
+        await ModifiedAtStamping.TouchResearchIterationForHypothesisAsync(db, id, ct);
     }
 
     private async Task CompleteHypothesisAsync(
@@ -515,6 +528,7 @@ public sealed class HypothesisTestingService(
     {
         using var scope = scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AIOptimizeDbContext>();
+        var now = DateTime.UtcNow;
         await db.Hypotheses
             .Where(h => h.Id == id)
             .ExecuteUpdateAsync(s => s
@@ -523,7 +537,9 @@ public sealed class HypothesisTestingService(
                 .SetProperty(h => h.RevertSql, revertSql)
                 .SetProperty(h => h.OptimizeRetryCount, optimizeRetries)
                 .SetProperty(h => h.RevertRetryCount, revertRetries)
-                .SetProperty(h => h.ImpovementPercentage, improvementPct), ct);
+                .SetProperty(h => h.ImpovementPercentage, improvementPct)
+                .SetProperty(h => h.ModifiedAt, now), ct);
+        await ModifiedAtStamping.TouchResearchIterationForHypothesisAsync(db, id, ct);
     }
 
     private async Task UpdateHypothesisFailedAsync(
@@ -533,6 +549,7 @@ public sealed class HypothesisTestingService(
     {
         using var scope = scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AIOptimizeDbContext>();
+        var now = DateTime.UtcNow;
         await db.Hypotheses
             .Where(h => h.Id == id)
             .ExecuteUpdateAsync(s => s
@@ -541,7 +558,9 @@ public sealed class HypothesisTestingService(
                 .SetProperty(h => h.OptimizeSql, optimizeSql)
                 .SetProperty(h => h.RevertSql, revertSql)
                 .SetProperty(h => h.OptimizeRetryCount, optimizeRetries)
-                .SetProperty(h => h.RevertRetryCount, revertRetries), ct);
+                .SetProperty(h => h.RevertRetryCount, revertRetries)
+                .SetProperty(h => h.ModifiedAt, now), ct);
+        await ModifiedAtStamping.TouchResearchIterationForHypothesisAsync(db, id, ct);
     }
 
     #endregion

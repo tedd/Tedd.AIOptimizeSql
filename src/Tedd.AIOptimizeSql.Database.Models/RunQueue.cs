@@ -15,5 +15,10 @@ public record RunQueue
     /// Created UTC
     /// </summary>
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+
+    /// <summary>
+    /// Updated when the queue row is created or changed.
+    /// </summary>
+    public DateTime ModifiedAt { get; set; } = DateTime.UtcNow;
 }
 

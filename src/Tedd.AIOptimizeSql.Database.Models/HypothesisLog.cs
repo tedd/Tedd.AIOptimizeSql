@@ -31,4 +31,9 @@ public record HypothesisLog
     /// Created UTC
     /// </summary>
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+
+    /// <summary>
+    /// Set when the log row is created (append-only).
+    /// </summary>
+    public DateTime ModifiedAt { get; set; } = DateTime.UtcNow;
 }
