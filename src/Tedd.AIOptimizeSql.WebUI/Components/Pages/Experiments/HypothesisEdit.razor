@@ -392,7 +392,8 @@
                 if (_isNew || _editMode || _db is null)
                     return;
                 await RefreshViewFromDatabaseAsync();
-            });
+            },
+            () => InvokeAsync(StateHasChanged));
         return Task.CompletedTask;
     }
 

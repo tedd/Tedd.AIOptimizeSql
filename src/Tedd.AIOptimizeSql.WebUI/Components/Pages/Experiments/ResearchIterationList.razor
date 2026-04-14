@@ -150,7 +150,8 @@
                     await LoadChartData(db, _pageCts.Token);
                     if (_table is not null)
                         await _table.ReloadServerData();
-                });
+                },
+                () => InvokeAsync(StateHasChanged));
         }
 
         return Task.CompletedTask;

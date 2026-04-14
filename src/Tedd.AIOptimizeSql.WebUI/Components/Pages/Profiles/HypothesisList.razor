@@ -180,7 +180,8 @@
                 _pageCts.Token,
                 () => DataAccess.GetResearchIterationModifiedAtAsync(iterationId, _pageCts.Token),
                 work => InvokeAsync(work),
-                RefreshPageFromDatabaseAsync);
+                RefreshPageFromDatabaseAsync,
+                () => InvokeAsync(StateHasChanged));
         }
 
         return Task.CompletedTask;

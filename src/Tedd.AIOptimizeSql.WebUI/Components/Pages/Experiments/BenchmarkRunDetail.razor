@@ -130,7 +130,8 @@
                 _pageCts.Token,
                 () => DataAccess.GetBenchmarkRunModifiedAtAsync(benchId, _pageCts.Token),
                 work => InvokeAsync(work),
-                ReloadBenchmarkAsync);
+                ReloadBenchmarkAsync,
+                () => InvokeAsync(StateHasChanged));
         }
 
         return Task.CompletedTask;

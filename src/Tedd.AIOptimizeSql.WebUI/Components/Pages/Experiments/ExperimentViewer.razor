@@ -121,7 +121,8 @@
                 _pageCts.Token,
                 () => DataAccess.GetExperimentResultsWatermarkAsync(experimentId, _pageCts.Token),
                 work => InvokeAsync(work),
-                () => PageLoadCancellation.RunPageLoadAsync(LoadAsync, _pageCts.Token));
+                () => PageLoadCancellation.RunPageLoadAsync(LoadAsync, _pageCts.Token),
+                () => InvokeAsync(StateHasChanged));
         }
 
         return Task.CompletedTask;
