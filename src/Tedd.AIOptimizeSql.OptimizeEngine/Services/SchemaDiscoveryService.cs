@@ -302,11 +302,11 @@ public sealed partial class SchemaDiscoveryService(ILogger<SchemaDiscoveryServic
         var typeCode = reader.GetString(1).Trim();
         var definition = reader.IsDBNull(2) ? null : reader.GetString(2);
         var isSchemaBound = !reader.IsDBNull(3) && reader.GetBoolean(3);
-        var isEncrypted = reader.GetInt32(4) == 1;
-        var isMemoryOptimized = reader.GetInt32(5) == 1;
-        var temporalType = reader.GetInt32(6);
-        var isClr = reader.GetInt32(7) == 1;
-        var isExternal = reader.GetInt32(8) == 1;
+        var isEncrypted = ReadInt32Loose(reader, 4) == 1;
+        var isMemoryOptimized = ReadInt32Loose(reader, 5) == 1;
+        var temporalType = ReadInt32Loose(reader, 6);
+        var isClr = ReadInt32Loose(reader, 7) == 1;
+        var isExternal = ReadInt32Loose(reader, 8) == 1;
 
         var kind = MapObjectType(typeCode);
         var hasDynamicSql = definition != null &&
@@ -792,9 +792,9 @@ public sealed partial class SchemaDiscoveryService(ILogger<SchemaDiscoveryServic
         var rowCount = reader.GetInt64(0);
         var pageCount = reader.GetInt64(1);
         var compression = reader.IsDBNull(2) ? null : reader.GetString(2);
-        var isMemOpt = reader.GetBoolean(3);
-        var temporalType = reader.GetInt32(4);
-        var hasColumnstore = reader.GetInt32(5) == 1;
+        var isMemOpt = !reader.IsDBNull(3) && reader.GetBoolean(3);
+        var temporalType = ReadInt32Loose(reader, 4);
+        var hasColumnstore = ReadInt32Loose(reader, 5) == 1;
         var partFunc = reader.IsDBNull(6) ? null : reader.GetString(6);
         var partInfo = partFunc != null ? $"Partition function: {partFunc}" : null;
 
@@ -1000,6 +1000,26 @@ public sealed partial class SchemaDiscoveryService(ILogger<SchemaDiscoveryServic
         p.ParameterName = name;
         p.Value = value;
         cmd.Parameters.Add(p);
+    }
+
+    /// <summary>
+    /// Reads a catalog flag or small integer that may surface as <see cref="bool"/> (SQL <c>bit</c>),
+    /// <see cref="byte"/> (<c>tinyint</c>), or <see cref="int"/> depending on expression typing.
+    /// </summary>
+    private static int ReadInt32Loose(DbDataReader reader, int ordinal)
+    {
+        if (reader.IsDBNull(ordinal))
+            return 0;
+        return reader.GetValue(ordinal) switch
+        {
+            bool b => b ? 1 : 0,
+            int i => i,
+            byte b => b,
+            short s => s,
+            ushort u => u,
+            long l => checked((int)l),
+            _ => Convert.ToInt32(reader.GetValue(ordinal))
+        };
     }
 
     /// <summary>Serializes registered base tables to a JSON string for storage.</summary>

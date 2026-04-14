@@ -9,8 +9,12 @@ public class HypothesisStateTests
         {
             { HypothesisState.Pending, 0 },
             { HypothesisState.Generating, 1 },
-            { HypothesisState.Generated, 2 },
-            { HypothesisState.Failed, 3 },
+            { HypothesisState.Applying, 2 },
+            { HypothesisState.Benchmarking, 3 },
+            { HypothesisState.Reverting, 4 },
+            { HypothesisState.Completed, 5 },
+            { HypothesisState.Generated, 6 },
+            { HypothesisState.Failed, 7 },
         };
 
     [Theory]
@@ -24,6 +28,6 @@ public class HypothesisStateTests
     public void All_members_are_accounted_for()
     {
         var defined = Enum.GetValues<HypothesisState>();
-        Assert.Equal(4, defined.Length);
+        Assert.Equal(8, defined.Length);
     }
 }
