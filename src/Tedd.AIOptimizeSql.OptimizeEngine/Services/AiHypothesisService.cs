@@ -86,7 +86,12 @@ public sealed class AiHypothesisService(
 
             var priorHypotheses = await GetPriorHypothesesAsync(iterationId, cancellationToken);
 
-            var placeholder = await InsertPendingHypothesisAsync(iterationId, hypothesesCreated + 1, cancellationToken);
+            var bestPrior = priorHypotheses
+                .Where(h => h.Status == HypothesisState.Completed && h.ImpovementPercentage > 0)
+                .OrderByDescending(h => h.ImpovementPercentage)
+                .FirstOrDefault();
+
+            var placeholder = await InsertPendingHypothesisAsync(iterationId, hypothesesCreated + 1, bestPrior?.Id, cancellationToken);
 
             if (pendingRunStartedLog is not null)
             {
@@ -390,9 +395,8 @@ public sealed class AiHypothesisService(
 
         var bestHypothesis = successful.OrderByDescending(h => h.ImpovementPercentage).First();
 
-        var placeholder = await InsertPendingHypothesisAsync(iterationId, -1, ct);
+        var placeholder = await InsertPendingHypothesisAsync(iterationId, -1, bestHypothesis.Id, ct);
 
-        // Mark as building on best individual hypothesis
         using (var scope = scopeFactory.CreateScope())
         {
             var db = scope.ServiceProvider.GetRequiredService<AIOptimizeDbContext>();
@@ -400,7 +404,6 @@ public sealed class AiHypothesisService(
             await db.Hypotheses
                 .Where(h => h.Id == placeholder.Id)
                 .ExecuteUpdateAsync(s => s
-                    .SetProperty(h => h.BuildsOnHypothesisId, bestHypothesis.Id)
                     .SetProperty(h => h.Description, "Combined optimization (generating...)")
                     .SetProperty(h => h.ModifiedAt, now), ct);
             await ModifiedAtStamping.TouchResearchIterationForHypothesisAsync(db, placeholder.Id, ct);
@@ -591,12 +594,14 @@ public sealed class AiHypothesisService(
         var db = scope.ServiceProvider.GetRequiredService<AIOptimizeDbContext>();
         return await db.Hypotheses
             .AsNoTracking()
+            .Include(h => h.BenchmarkRunBefore)
+            .Include(h => h.BenchmarkRunAfter)
             .Where(h => h.ResearchIterationId == iterationId)
             .OrderBy(h => h.CreatedAt)
             .ToListAsync(ct);
     }
 
-    private async Task<Hypothesis> InsertPendingHypothesisAsync(ResearchIterationId iterationId, int number, CancellationToken ct)
+    private async Task<Hypothesis> InsertPendingHypothesisAsync(ResearchIterationId iterationId, int number, HypothesisId? buildsOnHypothesisId, CancellationToken ct)
     {
         using var scope = scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AIOptimizeDbContext>();
@@ -605,6 +610,7 @@ public sealed class AiHypothesisService(
             ResearchIterationId = iterationId,
             Status = HypothesisState.Pending,
             Description = $"Generating hypothesis #{number}...",
+            BuildsOnHypothesisId = buildsOnHypothesisId,
             CreatedAt = DateTime.UtcNow,
         };
         db.Hypotheses.Add(hypothesis);

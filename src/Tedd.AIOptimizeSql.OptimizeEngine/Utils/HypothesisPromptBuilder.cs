@@ -146,6 +146,12 @@ internal static class HypothesisPromptBuilder
                 if (!string.IsNullOrWhiteSpace(h.Description))
                     sb.AppendLine($"- **Description**: {h.Description}");
 
+                if (h.BenchmarkRunBefore != null)
+                    sb.AppendLine($"- **Baseline (before)**: CPU {h.BenchmarkRunBefore.TotalServerCpuTimeMs}ms, Elapsed {h.BenchmarkRunBefore.TotalServerElapsedTimeMs}ms, Logical Reads {h.BenchmarkRunBefore.TotalLogicalReads}");
+
+                if (h.BenchmarkRunAfter != null)
+                    sb.AppendLine($"- **Result (after)**: CPU {h.BenchmarkRunAfter.TotalServerCpuTimeMs}ms, Elapsed {h.BenchmarkRunAfter.TotalServerElapsedTimeMs}ms, Logical Reads {h.BenchmarkRunAfter.TotalLogicalReads}");
+
                 if (!string.IsNullOrWhiteSpace(h.OptimizeSql))
                 {
                     sb.AppendLine($"- **SQL tried**:");
