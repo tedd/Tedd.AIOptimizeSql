@@ -148,7 +148,7 @@
                                     </MudCardHeader>
                                     <MudCardContent Class="d-flex justify-center">
                                         <MudChart T="double" ChartType="ChartType.Donut"
-                                                  InputData="@_outcomeChartData" InputLabels="@_outcomeChartLabels"
+                                                  ChartSeries="@_outcomeChartSeries" ChartLabels="@_outcomeChartLabels"
                                                   ChartOptions="@_outcomeChartOptions"
                                                   Width="260px" Height="260px" />
                                     </MudCardContent>
@@ -166,7 +166,7 @@
                                         @if (_improvementSeries.Count > 0)
                                         {
                                             <MudChart T="double" ChartType="ChartType.Line"
-                                                      ChartSeries="@_improvementSeries" XAxisLabels="@_improvementLabels"
+                                                      ChartSeries="@_improvementSeries" ChartLabels="@_improvementLabels"
                                                       ChartOptions="@_improvementChartOptions"
                                                       Width="100%" Height="260px" />
                                         }
@@ -192,7 +192,7 @@
                             <MudCardContent>
                                 <MudChart T="double" ChartType="ChartType.Bar"
                                           ChartSeries="@_iterationOverviewSeries"
-                                          XAxisLabels="@_iterationOverviewLabels"
+                                          ChartLabels="@_iterationOverviewLabels"
                                           ChartOptions="@_elapsedChartOptions"
                                           Width="100%" Height="320px" />
                             </MudCardContent>
@@ -217,7 +217,7 @@
                             <MudCardContent>
                                 <MudChart T="double" ChartType="ChartType.Bar"
                                           ChartSeries="@block.Series"
-                                          XAxisLabels="@block.Labels"
+                                          ChartLabels="@block.Labels"
                                           ChartOptions="@_elapsedChartOptions"
                                           Width="100%" Height="280px" />
                             </MudCardContent>
@@ -293,7 +293,7 @@
     private float _bestImprovement;
     private string? _bestHypothesisTitle;
 
-    private double[] _outcomeChartData = Array.Empty<double>();
+    private List<ChartSeries<double>> _outcomeChartSeries = new();
     private string[] _outcomeChartLabels = Array.Empty<string>();
     private ChartOptions _outcomeChartOptions = new();
     private List<ChartSeries<double>> _improvementSeries = new();
@@ -406,7 +406,12 @@
             ("Untested", untested, "#BDBDBD"),
         };
         var present = outcomes.Where(o => o.Count > 0).ToList();
-        _outcomeChartData = present.Select(o => (double)o.Count).ToArray();
+        _outcomeChartSeries = present.Count == 0
+            ? new List<ChartSeries<double>>()
+            : new List<ChartSeries<double>>
+            {
+                new() { Name = "Hypotheses", Data = present.Select(o => (double)o.Count).ToList() }
+            };
         _outcomeChartLabels = present.Select(o => $"{o.Label} ({o.Count})").ToArray();
         _outcomeChartOptions = new ChartOptions { ChartPalette = present.Select(o => o.Hex).ToArray() };
 

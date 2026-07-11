@@ -147,7 +147,7 @@
                                     </MudCardHeader>
                                     <MudCardContent Class="d-flex justify-center">
                                         <MudChart T="double" ChartType="ChartType.Donut"
-                                                  InputData="@_severityChartData" InputLabels="@_severityChartLabels"
+                                                  ChartSeries="@_severityChartSeries" ChartLabels="@_severityChartLabels"
                                                   ChartOptions="@_severityChartOptions"
                                                   Width="280px" Height="280px" />
                                     </MudCardContent>
@@ -162,7 +162,7 @@
                                     </MudCardHeader>
                                     <MudCardContent>
                                         <MudChart T="double" ChartType="ChartType.Bar"
-                                                  ChartSeries="@_categoryChartSeries" XAxisLabels="@_categoryChartLabels"
+                                                  ChartSeries="@_categoryChartSeries" ChartLabels="@_categoryChartLabels"
                                                   ChartOptions="@_barChartOptions"
                                                   Width="100%" Height="280px" />
                                     </MudCardContent>
@@ -186,7 +186,7 @@
                                         </MudCardHeader>
                                         <MudCardContent>
                                             <MudChart T="double" ChartType="ChartType.Bar"
-                                                      ChartSeries="@_tableSizeSeries" XAxisLabels="@_tableSizeLabels"
+                                                      ChartSeries="@_tableSizeSeries" ChartLabels="@_tableSizeLabels"
                                                       ChartOptions="@_barChartOptions"
                                                       Width="100%" Height="260px" />
                                         </MudCardContent>
@@ -204,7 +204,7 @@
                                         </MudCardHeader>
                                         <MudCardContent>
                                             <MudChart T="double" ChartType="ChartType.Bar"
-                                                      ChartSeries="@_fragmentationSeries" XAxisLabels="@_fragmentationLabels"
+                                                      ChartSeries="@_fragmentationSeries" ChartLabels="@_fragmentationLabels"
                                                       ChartOptions="@_fragChartOptions"
                                                       Width="100%" Height="260px" />
                                         </MudCardContent>
@@ -223,7 +223,7 @@
                                         </MudCardHeader>
                                         <MudCardContent>
                                             <MudChart T="double" ChartType="ChartType.Bar"
-                                                      ChartSeries="@_topQuerySeries" XAxisLabels="@_topQueryLabels"
+                                                      ChartSeries="@_topQuerySeries" ChartLabels="@_topQueryLabels"
                                                       ChartOptions="@_barChartOptions"
                                                       Width="100%" Height="260px" />
                                         </MudCardContent>
@@ -502,7 +502,7 @@
     private List<AnalysisFinding> _topProblems = new();
     private List<AnalysisFinding> _goodFindings = new();
 
-    private double[] _severityChartData = Array.Empty<double>();
+    private List<ChartSeries<double>> _severityChartSeries = new();
     private string[] _severityChartLabels = Array.Empty<string>();
     private ChartOptions _severityChartOptions = new();
     private List<ChartSeries<double>> _categoryChartSeries = new();
@@ -657,7 +657,12 @@
             .Select(s => (Severity: s, Count: CountBySeverity(s)))
             .Where(x => x.Count > 0)
             .ToList();
-        _severityChartData = present.Select(x => (double)x.Count).ToArray();
+        _severityChartSeries = present.Count == 0
+            ? new List<ChartSeries<double>>()
+            : new List<ChartSeries<double>>
+            {
+                new() { Name = "Findings", Data = present.Select(x => (double)x.Count).ToList() }
+            };
         _severityChartLabels = present.Select(x => $"{x.Severity} ({x.Count})").ToArray();
         _severityChartOptions = new ChartOptions
         {
