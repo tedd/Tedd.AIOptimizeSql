@@ -146,11 +146,12 @@
                                             <MudText Typo="Typo.h6">Hypothesis outcomes</MudText>
                                         </CardHeaderContent>
                                     </MudCardHeader>
-                                    <MudCardContent Class="d-flex justify-center">
+                                    <MudCardContent Class="d-flex justify-center" Style="overflow-x: auto;">
                                         <MudChart T="double" ChartType="ChartType.Donut"
                                                   ChartSeries="@_outcomeChartSeries" ChartLabels="@_outcomeChartLabels"
                                                   ChartOptions="@_outcomeChartOptions"
-                                                  Width="260px" Height="260px" />
+                                                  LegendPosition="MudBlazor.Position.Right"
+                                                  Width="220px" Height="220px" />
                                     </MudCardContent>
                                 </MudCard>
                             </MudItem>

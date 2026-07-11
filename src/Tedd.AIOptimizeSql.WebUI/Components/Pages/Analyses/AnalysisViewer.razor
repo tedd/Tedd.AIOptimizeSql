@@ -138,44 +138,45 @@
                     @if (_findings.Count > 0)
                     {
                         <MudGrid Spacing="3">
-                            <MudItem xs="12" md="5">
+                            <MudItem xs="12" md="6">
                                 <MudCard Elevation="2" Class="rounded-lg" Style="height:100%">
                                     <MudCardHeader>
                                         <CardHeaderContent>
                                             <MudText Typo="Typo.h6">Findings by severity</MudText>
                                         </CardHeaderContent>
                                     </MudCardHeader>
-                                    <MudCardContent Class="d-flex justify-center">
+                                    <MudCardContent Class="d-flex justify-center" Style="overflow-x: auto;">
                                         <MudChart T="double" ChartType="ChartType.Donut"
                                                   ChartSeries="@_severityChartSeries" ChartLabels="@_severityChartLabels"
                                                   ChartOptions="@_severityChartOptions"
-                                                  Width="280px" Height="280px" />
+                                                  LegendPosition="MudBlazor.Position.Right"
+                                                  Width="220px" Height="220px" />
                                     </MudCardContent>
                                 </MudCard>
                             </MudItem>
-                            <MudItem xs="12" md="7">
+                            <MudItem xs="12" md="6">
                                 <MudCard Elevation="2" Class="rounded-lg" Style="height:100%">
                                     <MudCardHeader>
                                         <CardHeaderContent>
                                             <MudText Typo="Typo.h6">Findings by category</MudText>
                                         </CardHeaderContent>
                                     </MudCardHeader>
-                                    <MudCardContent>
-                                        <MudChart T="double" ChartType="ChartType.Bar"
+                                    <MudCardContent Class="d-flex justify-center" Style="overflow-x: auto;">
+                                        <MudChart T="double" ChartType="ChartType.Donut"
                                                   ChartSeries="@_categoryChartSeries" ChartLabels="@_categoryChartLabels"
-                                                  ChartOptions="@_barChartOptions"
-                                                  Width="100%" Height="280px" />
+                                                  LegendPosition="MudBlazor.Position.Right"
+                                                  Width="220px" Height="220px" />
                                     </MudCardContent>
                                 </MudCard>
                             </MudItem>
                         </MudGrid>
                     }
 
-                    @* Charts row 2: metrics *@
-                    @if (_tableSizeSeries.Count > 0 || _fragmentationSeries.Count > 0 || _topQuerySeries.Count > 0)
+                    @* Charts row 2: metrics (hover a row for the full name / statement) *@
+                    @if (_tableSizeItems.Count > 0 || _fragmentationItems.Count > 0 || _topQueryItems.Count > 0)
                     {
                         <MudGrid Spacing="3">
-                            @if (_tableSizeSeries.Count > 0)
+                            @if (_tableSizeItems.Count > 0)
                             {
                                 <MudItem xs="12" md="4">
                                     <MudCard Elevation="2" Class="rounded-lg" Style="height:100%">
@@ -185,15 +186,12 @@
                                             </CardHeaderContent>
                                         </MudCardHeader>
                                         <MudCardContent>
-                                            <MudChart T="double" ChartType="ChartType.Bar"
-                                                      ChartSeries="@_tableSizeSeries" ChartLabels="@_tableSizeLabels"
-                                                      ChartOptions="@_barChartOptions"
-                                                      Width="100%" Height="260px" />
+                                            <MiniBarList Items="@_tableSizeItems" BarColor="#2196F3" />
                                         </MudCardContent>
                                     </MudCard>
                                 </MudItem>
                             }
-                            @if (_fragmentationSeries.Count > 0)
+                            @if (_fragmentationItems.Count > 0)
                             {
                                 <MudItem xs="12" md="4">
                                     <MudCard Elevation="2" Class="rounded-lg" Style="height:100%">
@@ -203,29 +201,23 @@
                                             </CardHeaderContent>
                                         </MudCardHeader>
                                         <MudCardContent>
-                                            <MudChart T="double" ChartType="ChartType.Bar"
-                                                      ChartSeries="@_fragmentationSeries" ChartLabels="@_fragmentationLabels"
-                                                      ChartOptions="@_fragChartOptions"
-                                                      Width="100%" Height="260px" />
+                                            <MiniBarList Items="@_fragmentationItems" BarColor="#F57C00" />
                                         </MudCardContent>
                                     </MudCard>
                                 </MudItem>
                             }
-                            @if (_topQuerySeries.Count > 0)
+                            @if (_topQueryItems.Count > 0)
                             {
                                 <MudItem xs="12" md="4">
                                     <MudCard Elevation="2" Class="rounded-lg" Style="height:100%">
                                         <MudCardHeader>
                                             <CardHeaderContent>
                                                 <MudText Typo="Typo.h6">Top queries by CPU (ms)</MudText>
-                                                <MudText Typo="Typo.caption">Q1..Qn — see Metrics tab for statements</MudText>
+                                                <MudText Typo="Typo.caption">Hover a row to see the statement</MudText>
                                             </CardHeaderContent>
                                         </MudCardHeader>
                                         <MudCardContent>
-                                            <MudChart T="double" ChartType="ChartType.Bar"
-                                                      ChartSeries="@_topQuerySeries" ChartLabels="@_topQueryLabels"
-                                                      ChartOptions="@_barChartOptions"
-                                                      Width="100%" Height="260px" />
+                                            <MiniBarList Items="@_topQueryItems" BarColor="#7E57C2" LabelWidth="40" />
                                         </MudCardContent>
                                     </MudCard>
                                 </MudItem>
@@ -507,15 +499,10 @@
     private ChartOptions _severityChartOptions = new();
     private List<ChartSeries<double>> _categoryChartSeries = new();
     private string[] _categoryChartLabels = Array.Empty<string>();
-    private readonly ChartOptions _barChartOptions = new() { ChartPalette = new[] { "#2196F3" } };
-    private readonly ChartOptions _fragChartOptions = new() { ChartPalette = new[] { "#F57C00" } };
 
-    private List<ChartSeries<double>> _tableSizeSeries = new();
-    private string[] _tableSizeLabels = Array.Empty<string>();
-    private List<ChartSeries<double>> _fragmentationSeries = new();
-    private string[] _fragmentationLabels = Array.Empty<string>();
-    private List<ChartSeries<double>> _topQuerySeries = new();
-    private string[] _topQueryLabels = Array.Empty<string>();
+    private List<MiniBarList.MiniBarItem> _tableSizeItems = new();
+    private List<MiniBarList.MiniBarItem> _fragmentationItems = new();
+    private List<MiniBarList.MiniBarItem> _topQueryItems = new();
 
     private IReadOnlyCollection<FindingSeverity> _severityFilter = new List<FindingSeverity>();
     private string? _findingSearch;
@@ -669,13 +656,13 @@
             ChartPalette = present.Select(x => SeverityHex(x.Severity)).ToArray()
         };
 
-        // Category bar
+        // Category donut (labels carry the count; legend sits to the right)
         var byCategory = _findings
             .GroupBy(f => f.Category)
             .OrderByDescending(g => g.Count())
             .Take(10)
             .ToList();
-        _categoryChartLabels = byCategory.Select(g => g.Key.ToString()).ToArray();
+        _categoryChartLabels = byCategory.Select(g => $"{g.Key} ({g.Count()})").ToArray();
         _categoryChartSeries = byCategory.Count == 0
             ? new List<ChartSeries<double>>()
             : new List<ChartSeries<double>>
@@ -688,41 +675,59 @@
 
     private void BuildMetricCharts()
     {
-        _tableSizeSeries = new();
-        _fragmentationSeries = new();
-        _topQuerySeries = new();
+        _tableSizeItems = new();
+        _fragmentationItems = new();
+        _topQueryItems = new();
 
         if (_snapshot is null)
             return;
 
         if (_snapshot.Sections.TryGetValue("TableSizes", out var tables) && tables.Count > 0)
         {
-            var top = tables.Take(8).ToList();
-            _tableSizeLabels = top.Select(r => Shorten(r.GetValueOrDefault("table_name", "?"), 14)).ToArray();
-            _tableSizeSeries = new List<ChartSeries<double>>
+            _tableSizeItems = tables.Take(8).Select(r =>
             {
-                new() { Name = "Reserved MB", Data = top.Select(r => ParseDouble(r.GetValueOrDefault("reserved_mb"))).ToList() }
-            };
+                var schema = r.GetValueOrDefault("schema_name", "dbo");
+                var table = r.GetValueOrDefault("table_name", "?");
+                var mb = ParseDouble(r.GetValueOrDefault("reserved_mb"));
+                var rows = r.GetValueOrDefault("row_count", "?");
+                return new MiniBarList.MiniBarItem(
+                    table,
+                    $"{schema}.{table} — {mb:N0} MB reserved, {rows} rows",
+                    mb,
+                    $"{mb:N0} MB");
+            }).ToList();
         }
 
         if (_snapshot.Sections.TryGetValue("IndexFragmentation", out var frags) && frags.Count > 0)
         {
-            var top = frags.Take(8).ToList();
-            _fragmentationLabels = top.Select(r => Shorten(r.GetValueOrDefault("index_name", "?"), 14)).ToArray();
-            _fragmentationSeries = new List<ChartSeries<double>>
+            _fragmentationItems = frags.Take(8).Select(r =>
             {
-                new() { Name = "Fragmentation %", Data = top.Select(r => ParseDouble(r.GetValueOrDefault("avg_fragmentation_pct"))).ToList() }
-            };
+                var schema = r.GetValueOrDefault("schema_name", "dbo");
+                var table = r.GetValueOrDefault("table_name", "?");
+                var index = r.GetValueOrDefault("index_name", "?");
+                var pct = ParseDouble(r.GetValueOrDefault("avg_fragmentation_pct"));
+                var pages = r.GetValueOrDefault("page_count", "?");
+                return new MiniBarList.MiniBarItem(
+                    index,
+                    $"{index} on {schema}.{table} — {pct:0.#}% fragmented, {pages} pages",
+                    pct,
+                    $"{pct:0.#}%");
+            }).ToList();
         }
 
         if (_snapshot.Sections.TryGetValue("TopQueriesByCpu", out var queries) && queries.Count > 0)
         {
-            var top = queries.Take(8).ToList();
-            _topQueryLabels = top.Select((_, i) => $"Q{i + 1}").ToArray();
-            _topQuerySeries = new List<ChartSeries<double>>
+            _topQueryItems = queries.Take(8).Select((r, i) =>
             {
-                new() { Name = "Total CPU ms", Data = top.Select(r => ParseDouble(r.GetValueOrDefault("total_cpu_ms"))).ToList() }
-            };
+                var cpuMs = ParseDouble(r.GetValueOrDefault("total_cpu_ms"));
+                var executions = r.GetValueOrDefault("execution_count", "?");
+                var statement = r.GetValueOrDefault("statement_text", "").ReplaceLineEndings(" ").Trim();
+                return new MiniBarList.MiniBarItem(
+                    $"Q{i + 1}",
+                    $"{cpuMs:N0} ms CPU over {executions} executions: {Shorten(statement, 400)}",
+                    cpuMs,
+                    $"{cpuMs:N0} ms");
+            }).ToList();
         }
     }
 

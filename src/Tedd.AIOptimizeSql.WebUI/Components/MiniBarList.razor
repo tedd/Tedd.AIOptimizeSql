@@ -1,0 +1,47 @@
+@* Compact horizontal bar list for "top N" metrics: label + proportional bar + value.
+   Replaces vertical SVG bar charts whose x-axis labels overlap. The full label
+   (or any detail text) is shown as a native tooltip on mouseover. *@
+
+@if (Items.Count == 0)
+{
+    <MudText Typo="Typo.body2" Color="Color.Secondary">(no data)</MudText>
+}
+else
+{
+    <MudStack Spacing="1">
+        @foreach (var item in Items)
+        {
+            var pct = _maxValue <= 0 ? 0 : Math.Clamp(100.0 * item.Value / _maxValue, 0, 100);
+            <div class="d-flex align-center" style="gap: 8px; min-height: 22px;" title="@(item.Tooltip ?? item.Label)">
+                <MudText Typo="Typo.caption"
+                         Style="@($"width: {LabelWidth}px; min-width: {LabelWidth}px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;")">
+                    @item.Label
+                </MudText>
+                <div style="flex: 1; background: var(--mud-palette-background-gray); border-radius: 4px; height: 14px; overflow: hidden;">
+                    <div style="@($"width: {pct.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)}%; height: 100%; border-radius: 4px; background: {BarColor};")"></div>
+                </div>
+                <MudText Typo="Typo.caption" Style="min-width: 70px; text-align: right; white-space: nowrap;">
+                    @item.ValueText
+                </MudText>
+            </div>
+        }
+    </MudStack>
+}
+
+@code {
+    /// <summary>One bar row: label shown (truncated by CSS), optional mouseover tooltip, value for scaling, formatted value text.</summary>
+    public sealed record MiniBarItem(string Label, string? Tooltip, double Value, string ValueText);
+
+    [Parameter] public IReadOnlyList<MiniBarItem> Items { get; set; } = Array.Empty<MiniBarItem>();
+
+    /// <summary>Bar fill color (CSS color value).</summary>
+    [Parameter] public string BarColor { get; set; } = "var(--mud-palette-primary)";
+
+    /// <summary>Fixed width of the label column in pixels.</summary>
+    [Parameter] public int LabelWidth { get; set; } = 130;
+
+    private double _maxValue;
+
+    protected override void OnParametersSet() =>
+        _maxValue = Items.Count == 0 ? 0 : Items.Max(i => i.Value);
+}
