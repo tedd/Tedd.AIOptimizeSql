@@ -19,19 +19,27 @@ public sealed class SqlToolWrapper : IDisposable
     private readonly DbConnection _connection;
     private readonly int _maxResponseBytes;
     private readonly ILogger _logger;
+    private readonly bool _readOnly;
 
-    public SqlToolWrapper(IDatabaseExecutor executor, DbConnection connection, int maxResponseBytes, ILogger logger)
+    public SqlToolWrapper(IDatabaseExecutor executor, DbConnection connection, int maxResponseBytes, ILogger logger, bool readOnly = false)
     {
         _executor = executor;
         _connection = connection;
         _maxResponseBytes = maxResponseBytes;
         _logger = logger;
+        _readOnly = readOnly;
     }
 
     [Description("Executes a SQL query and returns the result rows as a text table. Use this to inspect data, schemas, execution plans, or any SELECT-based query.")]
     public string ExecuteSqlQuery([Description("The SQL query to execute")] string sql)
     {
         _logger.LogDebug("AI tool: ExecuteSqlQuery called with: {Sql}", sql);
+        if (_readOnly)
+        {
+            var guard = ReadOnlySqlGuard.Check(sql);
+            if (!guard.IsAllowed)
+                return $"BLOCKED (analyze-only mode): {guard.Reason}";
+        }
         try
         {
             var rows = _executor.ExecuteQuery(_connection, sql);
@@ -66,6 +74,12 @@ public sealed class SqlToolWrapper : IDisposable
     public string ExecuteSqlNonQuery([Description("The SQL statement to execute (DDL/DML)")] string sql)
     {
         _logger.LogDebug("AI tool: ExecuteSqlNonQuery called with: {Sql}", sql);
+        if (_readOnly)
+        {
+            return "BLOCKED (analyze-only mode): this connection is analyze-only. DDL/DML is never executed here. " +
+                   "Use ExecuteSqlQuery for read-only inspection or GetExecutionPlan to evaluate a change hypothetically, " +
+                   "and put proposed changes in your findings/recommendations instead.";
+        }
         try
         {
             _executor.ExecuteNonQuery(_connection, sql);
@@ -78,10 +92,21 @@ public sealed class SqlToolWrapper : IDisposable
         }
     }
 
-    [Description("Gets the estimated execution plan for a SQL query in XML format. Use this to analyze query performance and identify bottlenecks.")]
+    [Description("Gets the estimated execution plan for a SQL query in XML format without executing it. Use this to analyze query performance, identify bottlenecks, or evaluate how a proposed query rewrite would behave. The statement is only compiled, never executed.")]
     public string GetExecutionPlan([Description("The SQL query to get the execution plan for")] string sql)
     {
         _logger.LogDebug("AI tool: GetExecutionPlan called with: {Sql}", sql);
+        if (_readOnly)
+        {
+            // SET SHOWPLAN_XML ON compiles without executing, so even DML/DDL is
+            // safe to plan — as long as the batch cannot toggle SHOWPLAN back off
+            // or smuggle in extra GO-separated batches.
+            if (sql.Contains("SHOWPLAN", StringComparison.OrdinalIgnoreCase))
+                return "BLOCKED (analyze-only mode): the SQL must not reference SHOWPLAN options; they are managed by this tool.";
+            if (System.Text.RegularExpressions.Regex.IsMatch(sql, @"^\s*GO\s*$",
+                    System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.Multiline))
+                return "BLOCKED (analyze-only mode): multi-batch scripts (GO) are not allowed in the execution plan tool.";
+        }
         try
         {
             _executor.ExecuteNonQuery(_connection, "SET SHOWPLAN_XML ON");

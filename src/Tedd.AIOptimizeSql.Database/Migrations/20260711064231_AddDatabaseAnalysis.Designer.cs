@@ -3,6 +3,7 @@ using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Tedd.AIOptimizeSql.Database;
 
@@ -11,9 +12,11 @@ using Tedd.AIOptimizeSql.Database;
 namespace Tedd.AIOptimizeSql.Database.Migrations
 {
     [DbContext(typeof(AIOptimizeDbContext))]
-    partial class AIOptimizeDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260711064231_AddDatabaseAnalysis")]
+    partial class AddDatabaseAnalysis
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -64,48 +67,6 @@ namespace Tedd.AIOptimizeSql.Database.Migrations
                     b.HasKey("Id");
 
                     b.ToTable("AIConnections");
-                });
-
-            modelBuilder.Entity("Tedd.AIOptimizeSql.Database.Models.AgentTask", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("int");
-
-                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("datetime2");
-
-                    b.Property<int?>("DatabaseAnalysisId")
-                        .HasColumnType("int");
-
-                    b.Property<int?>("HypothesisId")
-                        .HasColumnType("int");
-
-                    b.Property<DateTime>("ModifiedAt")
-                        .HasColumnType("datetime2");
-
-                    b.Property<string>("Notes")
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<string>("Status")
-                        .IsRequired()
-                        .HasMaxLength(16)
-                        .HasColumnType("nvarchar(16)");
-
-                    b.Property<string>("Title")
-                        .IsRequired()
-                        .HasMaxLength(1024)
-                        .HasColumnType("nvarchar(1024)");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("DatabaseAnalysisId");
-
-                    b.HasIndex("HypothesisId");
-
-                    b.ToTable("AgentTasks");
                 });
 
             modelBuilder.Entity("Tedd.AIOptimizeSql.Database.Models.AnalysisFinding", b =>
@@ -628,23 +589,6 @@ namespace Tedd.AIOptimizeSql.Database.Migrations
                         .IsUnique();
 
                     b.ToTable("RunQueue");
-                });
-
-            modelBuilder.Entity("Tedd.AIOptimizeSql.Database.Models.AgentTask", b =>
-                {
-                    b.HasOne("Tedd.AIOptimizeSql.Database.Models.DatabaseAnalysis", "DatabaseAnalysis")
-                        .WithMany()
-                        .HasForeignKey("DatabaseAnalysisId")
-                        .OnDelete(DeleteBehavior.Cascade);
-
-                    b.HasOne("Tedd.AIOptimizeSql.Database.Models.Hypothesis", "Hypothesis")
-                        .WithMany()
-                        .HasForeignKey("HypothesisId")
-                        .OnDelete(DeleteBehavior.Cascade);
-
-                    b.Navigation("DatabaseAnalysis");
-
-                    b.Navigation("Hypothesis");
                 });
 
             modelBuilder.Entity("Tedd.AIOptimizeSql.Database.Models.AnalysisFinding", b =>

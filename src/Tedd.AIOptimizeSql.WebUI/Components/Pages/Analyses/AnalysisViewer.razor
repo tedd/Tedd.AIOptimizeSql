@@ -1,0 +1,842 @@
+@page "/analyses/{Id:int}"
+@implements IDisposable
+@rendermode InteractiveServer
+@inject IDbContextFactory<Tedd.AIOptimizeSql.Database.AIOptimizeDbContext> DbContextFactory
+@inject IAIOptimizeDataAccess DataAccess
+@inject IOptions<UiPollingOptions> UiPolling
+@inject NavigationManager Navigation
+@inject ISnackbar Snackbar
+@using Microsoft.EntityFrameworkCore
+@using System.Text.Json
+@using Tedd.AIOptimizeSql.Database
+@using Tedd.AIOptimizeSql.Database.Models
+@using Tedd.AIOptimizeSql.Database.Models.Enums
+
+<PageTitle>Database Analysis</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.ExtraLarge" Class="mt-4">
+    <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-4">
+        <MudIconButton Icon="@Icons.Material.Filled.ArrowBack" OnClick="@(() => Navigation.NavigateTo("/analyses"))" aria-label="Back" />
+        <MudText Typo="Typo.h4">@(_analysis?.Name ?? "Analysis")</MudText>
+        @if (_analysis is not null)
+        {
+            <MudChip T="string" Size="Size.Medium" Color="@StateColor(_analysis.State)">@_analysis.State</MudChip>
+            @if (_analysis.State == DatabaseAnalysisState.Running)
+            {
+                <MudProgressCircular Size="Size.Small" Indeterminate="true" Color="Color.Info" />
+            }
+        }
+        <MudSpacer />
+        @if (_analysis is not null && _analysis.State is DatabaseAnalysisState.Draft or DatabaseAnalysisState.Failed or DatabaseAnalysisState.Stopped or DatabaseAnalysisState.Completed)
+        {
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.PlayArrow" OnClick="QueueAnalysis">
+                Run
+            </MudButton>
+        }
+        @if (_analysis is not null && _analysis.State is DatabaseAnalysisState.Queued or DatabaseAnalysisState.Running)
+        {
+            <MudButton Variant="Variant.Outlined" Color="Color.Warning" StartIcon="@Icons.Material.Filled.Stop" OnClick="StopAnalysis">
+                Stop
+            </MudButton>
+        }
+    </MudStack>
+
+    @if (_loading)
+    {
+        <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+    }
+    else if (_analysis == null)
+    {
+        <MudAlert Severity="Severity.Error">Analysis not found.</MudAlert>
+    }
+    else
+    {
+        @if (!string.IsNullOrWhiteSpace(_analysis.LastMessage))
+        {
+            <MudAlert Severity="@(_analysis.State == DatabaseAnalysisState.Failed ? Severity.Error : Severity.Info)"
+                      Dense="true" Class="mb-4">@_analysis.LastMessage</MudAlert>
+        }
+
+        <MudTabs @bind-ActivePanelIndex="_activeTabIndex" Rounded="true" Border="true" Class="mb-2">
+
+            @* ─────────────────────────── DASHBOARD ─────────────────────────── *@
+            <MudTabPanel Text="Dashboard" Icon="@Icons.Material.Filled.Dashboard">
+                <MudStack Spacing="4" Class="pt-4">
+
+                    @* Live AI plan progress while running *@
+                    @if (_tasks.Count > 0 && _analysis.State == DatabaseAnalysisState.Running)
+                    {
+                        <MudCard Elevation="2" Class="rounded-lg">
+                            <MudCardHeader>
+                                <CardHeaderContent>
+                                    <MudText Typo="Typo.h6">
+                                        <MudIcon Icon="@Icons.Material.Filled.Checklist" Class="mr-1" Style="vertical-align:middle" />
+                                        AI work plan (live)
+                                    </MudText>
+                                </CardHeaderContent>
+                            </MudCardHeader>
+                            <MudCardContent>
+                                <AgentTaskListPanel Tasks="@_tasks" ShowEmptyState="false" />
+                            </MudCardContent>
+                        </MudCard>
+                    }
+
+                    @* KPI row *@
+                    <MudGrid Spacing="3">
+                        <MudItem xs="12" sm="6" md="3">
+                            <MudPaper Elevation="2" Class="pa-4 rounded-lg d-flex flex-column align-center">
+                                <MudText Typo="Typo.overline">Health score</MudText>
+                                <MudProgressCircular Value="@_healthScore" Min="0" Max="100" Size="Size.Large"
+                                                     Color="@HealthColor(_healthScore)" StrokeWidth="6">
+                                    <MudText Typo="Typo.h5">@_healthScore</MudText>
+                                </MudProgressCircular>
+                                <MudText Typo="Typo.caption" Class="mt-2">@HealthLabel(_healthScore)</MudText>
+                            </MudPaper>
+                        </MudItem>
+                        <MudItem xs="12" sm="6" md="3">
+                            <MudPaper Elevation="2" Class="pa-4 rounded-lg">
+                                <MudText Typo="Typo.overline">Problems found</MudText>
+                                <MudText Typo="Typo.h3" Color="@(_problemCount > 0 ? Color.Error : Color.Success)">@_problemCount</MudText>
+                                <MudStack Row="true" Spacing="1" Wrap="Wrap.Wrap" Class="mt-1">
+                                    @foreach (var sev in ProblemSeverities)
+                                    {
+                                        var count = CountBySeverity(sev);
+                                        if (count > 0)
+                                        {
+                                            <MudChip T="string" Size="Size.Small" Color="@SeverityColor(sev)" Variant="Variant.Text">
+                                                @count @sev.ToString().ToLowerInvariant()
+                                            </MudChip>
+                                        }
+                                    }
+                                </MudStack>
+                            </MudPaper>
+                        </MudItem>
+                        <MudItem xs="12" sm="6" md="3">
+                            <MudPaper Elevation="2" Class="pa-4 rounded-lg">
+                                <MudText Typo="Typo.overline">Healthy areas</MudText>
+                                <MudText Typo="Typo.h3" Color="Color.Success">@CountBySeverity(FindingSeverity.Good)</MudText>
+                                <MudText Typo="Typo.caption">Things that are configured well</MudText>
+                            </MudPaper>
+                        </MudItem>
+                        <MudItem xs="12" sm="6" md="3">
+                            <MudPaper Elevation="2" Class="pa-4 rounded-lg">
+                                <MudText Typo="Typo.overline">Target</MudText>
+                                <MudText Typo="Typo.h6">@(_snapshot?.DatabaseName ?? _analysis.DatabaseConnection?.Name ?? "—")</MudText>
+                                <MudText Typo="Typo.caption">SQL Server @(_snapshot?.ServerVersion ?? "—")</MudText>
+                                @if (_analysis.StartedAt is not null)
+                                {
+                                    <MudText Typo="Typo.caption" Class="d-block">
+                                        Analyzed @_analysis.StartedAt.Value.ToLocalTime().ToString("yyyy-MM-dd HH:mm")
+                                        @(_analysis.EndedAt is not null ? $"({(_analysis.EndedAt.Value - _analysis.StartedAt.Value).TotalMinutes:0} min)" : "")
+                                    </MudText>
+                                }
+                            </MudPaper>
+                        </MudItem>
+                    </MudGrid>
+
+                    @* Charts row 1: findings *@
+                    @if (_findings.Count > 0)
+                    {
+                        <MudGrid Spacing="3">
+                            <MudItem xs="12" md="5">
+                                <MudCard Elevation="2" Class="rounded-lg" Style="height:100%">
+                                    <MudCardHeader>
+                                        <CardHeaderContent>
+                                            <MudText Typo="Typo.h6">Findings by severity</MudText>
+                                        </CardHeaderContent>
+                                    </MudCardHeader>
+                                    <MudCardContent Class="d-flex justify-center">
+                                        <MudChart T="double" ChartType="ChartType.Donut"
+                                                  InputData="@_severityChartData" InputLabels="@_severityChartLabels"
+                                                  ChartOptions="@_severityChartOptions"
+                                                  Width="280px" Height="280px" />
+                                    </MudCardContent>
+                                </MudCard>
+                            </MudItem>
+                            <MudItem xs="12" md="7">
+                                <MudCard Elevation="2" Class="rounded-lg" Style="height:100%">
+                                    <MudCardHeader>
+                                        <CardHeaderContent>
+                                            <MudText Typo="Typo.h6">Findings by category</MudText>
+                                        </CardHeaderContent>
+                                    </MudCardHeader>
+                                    <MudCardContent>
+                                        <MudChart T="double" ChartType="ChartType.Bar"
+                                                  ChartSeries="@_categoryChartSeries" XAxisLabels="@_categoryChartLabels"
+                                                  ChartOptions="@_barChartOptions"
+                                                  Width="100%" Height="280px" />
+                                    </MudCardContent>
+                                </MudCard>
+                            </MudItem>
+                        </MudGrid>
+                    }
+
+                    @* Charts row 2: metrics *@
+                    @if (_tableSizeSeries.Count > 0 || _fragmentationSeries.Count > 0 || _topQuerySeries.Count > 0)
+                    {
+                        <MudGrid Spacing="3">
+                            @if (_tableSizeSeries.Count > 0)
+                            {
+                                <MudItem xs="12" md="4">
+                                    <MudCard Elevation="2" Class="rounded-lg" Style="height:100%">
+                                        <MudCardHeader>
+                                            <CardHeaderContent>
+                                                <MudText Typo="Typo.h6">Largest tables (MB)</MudText>
+                                            </CardHeaderContent>
+                                        </MudCardHeader>
+                                        <MudCardContent>
+                                            <MudChart T="double" ChartType="ChartType.Bar"
+                                                      ChartSeries="@_tableSizeSeries" XAxisLabels="@_tableSizeLabels"
+                                                      ChartOptions="@_barChartOptions"
+                                                      Width="100%" Height="260px" />
+                                        </MudCardContent>
+                                    </MudCard>
+                                </MudItem>
+                            }
+                            @if (_fragmentationSeries.Count > 0)
+                            {
+                                <MudItem xs="12" md="4">
+                                    <MudCard Elevation="2" Class="rounded-lg" Style="height:100%">
+                                        <MudCardHeader>
+                                            <CardHeaderContent>
+                                                <MudText Typo="Typo.h6">Most fragmented indexes (%)</MudText>
+                                            </CardHeaderContent>
+                                        </MudCardHeader>
+                                        <MudCardContent>
+                                            <MudChart T="double" ChartType="ChartType.Bar"
+                                                      ChartSeries="@_fragmentationSeries" XAxisLabels="@_fragmentationLabels"
+                                                      ChartOptions="@_fragChartOptions"
+                                                      Width="100%" Height="260px" />
+                                        </MudCardContent>
+                                    </MudCard>
+                                </MudItem>
+                            }
+                            @if (_topQuerySeries.Count > 0)
+                            {
+                                <MudItem xs="12" md="4">
+                                    <MudCard Elevation="2" Class="rounded-lg" Style="height:100%">
+                                        <MudCardHeader>
+                                            <CardHeaderContent>
+                                                <MudText Typo="Typo.h6">Top queries by CPU (ms)</MudText>
+                                                <MudText Typo="Typo.caption">Q1..Qn — see Metrics tab for statements</MudText>
+                                            </CardHeaderContent>
+                                        </MudCardHeader>
+                                        <MudCardContent>
+                                            <MudChart T="double" ChartType="ChartType.Bar"
+                                                      ChartSeries="@_topQuerySeries" XAxisLabels="@_topQueryLabels"
+                                                      ChartOptions="@_barChartOptions"
+                                                      Width="100%" Height="260px" />
+                                        </MudCardContent>
+                                    </MudCard>
+                                </MudItem>
+                            }
+                        </MudGrid>
+                    }
+
+                    @* Top problems & good news *@
+                    <MudGrid Spacing="3">
+                        <MudItem xs="12" md="7">
+                            <MudCard Elevation="2" Class="rounded-lg" Style="height:100%">
+                                <MudCardHeader>
+                                    <CardHeaderContent>
+                                        <MudText Typo="Typo.h6">
+                                            <MudIcon Icon="@Icons.Material.Filled.ReportProblem" Color="Color.Error" Class="mr-1" Style="vertical-align:middle" />
+                                            Top problems
+                                        </MudText>
+                                    </CardHeaderContent>
+                                </MudCardHeader>
+                                <MudCardContent>
+                                    @if (_topProblems.Count == 0)
+                                    {
+                                        <MudText Typo="Typo.body2">No problems found (yet).</MudText>
+                                    }
+                                    else
+                                    {
+                                        <MudList T="string" Dense="true">
+                                            @foreach (var f in _topProblems)
+                                            {
+                                                <MudListItem T="string" OnClick="@(() => JumpToFinding(f))">
+                                                    <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+                                                        <MudChip T="string" Size="Size.Small" Color="@SeverityColor(f.Severity)">@f.Severity</MudChip>
+                                                        <MudText Typo="Typo.body2">@f.Title</MudText>
+                                                    </MudStack>
+                                                </MudListItem>
+                                            }
+                                        </MudList>
+                                    }
+                                </MudCardContent>
+                            </MudCard>
+                        </MudItem>
+                        <MudItem xs="12" md="5">
+                            <MudCard Elevation="2" Class="rounded-lg" Style="height:100%">
+                                <MudCardHeader>
+                                    <CardHeaderContent>
+                                        <MudText Typo="Typo.h6">
+                                            <MudIcon Icon="@Icons.Material.Filled.ThumbUp" Color="Color.Success" Class="mr-1" Style="vertical-align:middle" />
+                                            What is healthy
+                                        </MudText>
+                                    </CardHeaderContent>
+                                </MudCardHeader>
+                                <MudCardContent>
+                                    @if (_goodFindings.Count == 0)
+                                    {
+                                        <MudText Typo="Typo.body2">No positive findings recorded.</MudText>
+                                    }
+                                    else
+                                    {
+                                        <MudList T="string" Dense="true">
+                                            @foreach (var f in _goodFindings)
+                                            {
+                                                <MudListItem T="string" Icon="@Icons.Material.Filled.CheckCircle" IconColor="Color.Success">
+                                                    <MudText Typo="Typo.body2">@f.Title</MudText>
+                                                </MudListItem>
+                                            }
+                                        </MudList>
+                                    }
+                                </MudCardContent>
+                            </MudCard>
+                        </MudItem>
+                    </MudGrid>
+
+                    @* AI executive summary *@
+                    @if (!string.IsNullOrWhiteSpace(_analysis.AiSummaryMarkdown))
+                    {
+                        <MudCard Elevation="2" Class="rounded-lg">
+                            <MudCardHeader>
+                                <CardHeaderContent>
+                                    <MudText Typo="Typo.h6">
+                                        <MudIcon Icon="@Icons.Material.Filled.SmartToy" Color="Color.Secondary" Class="mr-1" Style="vertical-align:middle" />
+                                        AI executive summary
+                                    </MudText>
+                                </CardHeaderContent>
+                            </MudCardHeader>
+                            <MudCardContent>
+                                <MudText Typo="Typo.body2" Style="white-space: pre-wrap;">@_analysis.AiSummaryMarkdown</MudText>
+                            </MudCardContent>
+                        </MudCard>
+                    }
+                </MudStack>
+            </MudTabPanel>
+
+            @* ─────────────────────────── AI PLAN ─────────────────────────── *@
+            <MudTabPanel Text="@($"Plan ({_tasks.Count(t => t.Status == AgentTaskStatus.Completed)}/{_tasks.Count})")"
+                         Icon="@Icons.Material.Filled.Checklist">
+                <MudStack Spacing="3" Class="pt-4">
+                    <MudText Typo="Typo.body2" Color="Color.Secondary">
+                        The AI creates this work plan when the deep dive starts and keeps it updated while working —
+                        adding, completing, and cancelling tasks as it learns. The run is automatically continued until
+                        the plan is complete (up to the configured continuation limit).
+                    </MudText>
+                    <MudCard Elevation="2" Class="rounded-lg">
+                        <MudCardContent>
+                            <AgentTaskListPanel Tasks="@_tasks" />
+                        </MudCardContent>
+                    </MudCard>
+                </MudStack>
+            </MudTabPanel>
+
+            @* ─────────────────────────── FINDINGS ─────────────────────────── *@
+            <MudTabPanel Text="@($"Findings ({_findings.Count})")" Icon="@Icons.Material.Filled.FactCheck">
+                <MudStack Spacing="3" Class="pt-4">
+                    <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="3" Wrap="Wrap.Wrap">
+                        <MudChipSet T="FindingSeverity" SelectionMode="SelectionMode.MultiSelection" @bind-SelectedValues="_severityFilter" CheckMark="true">
+                            @foreach (var sev in AllSeverities)
+                            {
+                                <MudChip T="FindingSeverity" Value="@sev" Color="@SeverityColor(sev)" Variant="Variant.Text" Size="Size.Small">
+                                    @sev (@CountBySeverity(sev))
+                                </MudChip>
+                            }
+                        </MudChipSet>
+                        <MudSpacer />
+                        <MudTextField T="string" @bind-Value="_findingSearch" Placeholder="Search findings..."
+                                      Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Search"
+                                      Clearable="true" Immediate="true" Style="max-width: 280px;" />
+                    </MudStack>
+
+                    @if (FilteredFindings.Count == 0)
+                    {
+                        <MudText Typo="Typo.body1">No findings match the filter.</MudText>
+                    }
+
+                    <MudExpansionPanels MultiExpansion="true" Elevation="2" Class="rounded-lg">
+                        @foreach (var f in FilteredFindings)
+                        {
+                            <MudExpansionPanel @key="f.Id">
+                                <TitleContent>
+                                    <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+                                        <MudIcon Icon="@SeverityIcon(f.Severity)" Color="@SeverityColor(f.Severity)" />
+                                        <MudChip T="string" Size="Size.Small" Color="@SeverityColor(f.Severity)">@f.Severity</MudChip>
+                                        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">@f.Category</MudChip>
+                                        <MudText Typo="Typo.body1">@f.Title</MudText>
+                                        <MudSpacer />
+                                        @if (f.Source is not null)
+                                        {
+                                            <MudChip T="string" Size="Size.Small" Variant="Variant.Text"
+                                                     Color="@(f.Source == "AI" ? Color.Secondary : Color.Default)">
+                                                @(f.Source == "AI" ? "AI" : "rule-based")
+                                            </MudChip>
+                                        }
+                                    </MudStack>
+                                </TitleContent>
+                                <ChildContent>
+                                    <MudStack Spacing="3" Class="pa-2">
+                                        @if (!string.IsNullOrWhiteSpace(f.Description))
+                                        {
+                                            <div>
+                                                <MudText Typo="Typo.subtitle2">What was found</MudText>
+                                                <MudText Typo="Typo.body2" Style="white-space: pre-wrap;">@f.Description</MudText>
+                                            </div>
+                                        }
+                                        @if (!string.IsNullOrWhiteSpace(f.Evidence))
+                                        {
+                                            <div>
+                                                <MudText Typo="Typo.subtitle2">Evidence</MudText>
+                                                <MudText Typo="Typo.body2" Style="white-space: pre-wrap;">@f.Evidence</MudText>
+                                            </div>
+                                        }
+                                        @if (!string.IsNullOrWhiteSpace(f.Recommendation))
+                                        {
+                                            <div>
+                                                <MudText Typo="Typo.subtitle2">Recommendation</MudText>
+                                                <MudText Typo="Typo.body2" Style="white-space: pre-wrap;">@f.Recommendation</MudText>
+                                            </div>
+                                        }
+                                        @if (!string.IsNullOrWhiteSpace(f.RecommendationSql))
+                                        {
+                                            <div>
+                                                <MudText Typo="Typo.subtitle2">Suggested SQL (not executed — review before use)</MudText>
+                                                <pre style="background: var(--mud-palette-background-gray); padding: 12px; border-radius: 6px; overflow-x: auto; font-size: 0.85rem;"><code>@f.RecommendationSql</code></pre>
+                                            </div>
+                                        }
+                                        <MudStack Row="true" Spacing="4" Wrap="Wrap.Wrap" AlignItems="AlignItems.Center">
+                                            @if (!string.IsNullOrWhiteSpace(f.ObjectName))
+                                            {
+                                                <MudText Typo="Typo.caption">
+                                                    Object: <strong>@(string.IsNullOrWhiteSpace(f.ObjectSchema) ? f.ObjectName : $"{f.ObjectSchema}.{f.ObjectName}")</strong>
+                                                </MudText>
+                                            }
+                                            @if (f.ImpactScore > 0)
+                                            {
+                                                <MudText Typo="Typo.caption">Impact score: <strong>@f.ImpactScore.ToString("N0")</strong></MudText>
+                                            }
+                                            <MudText Typo="Typo.caption">Recorded @f.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</MudText>
+                                            @if (f.ProposedExperimentId is not null)
+                                            {
+                                                <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Primary"
+                                                           StartIcon="@Icons.Material.Filled.Science"
+                                                           Href="@($"/experiments/{(int)(object)f.ProposedExperimentId.Value}/view")">
+                                                    Open experiment
+                                                </MudButton>
+                                            }
+                                        </MudStack>
+                                    </MudStack>
+                                </ChildContent>
+                            </MudExpansionPanel>
+                        }
+                    </MudExpansionPanels>
+                </MudStack>
+            </MudTabPanel>
+
+            @* ─────────────────────────── METRICS ─────────────────────────── *@
+            <MudTabPanel Text="Metrics" Icon="@Icons.Material.Filled.QueryStats">
+                <MudStack Spacing="2" Class="pt-4">
+                    @if (string.IsNullOrWhiteSpace(_analysis.MetricsSummaryMarkdown))
+                    {
+                        <MudText Typo="Typo.body1">No metrics collected yet.</MudText>
+                    }
+                    else
+                    {
+                        <MudCard Elevation="2" Class="rounded-lg">
+                            <MudCardContent>
+                                <MudText Typo="Typo.body2" Style="white-space: pre-wrap; font-family: var(--mud-typography-caption-family); font-size: 0.8rem;">
+                                    @_analysis.MetricsSummaryMarkdown
+                                </MudText>
+                            </MudCardContent>
+                        </MudCard>
+                    }
+                </MudStack>
+            </MudTabPanel>
+
+            @* ─────────────────────────── LOG ─────────────────────────── *@
+            <MudTabPanel Text="@($"Log ({_logs.Count})")" Icon="@Icons.Material.Filled.Article">
+                <MudStack Spacing="1" Class="pt-4">
+                    @if (_logs.Count == 0)
+                    {
+                        <MudText Typo="Typo.body1">No log entries.</MudText>
+                    }
+                    @foreach (var log in _logs)
+                    {
+                        <MudPaper Elevation="1" Class="pa-3 rounded">
+                            <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center" Class="mb-1">
+                                <MudText Typo="Typo.caption">@log.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")</MudText>
+                                @if (!string.IsNullOrWhiteSpace(log.Source))
+                                {
+                                    <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">@log.Source</MudChip>
+                                }
+                            </MudStack>
+                            <MudText Typo="Typo.body2" Style="white-space: pre-wrap; word-break: break-word;">@log.Message</MudText>
+                        </MudPaper>
+                    }
+                </MudStack>
+            </MudTabPanel>
+        </MudTabs>
+    }
+</MudContainer>
+
+@code {
+    [Parameter] public int Id { get; set; }
+
+    private readonly CancellationTokenSource _pageCts = new();
+
+    private int _activeTabIndex;
+    private bool _loading = true;
+
+    private DatabaseAnalysis? _analysis;
+    private List<AnalysisFinding> _findings = new();
+    private List<DatabaseAnalysisLog> _logs = new();
+    private List<AgentTask> _tasks = new();
+    private SnapshotDto? _snapshot;
+
+    private int _healthScore;
+    private int _problemCount;
+    private List<AnalysisFinding> _topProblems = new();
+    private List<AnalysisFinding> _goodFindings = new();
+
+    private double[] _severityChartData = Array.Empty<double>();
+    private string[] _severityChartLabels = Array.Empty<string>();
+    private ChartOptions _severityChartOptions = new();
+    private List<ChartSeries<double>> _categoryChartSeries = new();
+    private string[] _categoryChartLabels = Array.Empty<string>();
+    private readonly ChartOptions _barChartOptions = new() { ChartPalette = new[] { "#2196F3" } };
+    private readonly ChartOptions _fragChartOptions = new() { ChartPalette = new[] { "#F57C00" } };
+
+    private List<ChartSeries<double>> _tableSizeSeries = new();
+    private string[] _tableSizeLabels = Array.Empty<string>();
+    private List<ChartSeries<double>> _fragmentationSeries = new();
+    private string[] _fragmentationLabels = Array.Empty<string>();
+    private List<ChartSeries<double>> _topQuerySeries = new();
+    private string[] _topQueryLabels = Array.Empty<string>();
+
+    private IReadOnlyCollection<FindingSeverity> _severityFilter = new List<FindingSeverity>();
+    private string? _findingSearch;
+
+    private static readonly FindingSeverity[] AllSeverities =
+        { FindingSeverity.Critical, FindingSeverity.High, FindingSeverity.Medium, FindingSeverity.Low, FindingSeverity.Info, FindingSeverity.Good };
+    private static readonly FindingSeverity[] ProblemSeverities =
+        { FindingSeverity.Critical, FindingSeverity.High, FindingSeverity.Medium, FindingSeverity.Low };
+
+    /// <summary>Mirrors OptimizeEngine's PerformanceSnapshot JSON shape (WebUI does not reference that project).</summary>
+    private sealed class SnapshotDto
+    {
+        public string? DatabaseName { get; set; }
+        public string? ServerVersion { get; set; }
+        public Dictionary<string, List<Dictionary<string, string>>> Sections { get; set; } = new();
+        public Dictionary<string, string> Errors { get; set; } = new();
+    }
+
+    private List<AnalysisFinding> FilteredFindings
+    {
+        get
+        {
+            IEnumerable<AnalysisFinding> q = _findings;
+            if (_severityFilter.Count > 0)
+                q = q.Where(f => _severityFilter.Contains(f.Severity));
+            if (!string.IsNullOrWhiteSpace(_findingSearch))
+                q = q.Where(f =>
+                    f.Title.Contains(_findingSearch, StringComparison.OrdinalIgnoreCase) ||
+                    (f.Description?.Contains(_findingSearch, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                    (f.ObjectName?.Contains(_findingSearch, StringComparison.OrdinalIgnoreCase) ?? false));
+            return q
+                .OrderBy(f => Array.IndexOf(AllSeverities, f.Severity))
+                .ThenByDescending(f => f.ImpactScore)
+                .ToList();
+        }
+    }
+
+    public void Dispose()
+    {
+        _pageCts.Cancel();
+        _pageCts.Dispose();
+    }
+
+    protected override Task OnInitializedAsync() =>
+        PageLoadCancellation.RunPageLoadAsync(LoadAsync, _pageCts.Token);
+
+    protected override Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            var sec = Math.Max(1, UiPolling.Value.ResearchFlowRefreshSeconds);
+            var analysisId = (DatabaseAnalysisId)(object)Id;
+            WatermarkBackgroundReload.Start(
+                TimeSpan.FromSeconds(sec),
+                _pageCts.Token,
+                () => DataAccess.GetDatabaseAnalysisModifiedAtAsync(analysisId, _pageCts.Token),
+                work => InvokeAsync(work),
+                () => PageLoadCancellation.RunPageLoadAsync(LoadAsync, _pageCts.Token),
+                () => InvokeAsync(StateHasChanged));
+        }
+
+        return Task.CompletedTask;
+    }
+
+    private async Task LoadAsync(CancellationToken ct)
+    {
+        await using var db = await DbContextFactory.CreateDbContextAsync(ct);
+        var analysisId = (DatabaseAnalysisId)(object)Id;
+
+        _analysis = await db.DatabaseAnalyses.AsNoTracking()
+            .Include(a => a.DatabaseConnection)
+            .Include(a => a.AIConnection)
+            .FirstOrDefaultAsync(a => a.Id == analysisId, ct);
+
+        if (_analysis == null)
+        {
+            _loading = false;
+            return;
+        }
+
+        _findings = await db.AnalysisFindings.AsNoTracking()
+            .Where(f => f.DatabaseAnalysisId == analysisId)
+            .OrderByDescending(f => f.ImpactScore)
+            .ToListAsync(ct);
+
+        _logs = await db.DatabaseAnalysisLogs.AsNoTracking()
+            .Where(l => l.DatabaseAnalysisId == analysisId)
+            .OrderByDescending(l => l.CreatedAt)
+            .Take(200)
+            .ToListAsync(ct);
+
+        _tasks = await db.AgentTasks.AsNoTracking()
+            .Where(t => t.DatabaseAnalysisId == analysisId)
+            .OrderBy(t => t.Id)
+            .ToListAsync(ct);
+
+        _snapshot = ParseSnapshot(_analysis.MetricsSnapshotJson);
+
+        BuildDashboard();
+
+        _loading = false;
+    }
+
+    private static SnapshotDto? ParseSnapshot(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+            return null;
+        try
+        {
+            return JsonSerializer.Deserialize<SnapshotDto>(json);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    private void BuildDashboard()
+    {
+        // Health score: 100 minus weighted problem deductions, floored at 5.
+        var crit = CountBySeverity(FindingSeverity.Critical);
+        var high = CountBySeverity(FindingSeverity.High);
+        var med = CountBySeverity(FindingSeverity.Medium);
+        var low = CountBySeverity(FindingSeverity.Low);
+        _problemCount = crit + high + med + low;
+        _healthScore = _findings.Count == 0 ? 0 : Math.Max(5, 100 - (crit * 20 + high * 10 + med * 4 + low * 1));
+
+        _topProblems = _findings
+            .Where(f => ProblemSeverities.Contains(f.Severity))
+            .OrderBy(f => Array.IndexOf(AllSeverities, f.Severity))
+            .ThenByDescending(f => f.ImpactScore)
+            .Take(8)
+            .ToList();
+
+        _goodFindings = _findings.Where(f => f.Severity == FindingSeverity.Good).Take(8).ToList();
+
+        // Severity donut (only severities that occur, keeping color mapping aligned)
+        var present = AllSeverities
+            .Select(s => (Severity: s, Count: CountBySeverity(s)))
+            .Where(x => x.Count > 0)
+            .ToList();
+        _severityChartData = present.Select(x => (double)x.Count).ToArray();
+        _severityChartLabels = present.Select(x => $"{x.Severity} ({x.Count})").ToArray();
+        _severityChartOptions = new ChartOptions
+        {
+            ChartPalette = present.Select(x => SeverityHex(x.Severity)).ToArray()
+        };
+
+        // Category bar
+        var byCategory = _findings
+            .GroupBy(f => f.Category)
+            .OrderByDescending(g => g.Count())
+            .Take(10)
+            .ToList();
+        _categoryChartLabels = byCategory.Select(g => g.Key.ToString()).ToArray();
+        _categoryChartSeries = byCategory.Count == 0
+            ? new List<ChartSeries<double>>()
+            : new List<ChartSeries<double>>
+            {
+                new() { Name = "Findings", Data = byCategory.Select(g => (double)g.Count()).ToList() }
+            };
+
+        BuildMetricCharts();
+    }
+
+    private void BuildMetricCharts()
+    {
+        _tableSizeSeries = new();
+        _fragmentationSeries = new();
+        _topQuerySeries = new();
+
+        if (_snapshot is null)
+            return;
+
+        if (_snapshot.Sections.TryGetValue("TableSizes", out var tables) && tables.Count > 0)
+        {
+            var top = tables.Take(8).ToList();
+            _tableSizeLabels = top.Select(r => Shorten(r.GetValueOrDefault("table_name", "?"), 14)).ToArray();
+            _tableSizeSeries = new List<ChartSeries<double>>
+            {
+                new() { Name = "Reserved MB", Data = top.Select(r => ParseDouble(r.GetValueOrDefault("reserved_mb"))).ToList() }
+            };
+        }
+
+        if (_snapshot.Sections.TryGetValue("IndexFragmentation", out var frags) && frags.Count > 0)
+        {
+            var top = frags.Take(8).ToList();
+            _fragmentationLabels = top.Select(r => Shorten(r.GetValueOrDefault("index_name", "?"), 14)).ToArray();
+            _fragmentationSeries = new List<ChartSeries<double>>
+            {
+                new() { Name = "Fragmentation %", Data = top.Select(r => ParseDouble(r.GetValueOrDefault("avg_fragmentation_pct"))).ToList() }
+            };
+        }
+
+        if (_snapshot.Sections.TryGetValue("TopQueriesByCpu", out var queries) && queries.Count > 0)
+        {
+            var top = queries.Take(8).ToList();
+            _topQueryLabels = top.Select((_, i) => $"Q{i + 1}").ToArray();
+            _topQuerySeries = new List<ChartSeries<double>>
+            {
+                new() { Name = "Total CPU ms", Data = top.Select(r => ParseDouble(r.GetValueOrDefault("total_cpu_ms"))).ToList() }
+            };
+        }
+    }
+
+    private int CountBySeverity(FindingSeverity severity) => _findings.Count(f => f.Severity == severity);
+
+    private void JumpToFinding(AnalysisFinding finding)
+    {
+        _severityFilter = new List<FindingSeverity>();
+        _findingSearch = finding.Title;
+        _activeTabIndex = 2; // Findings tab (after Dashboard, Plan)
+    }
+
+    private async Task QueueAnalysis()
+    {
+        await using var db = await DbContextFactory.CreateDbContextAsync();
+        var analysisId = (DatabaseAnalysisId)(object)Id;
+        var now = DateTime.UtcNow;
+        var n = await db.DatabaseAnalyses
+            .Where(a => a.Id == analysisId &&
+                        (a.State == DatabaseAnalysisState.Draft || a.State == DatabaseAnalysisState.Failed ||
+                         a.State == DatabaseAnalysisState.Stopped || a.State == DatabaseAnalysisState.Completed))
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(a => a.State, DatabaseAnalysisState.Queued)
+                .SetProperty(a => a.LastMessage, "Queued")
+                .SetProperty(a => a.EndedAt, (DateTime?)null)
+                .SetProperty(a => a.ModifiedAt, now));
+        Snackbar.Add(n == 1 ? "Analysis queued" : "Could not queue analysis", n == 1 ? Severity.Success : Severity.Warning);
+        await PageLoadCancellation.RunPageLoadAsync(LoadAsync, _pageCts.Token);
+    }
+
+    private async Task StopAnalysis()
+    {
+        await using var db = await DbContextFactory.CreateDbContextAsync();
+        var analysisId = (DatabaseAnalysisId)(object)Id;
+        var now = DateTime.UtcNow;
+        await db.DatabaseAnalyses
+            .Where(a => a.Id == analysisId &&
+                        (a.State == DatabaseAnalysisState.Queued || a.State == DatabaseAnalysisState.Running))
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(a => a.State, DatabaseAnalysisState.Stopped)
+                .SetProperty(a => a.LastMessage, "Stop requested by user")
+                .SetProperty(a => a.ModifiedAt, now));
+        Snackbar.Add("Stop requested", Severity.Info);
+        await PageLoadCancellation.RunPageLoadAsync(LoadAsync, _pageCts.Token);
+    }
+
+    #region Presentation helpers
+
+    private static Color StateColor(DatabaseAnalysisState state) => state switch
+    {
+        DatabaseAnalysisState.Running => Color.Info,
+        DatabaseAnalysisState.Queued => Color.Warning,
+        DatabaseAnalysisState.Completed => Color.Success,
+        DatabaseAnalysisState.Failed => Color.Error,
+        _ => Color.Default,
+    };
+
+    private static Color SeverityColor(FindingSeverity severity) => severity switch
+    {
+        FindingSeverity.Critical => Color.Error,
+        FindingSeverity.High => Color.Error,
+        FindingSeverity.Medium => Color.Warning,
+        FindingSeverity.Low => Color.Default,
+        FindingSeverity.Info => Color.Info,
+        FindingSeverity.Good => Color.Success,
+        _ => Color.Default,
+    };
+
+    private static string SeverityHex(FindingSeverity severity) => severity switch
+    {
+        FindingSeverity.Critical => "#B71C1C",
+        FindingSeverity.High => "#E53935",
+        FindingSeverity.Medium => "#F57C00",
+        FindingSeverity.Low => "#90A4AE",
+        FindingSeverity.Info => "#42A5F5",
+        FindingSeverity.Good => "#43A047",
+        _ => "#9E9E9E",
+    };
+
+    private static string SeverityIcon(FindingSeverity severity) => severity switch
+    {
+        FindingSeverity.Critical => Icons.Material.Filled.Error,
+        FindingSeverity.High => Icons.Material.Filled.PriorityHigh,
+        FindingSeverity.Medium => Icons.Material.Filled.Warning,
+        FindingSeverity.Low => Icons.Material.Filled.LowPriority,
+        FindingSeverity.Info => Icons.Material.Filled.Info,
+        FindingSeverity.Good => Icons.Material.Filled.CheckCircle,
+        _ => Icons.Material.Filled.Help,
+    };
+
+    private static Color HealthColor(int score) => score switch
+    {
+        >= 80 => Color.Success,
+        >= 55 => Color.Warning,
+        > 0 => Color.Error,
+        _ => Color.Default,
+    };
+
+    private static string HealthLabel(int score) => score switch
+    {
+        0 => "Not analyzed yet",
+        >= 80 => "Healthy",
+        >= 55 => "Needs attention",
+        _ => "Significant issues",
+    };
+
+    private static string Shorten(string value, int max) =>
+        value.Length <= max ? value : value[..max] + "…";
+
+    private static double ParseDouble(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value) || value == "NULL")
+            return 0;
+        if (double.TryParse(value, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var d))
+            return d;
+        if (double.TryParse(value, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.CurrentCulture, out d))
+            return d;
+        return 0;
+    }
+
+    #endregion
+}

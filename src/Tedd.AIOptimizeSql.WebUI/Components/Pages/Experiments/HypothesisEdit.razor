@@ -99,6 +99,26 @@
                 </MudItem>
             </MudGrid>
 
+            @if (_agentTasks.Count > 0)
+            {
+                <MudCard Elevation="3" Class="rounded-lg mb-4">
+                    <MudCardHeader>
+                        <CardHeaderContent>
+                            <MudText Typo="Typo.h6">
+                                <MudIcon Icon="@Icons.Material.Filled.Checklist" Class="mr-1" Style="vertical-align:middle" />
+                                AI work plan
+                            </MudText>
+                            <MudText Typo="Typo.caption">
+                                The agent's own task list for generating this hypothesis, updated live while it works.
+                            </MudText>
+                        </CardHeaderContent>
+                    </MudCardHeader>
+                    <MudCardContent>
+                        <AgentTaskListPanel Tasks="@_agentTasks" ShowEmptyState="false" />
+                    </MudCardContent>
+                </MudCard>
+            }
+
             @if (!string.IsNullOrWhiteSpace(_model.OptimizeSql))
             {
                 <MudCard Elevation="3" Class="rounded-lg mb-4">
@@ -330,6 +350,7 @@
     private int? _benchDeltaServerElapsedMs;
     private int? _benchDeltaLogicalReads;
     private List<HypothesisLog> _hypothesisLogs = new();
+    private List<AgentTask> _agentTasks = new();
     private readonly CancellationTokenSource _pageCts = new();
     private AIOptimizeDbContext? _db;
 
@@ -402,7 +423,18 @@
             return;
         _hypothesisLogs = _model.Logs.OrderBy(l => l.CreatedAt).ThenBy(l => l.Id).ToList();
         _selectedBuildsOn = _model.BuildsOnHypothesisId;
+        await LoadAgentTasksAsync(hId, _pageCts.Token);
         ComputeBenchDeltas();
+    }
+
+    private async Task LoadAgentTasksAsync(HypothesisId hypothesisId, CancellationToken ct)
+    {
+        if (_db is null)
+            return;
+        _agentTasks = await _db.AgentTasks.AsNoTracking()
+            .Where(t => t.HypothesisId == hypothesisId)
+            .OrderBy(t => t.Id)
+            .ToListAsync(ct);
     }
 
     protected override Task OnInitializedAsync() =>
@@ -439,6 +471,7 @@
                     _selectedBuildsOn = _model.BuildsOnHypothesisId;
                     _otherHypotheses = _otherHypotheses.Where(h => h.Id != _model.Id).ToList();
                     _hypothesisLogs = _model.Logs.OrderBy(l => l.CreatedAt).ThenBy(l => l.Id).ToList();
+                    await LoadAgentTasksAsync(hId, ct);
                     ComputeBenchDeltas();
                 }
             }

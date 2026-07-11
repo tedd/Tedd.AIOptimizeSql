@@ -43,6 +43,10 @@ public sealed class HypothesisTestingService(
         var dbConnection = experiment.DatabaseConnection
             ?? throw new InvalidOperationException("DatabaseConnection must be loaded.");
 
+        if (dbConnection.AnalyzeOnly)
+            throw new InvalidOperationException(
+                "Connection is analyze-only: benchmarking clears caches and updates statistics, which is not allowed.");
+
         if (string.IsNullOrWhiteSpace(experiment.BenchmarkSql))
             throw new InvalidOperationException("BenchmarkSql is required for benchmarking.");
 
@@ -131,6 +135,16 @@ public sealed class HypothesisTestingService(
             ?? throw new InvalidOperationException("DatabaseConnection must be loaded.");
         var aiConnection = iteration.AIConnection
             ?? throw new InvalidOperationException("AIConnection must be loaded.");
+
+        if (dbConnection.AnalyzeOnly)
+        {
+            // Safety net: callers already skip testing for analyze-only connections.
+            _logger.LogWarning("Hypothesis {Id} targets an analyze-only connection; refusing Apply/Benchmark/Revert", hypothesisId);
+            appendLog?.Invoke(hypothesisId,
+                "Skipped Apply/Benchmark/Revert: connection is analyze-only (production-safe). The database was not modified.",
+                "TestingService");
+            return true;
+        }
 
         var hypothesis = await LoadHypothesisAsync(hypothesisId, ct);
         if (hypothesis == null || string.IsNullOrWhiteSpace(hypothesis.OptimizeSql))

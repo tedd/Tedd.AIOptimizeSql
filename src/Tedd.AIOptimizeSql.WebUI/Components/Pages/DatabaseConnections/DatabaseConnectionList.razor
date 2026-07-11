@@ -41,7 +41,18 @@
             <MudTh Style="width: 80px;">Actions</MudTh>
         </HeaderContent>
         <RowTemplate>
-            <MudTd DataLabel="Name">@context.Name</MudTd>
+            <MudTd DataLabel="Name">
+                <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1">
+                    <span>@context.Name</span>
+                    @if (context.AnalyzeOnly)
+                    {
+                        <MudTooltip Text="Analyze only: this connection is production-safe; nothing is ever modified.">
+                            <MudChip T="string" Size="Size.Small" Color="Color.Warning" Variant="Variant.Outlined"
+                                     Icon="@Icons.Material.Filled.Shield">analyze-only</MudChip>
+                        </MudTooltip>
+                    }
+                </MudStack>
+            </MudTd>
             <MudTd DataLabel="Connection String">
                 <MudText Typo="Typo.body2" Style="max-width:400px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
                     @MaskConnectionString(context.ConnectionString)

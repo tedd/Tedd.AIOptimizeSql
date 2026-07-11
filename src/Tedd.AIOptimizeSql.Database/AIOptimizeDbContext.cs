@@ -22,6 +22,10 @@ public class AIOptimizeDbContext : DbContext
     public DbSet<HypothesisLog> HypothesisLogs => Set<HypothesisLog>();
     public DbSet<BenchmarkRun> BenchmarkRuns => Set<BenchmarkRun>();
     public DbSet<RunQueue> RunQueue => Set<RunQueue>();
+    public DbSet<DatabaseAnalysis> DatabaseAnalyses => Set<DatabaseAnalysis>();
+    public DbSet<AnalysisFinding> AnalysisFindings => Set<AnalysisFinding>();
+    public DbSet<DatabaseAnalysisLog> DatabaseAnalysisLogs => Set<DatabaseAnalysisLog>();
+    public DbSet<AgentTask> AgentTasks => Set<AgentTask>();
 
     protected override void ConfigureConventions(ModelConfigurationBuilder builder)
     {
@@ -33,11 +37,19 @@ public class AIOptimizeDbContext : DbContext
         builder.Properties<HypothesisLogId>().HaveConversion<int>();
         builder.Properties<BenchmarkRunId>().HaveConversion<int>();
         builder.Properties<RunQueueId>().HaveConversion<int>();
+        builder.Properties<DatabaseAnalysisId>().HaveConversion<int>();
+        builder.Properties<AnalysisFindingId>().HaveConversion<int>();
+        builder.Properties<DatabaseAnalysisLogId>().HaveConversion<int>();
+        builder.Properties<AgentTaskId>().HaveConversion<int>();
 
         // AiProvider enum stored as string in DB
         builder.Properties<AiProvider>().HaveConversion<string>().HaveMaxLength(128);
         builder.Properties<ResearchIterationState>().HaveConversion<string>().HaveMaxLength(16);
         builder.Properties<HypothesisState>().HaveConversion<string>().HaveMaxLength(32);
+        builder.Properties<DatabaseAnalysisState>().HaveConversion<string>().HaveMaxLength(16);
+        builder.Properties<FindingSeverity>().HaveConversion<string>().HaveMaxLength(16);
+        builder.Properties<FindingCategory>().HaveConversion<string>().HaveMaxLength(32);
+        builder.Properties<AgentTaskStatus>().HaveConversion<string>().HaveMaxLength(16);
     }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -153,6 +165,83 @@ public class AIOptimizeDbContext : DbContext
                 .WithMany(h => h.Logs)
                 .HasForeignKey(l => l.HypothesisId)
                 .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<DatabaseAnalysis>(entity =>
+        {
+            // Enum PK: CLR default is 0, which EF can treat as an explicit key — INSERT then sends Id=0 and breaks IDENTITY / duplicates.
+            entity.Property(a => a.Id)
+                .ValueGeneratedOnAdd()
+                .UseIdentityColumn()
+                .HasSentinel(DatabaseAnalysisId.Transient);
+
+            entity.HasOne(a => a.DatabaseConnection)
+                .WithMany()
+                .HasForeignKey(a => a.DatabaseConnectionId)
+                .OnDelete(DeleteBehavior.SetNull);
+
+            entity.HasOne(a => a.AIConnection)
+                .WithMany()
+                .HasForeignKey(a => a.AIConnectionId)
+                .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        modelBuilder.Entity<AnalysisFinding>(entity =>
+        {
+            entity.Property(f => f.Id)
+                .ValueGeneratedOnAdd()
+                .UseIdentityColumn()
+                .HasSentinel(AnalysisFindingId.Transient);
+
+            entity.HasOne(f => f.DatabaseAnalysis)
+                .WithMany(a => a.Findings)
+                .HasForeignKey(f => f.DatabaseAnalysisId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            // NoAction: experiments can outlive the finding that proposed them.
+            entity.HasOne(f => f.ProposedExperiment)
+                .WithMany()
+                .HasForeignKey(f => f.ProposedExperimentId)
+                .OnDelete(DeleteBehavior.NoAction);
+        });
+
+        modelBuilder.Entity<DatabaseAnalysisLog>(entity =>
+        {
+            entity.Property(l => l.Id)
+                .ValueGeneratedOnAdd()
+                .UseIdentityColumn()
+                .HasSentinel(DatabaseAnalysisLogId.Transient);
+
+            entity.Property(l => l.Message).HasColumnType("nvarchar(max)");
+
+            entity.HasOne(l => l.DatabaseAnalysis)
+                .WithMany(a => a.Logs)
+                .HasForeignKey(l => l.DatabaseAnalysisId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<AgentTask>(entity =>
+        {
+            entity.Property(t => t.Id)
+                .ValueGeneratedOnAdd()
+                .UseIdentityColumn()
+                .HasSentinel(AgentTaskId.Transient);
+
+            entity.HasOne(t => t.DatabaseAnalysis)
+                .WithMany()
+                .HasForeignKey(t => t.DatabaseAnalysisId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            // Cascade is safe here: the cascade paths into AgentTasks (via
+            // DatabaseAnalyses and via Experiments→ResearchIterations→Hypotheses)
+            // have no shared ancestor, so SQL Server accepts both.
+            entity.HasOne(t => t.Hypothesis)
+                .WithMany()
+                .HasForeignKey(t => t.HypothesisId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasIndex(t => t.DatabaseAnalysisId);
+            entity.HasIndex(t => t.HypothesisId);
         });
     }
 }

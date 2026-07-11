@@ -21,6 +21,11 @@ public static class Startup
         builder.Services.AddSingleton<IAiHypothesisService, AiHypothesisService>();
         builder.Services.AddSingleton<ResearchIterationProcessingEngine>();
         builder.Services.AddHostedService<QueueMonitorService>();
+
+        builder.Services.AddSingleton<AgentTaskLoopRunner>();
+        builder.Services.AddSingleton<PerformanceSnapshotService>();
+        builder.Services.AddSingleton<DatabaseAnalysisService>();
+        builder.Services.AddHostedService<AnalysisMonitorService>();
     }
 
     public static void ConfigureApplication(IHost host)

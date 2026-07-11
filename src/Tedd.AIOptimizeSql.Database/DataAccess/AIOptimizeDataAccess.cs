@@ -383,6 +383,23 @@ public sealed class AIOptimizeDataAccess(IDbContextFactory<AIOptimizeDbContext> 
         return await db.Experiments.MaxAsync(e => e.ModifiedAt, cancellationToken);
     }
 
+    public async Task<DateTime?> GetMaxDatabaseAnalysisModifiedAtAsync(CancellationToken cancellationToken = default)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
+        if (!await db.DatabaseAnalyses.AnyAsync(cancellationToken))
+            return null;
+        return await db.DatabaseAnalyses.MaxAsync(a => a.ModifiedAt, cancellationToken);
+    }
+
+    public async Task<DateTime?> GetDatabaseAnalysisModifiedAtAsync(DatabaseAnalysisId id, CancellationToken cancellationToken = default)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
+        return await db.DatabaseAnalyses.AsNoTracking()
+            .Where(a => a.Id == id)
+            .Select(a => (DateTime?)a.ModifiedAt)
+            .FirstOrDefaultAsync(cancellationToken);
+    }
+
     public async Task<DateTime?> GetExperimentResultsWatermarkAsync(
         ExperimentId experimentId,
         CancellationToken cancellationToken = default)

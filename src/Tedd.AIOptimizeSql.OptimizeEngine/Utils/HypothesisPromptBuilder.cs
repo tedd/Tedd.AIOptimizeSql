@@ -12,13 +12,36 @@ internal static class HypothesisPromptBuilder
         ResearchIteration iteration,
         IReadOnlyList<Hypothesis> priorHypotheses,
         string? schemaDiscoveryMarkdown = null,
-        string? baselinePerformanceSummary = null)
+        string? baselinePerformanceSummary = null,
+        bool analyzeOnly = false,
+        int maxAgentRuns = 20)
     {
         var sb = new StringBuilder();
 
         sb.AppendLine("You are a MSSQL performance optimization expert.");
         sb.AppendLine("Your goal is to propose a single, concrete optimisation for the SQL workload described below.");
-        sb.AppendLine("You have access to tools that let you execute SQL queries, run DDL/DML statements, inspect execution plans, and query schema metadata on the target database.");
+        if (analyzeOnly)
+        {
+            sb.AppendLine("You have access to READ-ONLY tools: SQL queries (SELECT/DMV), estimated execution plans, performance metrics, and schema metadata on the target database.");
+        }
+        else
+        {
+            sb.AppendLine("You have access to tools that let you execute SQL queries, run DDL/DML statements, inspect execution plans, and query schema metadata on the target database.");
+        }
+        sb.AppendLine();
+
+        if (analyzeOnly)
+        {
+            sb.AppendLine("## CRITICAL: analyze-only mode (production-safe)");
+            sb.AppendLine();
+            sb.AppendLine("The target database is marked analyze-only (it may be production). Nothing may be modified:");
+            sb.AppendLine("- Modifying statements are blocked by a safety guard; do not attempt DDL/DML.");
+            sb.AppendLine("- Your proposed optimize_sql / revert_sql will NOT be executed or benchmarked here. They are stored for the user to review and to test on a non-production copy.");
+            sb.AppendLine("- Base your reasoning on estimated execution plans (GetExecutionPlan compiles without executing) and DMV evidence instead of measured runs.");
+            sb.AppendLine();
+        }
+
+        sb.AppendLine(AgentTaskPromptSection.Build(maxAgentRuns));
         sb.AppendLine();
 
         // Constraints

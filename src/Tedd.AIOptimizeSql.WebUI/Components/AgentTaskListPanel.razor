@@ -1,0 +1,87 @@
+@using Tedd.AIOptimizeSql.Database.Models
+@using Tedd.AIOptimizeSql.Database.Models.Enums
+
+@* Live view of an AI agent's work plan. The agent creates and maintains this
+   list while working; pages refresh it via their existing watermark polling. *@
+
+@if (Tasks.Count == 0)
+{
+    @if (ShowEmptyState)
+    {
+        <MudText Typo="Typo.body2" Color="Color.Secondary">
+            The AI has not created a work plan yet. The plan appears here as soon as the agent starts.
+        </MudText>
+    }
+}
+else
+{
+    <MudStack Spacing="2">
+        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="3">
+            <MudProgressLinear Value="@ProgressPercent" Color="@(Done == Actionable && Actionable > 0 ? Color.Success : Color.Info)"
+                               Rounded="true" Size="Size.Medium" Style="flex: 1;" />
+            <MudText Typo="Typo.body2" Style="white-space: nowrap;">
+                @Done / @Actionable done
+            </MudText>
+        </MudStack>
+
+        <MudList T="string" Dense="true" ReadOnly="true">
+            @foreach (var task in Tasks)
+            {
+                <MudListItem T="string">
+                    <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+                        <MudIcon Icon="@StatusIcon(task.Status)" Color="@StatusColor(task.Status)" Size="Size.Small" />
+                        <MudStack Spacing="0" Style="min-width: 0;">
+                            <MudText Typo="Typo.body2"
+                                     Style="@(task.Status == AgentTaskStatus.Cancelled ? "text-decoration: line-through; opacity: 0.6;" : null)">
+                                @task.Title
+                            </MudText>
+                            @if (!string.IsNullOrWhiteSpace(task.Notes))
+                            {
+                                <MudText Typo="Typo.caption" Color="Color.Secondary" Style="white-space: pre-wrap;">@task.Notes</MudText>
+                            }
+                        </MudStack>
+                        <MudSpacer />
+                        @if (task.Status == AgentTaskStatus.InProgress)
+                        {
+                            <MudProgressCircular Size="Size.Small" Indeterminate="true" Color="Color.Info" />
+                        }
+                        <MudText Typo="Typo.caption" Color="Color.Secondary" Style="white-space: nowrap;">
+                            @task.ModifiedAt.ToLocalTime().ToString("HH:mm:ss")
+                        </MudText>
+                    </MudStack>
+                </MudListItem>
+            }
+        </MudList>
+    </MudStack>
+}
+
+@code {
+    /// <summary>Tasks in creation order.</summary>
+    [Parameter] public IReadOnlyList<AgentTask> Tasks { get; set; } = Array.Empty<AgentTask>();
+
+    /// <summary>Show a placeholder message when there are no tasks.</summary>
+    [Parameter] public bool ShowEmptyState { get; set; } = true;
+
+    private int Done => Tasks.Count(t => t.Status == AgentTaskStatus.Completed);
+
+    /// <summary>Tasks that count toward completion (cancelled ones are excluded).</summary>
+    private int Actionable => Tasks.Count(t => t.Status != AgentTaskStatus.Cancelled);
+
+    private double ProgressPercent => Actionable == 0 ? 0 : 100.0 * Done / Actionable;
+
+    private static string StatusIcon(AgentTaskStatus status) => status switch
+    {
+        AgentTaskStatus.Completed => Icons.Material.Filled.CheckCircle,
+        AgentTaskStatus.InProgress => Icons.Material.Filled.PlayCircle,
+        AgentTaskStatus.Cancelled => Icons.Material.Filled.Cancel,
+        _ => Icons.Material.Outlined.Circle,
+    };
+
+    private static Color StatusColor(AgentTaskStatus status) => status switch
+    {
+        AgentTaskStatus.Completed => Color.Success,
+        AgentTaskStatus.InProgress => Color.Info,
+        AgentTaskStatus.Cancelled => Color.Default,
+        _ => Color.Default,
+    };
+}

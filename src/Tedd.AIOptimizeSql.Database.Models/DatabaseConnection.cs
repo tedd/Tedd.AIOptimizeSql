@@ -15,6 +15,14 @@ public record DatabaseConnection
     public string ConnectionString { get; set; } = string.Empty;
 
     /// <summary>
+    /// Production-safe mode: when true, nothing on this connection may modify the
+    /// target database. AI tools are restricted to read-only statements (SELECT,
+    /// estimated plans, DMV queries), hypothesis apply/benchmark/revert is skipped,
+    /// and views/stored procedures/data are never touched.
+    /// </summary>
+    public bool AnalyzeOnly { get; set; }
+
+    /// <summary>
     /// Created UTC
     /// </summary>
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;

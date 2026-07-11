@@ -1,0 +1,289 @@
+@page "/analyses"
+@implements IDisposable
+@rendermode InteractiveServer
+@inject IDbContextFactory<Tedd.AIOptimizeSql.Database.AIOptimizeDbContext> DbContextFactory
+@inject IAIOptimizeDataAccess DataAccess
+@inject IOptions<UiPollingOptions> UiPolling
+@inject NavigationManager Navigation
+@inject IDialogService DialogService
+@inject ISnackbar Snackbar
+@using Microsoft.EntityFrameworkCore
+@using Tedd.AIOptimizeSql.Database
+@using Tedd.AIOptimizeSql.Database.Models
+@using Tedd.AIOptimizeSql.Database.Models.Enums
+
+<PageTitle>Database Analysis</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.ExtraLarge" Class="mt-4">
+    <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-4">
+        <MudText Typo="Typo.h4">Database Analysis</MudText>
+        <MudSpacer />
+        @if (_selectedItems.Count > 0)
+        {
+            <MudButton Variant="Variant.Outlined" Color="Color.Error" StartIcon="@Icons.Material.Filled.Delete"
+                       OnClick="DeleteSelected" Class="mr-2">
+                Delete Selected (@_selectedItems.Count)
+            </MudButton>
+        }
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Add"
+                   Href="/analyses/new">
+            New Analysis
+        </MudButton>
+    </MudStack>
+
+    <MudText Typo="Typo.body2" Color="Color.Secondary" Class="mb-4">
+        Point an analysis at a database and it digs in: missing indexes, fragmentation, stale statistics,
+        expensive queries, stored procedures, views, and configuration — strictly read-only, safe for production.
+    </MudText>
+
+    <MudTable @ref="_table" T="AnalysisRow" ServerData="LoadServerData" Hover="true" Elevation="3"
+              Dense="true" FixedHeader="true" MultiSelection="true" @bind-SelectedItems="_selectedItems"
+              OnRowClick="OnRowClick" RowClass="cursor-pointer" Class="rounded-lg">
+        <HeaderContent>
+            <MudTh><MudTableSortLabel SortLabel="Name" T="AnalysisRow">Name</MudTableSortLabel></MudTh>
+            <MudTh><MudTableSortLabel SortLabel="Connection" T="AnalysisRow">DB Connection</MudTableSortLabel></MudTh>
+            <MudTh><MudTableSortLabel SortLabel="State" T="AnalysisRow">State</MudTableSortLabel></MudTh>
+            <MudTh>Findings</MudTh>
+            <MudTh>Last message</MudTh>
+            <MudTh><MudTableSortLabel SortLabel="CreatedAt" T="AnalysisRow">Created</MudTableSortLabel></MudTh>
+            <MudTh Style="width: 120px;">Actions</MudTh>
+        </HeaderContent>
+        <RowTemplate>
+            <MudTd DataLabel="Name">@context.Analysis.Name</MudTd>
+            <MudTd DataLabel="DB Connection">
+                @if (context.Analysis.DatabaseConnection != null)
+                {
+                    <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1">
+                        <span>@context.Analysis.DatabaseConnection.Name</span>
+                        @if (context.Analysis.DatabaseConnection.AnalyzeOnly)
+                        {
+                            <MudChip T="string" Size="Size.Small" Color="Color.Warning" Variant="Variant.Outlined">analyze-only</MudChip>
+                        }
+                    </MudStack>
+                }
+                else
+                {
+                    <MudText Typo="Typo.body2">--</MudText>
+                }
+            </MudTd>
+            <MudTd DataLabel="State">
+                <MudChip T="string" Size="Size.Small" Color="@StateColor(context.Analysis.State)">
+                    @context.Analysis.State
+                </MudChip>
+            </MudTd>
+            <MudTd DataLabel="Findings">
+                @if (context.FindingCount > 0)
+                {
+                    <MudStack Row="true" Spacing="1">
+                        @if (context.ProblemCount > 0)
+                        {
+                            <MudChip T="string" Size="Size.Small" Color="Color.Error" Variant="Variant.Text">@context.ProblemCount issues</MudChip>
+                        }
+                        @if (context.GoodCount > 0)
+                        {
+                            <MudChip T="string" Size="Size.Small" Color="Color.Success" Variant="Variant.Text">@context.GoodCount good</MudChip>
+                        }
+                    </MudStack>
+                }
+                else
+                {
+                    <MudText Typo="Typo.body2">—</MudText>
+                }
+            </MudTd>
+            <MudTd DataLabel="Last message">
+                <MudText Typo="Typo.body2" Style="max-width:320px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
+                    @context.Analysis.LastMessage
+                </MudText>
+            </MudTd>
+            <MudTd DataLabel="Created">@context.Analysis.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</MudTd>
+            <MudTd @onclick:stopPropagation="true">
+                <MudStack Row="true" Spacing="0">
+                    @if (context.Analysis.State is DatabaseAnalysisState.Draft or DatabaseAnalysisState.Failed or DatabaseAnalysisState.Stopped or DatabaseAnalysisState.Completed)
+                    {
+                        <MudIconButton Icon="@Icons.Material.Filled.PlayArrow" Color="Color.Success" Size="Size.Small"
+                                       OnClick="@(() => QueueAnalysis(context.Analysis))" aria-label="Run analysis" />
+                    }
+                    @if (context.Analysis.State is DatabaseAnalysisState.Queued or DatabaseAnalysisState.Running)
+                    {
+                        <MudIconButton Icon="@Icons.Material.Filled.Stop" Color="Color.Warning" Size="Size.Small"
+                                       OnClick="@(() => StopAnalysis(context.Analysis))" aria-label="Stop analysis" />
+                    }
+                    <MudIconButton Icon="@Icons.Material.Filled.Delete" Color="Color.Error" Size="Size.Small"
+                                   OnClick="@(() => DeleteSingle(context.Analysis))" aria-label="Delete" />
+                </MudStack>
+            </MudTd>
+        </RowTemplate>
+        <NoRecordsContent>
+            <MudText Typo="Typo.body1" Class="pa-4">No analyses yet. Create one to let the AI dig into a database.</MudText>
+        </NoRecordsContent>
+        <PagerContent>
+            <MudTablePager PageSizeOptions="new int[] { 20, 50, 100 }" />
+        </PagerContent>
+    </MudTable>
+</MudContainer>
+
+@code {
+    private readonly CancellationTokenSource _pageCts = new();
+    private MudTable<AnalysisRow>? _table;
+    private HashSet<AnalysisRow> _selectedItems = new();
+
+    public sealed record AnalysisRow(DatabaseAnalysis Analysis, int FindingCount, int ProblemCount, int GoodCount);
+
+    public void Dispose()
+    {
+        _pageCts.Cancel();
+        _pageCts.Dispose();
+    }
+
+    protected override Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            var sec = Math.Max(1, UiPolling.Value.EntityListRefreshSeconds);
+            WatermarkBackgroundReload.Start(
+                TimeSpan.FromSeconds(sec),
+                _pageCts.Token,
+                () => DataAccess.GetMaxDatabaseAnalysisModifiedAtAsync(_pageCts.Token),
+                work => InvokeAsync(work),
+                async () =>
+                {
+                    if (_table is not null)
+                        await _table.ReloadServerData();
+                },
+                () => InvokeAsync(StateHasChanged));
+        }
+
+        return Task.CompletedTask;
+    }
+
+    private static Color StateColor(DatabaseAnalysisState state) => state switch
+    {
+        DatabaseAnalysisState.Running => Color.Info,
+        DatabaseAnalysisState.Queued => Color.Warning,
+        DatabaseAnalysisState.Completed => Color.Success,
+        DatabaseAnalysisState.Failed => Color.Error,
+        DatabaseAnalysisState.Stopped => Color.Default,
+        _ => Color.Default,
+    };
+
+    private Task<TableData<AnalysisRow>> LoadServerData(TableState state, CancellationToken ct) =>
+        PageLoadCancellation.RunTableLoadAsync(t => LoadServerDataCore(state, t), _pageCts.Token, ct);
+
+    private async Task<TableData<AnalysisRow>> LoadServerDataCore(TableState state, CancellationToken cancellationToken)
+    {
+        await using var db = await DbContextFactory.CreateDbContextAsync(cancellationToken);
+        IQueryable<DatabaseAnalysis> query = db.DatabaseAnalyses
+            .AsNoTracking()
+            .Include(a => a.DatabaseConnection);
+
+        query = state.SortLabel switch
+        {
+            "Name" => state.SortDirection == SortDirection.Descending ? query.OrderByDescending(x => x.Name) : query.OrderBy(x => x.Name),
+            "Connection" => state.SortDirection == SortDirection.Descending
+                ? query.OrderByDescending(x => x.DatabaseConnection != null ? x.DatabaseConnection.Name : "")
+                : query.OrderBy(x => x.DatabaseConnection != null ? x.DatabaseConnection.Name : ""),
+            "State" => state.SortDirection == SortDirection.Descending ? query.OrderByDescending(x => x.State) : query.OrderBy(x => x.State),
+            "CreatedAt" => state.SortDirection == SortDirection.Descending ? query.OrderByDescending(x => x.CreatedAt) : query.OrderBy(x => x.CreatedAt),
+            _ => query.OrderByDescending(x => x.ModifiedAt)
+        };
+
+        var totalItems = await query.CountAsync(cancellationToken);
+        var items = await query.Skip(state.Page * state.PageSize).Take(state.PageSize).ToListAsync(cancellationToken);
+
+        var ids = items.Select(a => a.Id).ToList();
+        var counts = await db.AnalysisFindings.AsNoTracking()
+            .Where(f => ids.Contains(f.DatabaseAnalysisId))
+            .GroupBy(f => f.DatabaseAnalysisId)
+            .Select(g => new
+            {
+                Id = g.Key,
+                Total = g.Count(),
+                Good = g.Count(f => f.Severity == FindingSeverity.Good),
+            })
+            .ToListAsync(cancellationToken);
+        var countMap = counts.ToDictionary(c => c.Id);
+
+        var rows = items.Select(a =>
+        {
+            countMap.TryGetValue(a.Id, out var c);
+            var total = c?.Total ?? 0;
+            var good = c?.Good ?? 0;
+            return new AnalysisRow(a, total, total - good, good);
+        }).ToList();
+
+        return new TableData<AnalysisRow> { TotalItems = totalItems, Items = rows };
+    }
+
+    private async Task QueueAnalysis(DatabaseAnalysis analysis)
+    {
+        await using var db = await DbContextFactory.CreateDbContextAsync();
+        var now = DateTime.UtcNow;
+        var n = await db.DatabaseAnalyses
+            .Where(a => a.Id == analysis.Id &&
+                        (a.State == DatabaseAnalysisState.Draft || a.State == DatabaseAnalysisState.Failed ||
+                         a.State == DatabaseAnalysisState.Stopped || a.State == DatabaseAnalysisState.Completed))
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(a => a.State, DatabaseAnalysisState.Queued)
+                .SetProperty(a => a.LastMessage, "Queued")
+                .SetProperty(a => a.EndedAt, (DateTime?)null)
+                .SetProperty(a => a.ModifiedAt, now));
+        Snackbar.Add(n == 1 ? "Analysis queued" : "Could not queue analysis", n == 1 ? Severity.Success : Severity.Warning);
+        if (_table is not null)
+            await _table.ReloadServerData();
+    }
+
+    private async Task StopAnalysis(DatabaseAnalysis analysis)
+    {
+        await using var db = await DbContextFactory.CreateDbContextAsync();
+        var now = DateTime.UtcNow;
+        var n = await db.DatabaseAnalyses
+            .Where(a => a.Id == analysis.Id &&
+                        (a.State == DatabaseAnalysisState.Queued || a.State == DatabaseAnalysisState.Running))
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(a => a.State, DatabaseAnalysisState.Stopped)
+                .SetProperty(a => a.LastMessage, "Stop requested by user")
+                .SetProperty(a => a.ModifiedAt, now));
+        Snackbar.Add(n == 1 ? "Stop requested" : "Analysis is no longer running", Severity.Info);
+        if (_table is not null)
+            await _table.ReloadServerData();
+    }
+
+    private async Task DeleteSingle(DatabaseAnalysis item)
+    {
+        var confirm = await DialogService.ShowMessageBoxAsync(
+            "Confirm Delete",
+            $"Delete analysis \"{item.Name}\"? All findings and logs will also be deleted.",
+            yesText: "Delete", cancelText: "Cancel");
+
+        if (confirm == true)
+        {
+            await using var db = await DbContextFactory.CreateDbContextAsync();
+            var deleted = await db.DatabaseAnalyses.Where(a => a.Id == item.Id).ExecuteDeleteAsync();
+            if (deleted == 0)
+                return;
+            Snackbar.Add($"Deleted \"{item.Name}\"", Severity.Success);
+            await _table!.ReloadServerData();
+        }
+    }
+
+    private void OnRowClick(TableRowClickEventArgs<AnalysisRow> args) =>
+        Navigation.NavigateTo($"/analyses/{(int)(object)args.Item!.Analysis.Id}");
+
+    private async Task DeleteSelected()
+    {
+        var confirm = await DialogService.ShowMessageBoxAsync(
+            "Confirm Delete",
+            $"Delete {_selectedItems.Count} analysis run(s)? All findings and logs will also be deleted.",
+            yesText: "Delete All", cancelText: "Cancel");
+
+        if (confirm == true)
+        {
+            var ids = _selectedItems.Select(i => i.Analysis.Id).ToList();
+            await using var db = await DbContextFactory.CreateDbContextAsync();
+            var deleted = await db.DatabaseAnalyses.Where(a => ids.Contains(a.Id)).ExecuteDeleteAsync();
+            Snackbar.Add(deleted == 0 ? "Nothing deleted" : $"Deleted {deleted} analysis run(s)", deleted == 0 ? Severity.Info : Severity.Success);
+            _selectedItems.Clear();
+            await _table!.ReloadServerData();
+        }
+    }
+}

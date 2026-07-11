@@ -93,9 +93,92 @@
                     </MudCard>
 
                     <MudText Typo="Typo.body2" Color="Color.Secondary" Class="mb-4">
-                        Elapsed time uses SQL Server reported <strong>total server elapsed time (ms)</strong> from each hypothesis&rsquo;s &ldquo;after&rdquo; benchmark run.
-                        The overview chart uses the <strong>best (minimum)</strong> such value per research iteration so you can compare runs.
+                        Elapsed time uses SQL Server reported <strong>total server elapsed time (ms)</strong> from each hypothesis&rsquo;s benchmark runs.
+                        Improvement is measured against the iteration&rsquo;s baseline benchmark.
                     </MudText>
+
+                    @if (_totalHypotheses > 0)
+                    {
+                        <MudGrid Spacing="3" Class="mb-2">
+                            <MudItem xs="6" sm="3">
+                                <MudPaper Elevation="2" Class="pa-4 rounded-lg">
+                                    <MudText Typo="Typo.overline">Hypotheses tested</MudText>
+                                    <MudText Typo="Typo.h4">@_totalHypotheses</MudText>
+                                    <MudText Typo="Typo.caption">@_orderedIterations.Count iteration(s)</MudText>
+                                </MudPaper>
+                            </MudItem>
+                            <MudItem xs="6" sm="3">
+                                <MudPaper Elevation="2" Class="pa-4 rounded-lg">
+                                    <MudText Typo="Typo.overline">Best improvement</MudText>
+                                    <MudText Typo="Typo.h4" Color="@(_bestImprovement > 0 ? Color.Success : Color.Default)">
+                                        @(_bestImprovement > 0 ? $"+{_bestImprovement:0.#}%" : "—")
+                                    </MudText>
+                                    <MudText Typo="Typo.caption" Style="max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block;">
+                                        @(_bestHypothesisTitle ?? "no successful hypothesis yet")
+                                    </MudText>
+                                </MudPaper>
+                            </MudItem>
+                            <MudItem xs="6" sm="3">
+                                <MudPaper Elevation="2" Class="pa-4 rounded-lg">
+                                    <MudText Typo="Typo.overline">Improved / regressed</MudText>
+                                    <MudStack Row="true" AlignItems="AlignItems.Baseline" Spacing="1">
+                                        <MudText Typo="Typo.h4" Color="Color.Success">@_improvedCount</MudText>
+                                        <MudText Typo="Typo.h6" Color="Color.Secondary">/</MudText>
+                                        <MudText Typo="Typo.h4" Color="Color.Error">@_regressedCount</MudText>
+                                    </MudStack>
+                                    <MudText Typo="Typo.caption">&gt;5% better / &gt;5% worse</MudText>
+                                </MudPaper>
+                            </MudItem>
+                            <MudItem xs="6" sm="3">
+                                <MudPaper Elevation="2" Class="pa-4 rounded-lg">
+                                    <MudText Typo="Typo.overline">Failed</MudText>
+                                    <MudText Typo="Typo.h4" Color="@(_failedCount > 0 ? Color.Warning : Color.Default)">@_failedCount</MudText>
+                                    <MudText Typo="Typo.caption">could not be applied/tested</MudText>
+                                </MudPaper>
+                            </MudItem>
+                        </MudGrid>
+
+                        <MudGrid Spacing="3" Class="mb-4">
+                            <MudItem xs="12" md="4">
+                                <MudCard Elevation="3" Class="rounded-lg" Style="height:100%">
+                                    <MudCardHeader>
+                                        <CardHeaderContent>
+                                            <MudText Typo="Typo.h6">Hypothesis outcomes</MudText>
+                                        </CardHeaderContent>
+                                    </MudCardHeader>
+                                    <MudCardContent Class="d-flex justify-center">
+                                        <MudChart T="double" ChartType="ChartType.Donut"
+                                                  InputData="@_outcomeChartData" InputLabels="@_outcomeChartLabels"
+                                                  ChartOptions="@_outcomeChartOptions"
+                                                  Width="260px" Height="260px" />
+                                    </MudCardContent>
+                                </MudCard>
+                            </MudItem>
+                            <MudItem xs="12" md="8">
+                                <MudCard Elevation="3" Class="rounded-lg" Style="height:100%">
+                                    <MudCardHeader>
+                                        <CardHeaderContent>
+                                            <MudText Typo="Typo.h6">Improvement per hypothesis (%)</MudText>
+                                            <MudText Typo="Typo.caption">Positive = faster than baseline, negative = regression. Failed hypotheses are omitted.</MudText>
+                                        </CardHeaderContent>
+                                    </MudCardHeader>
+                                    <MudCardContent>
+                                        @if (_improvementSeries.Count > 0)
+                                        {
+                                            <MudChart T="double" ChartType="ChartType.Line"
+                                                      ChartSeries="@_improvementSeries" XAxisLabels="@_improvementLabels"
+                                                      ChartOptions="@_improvementChartOptions"
+                                                      Width="100%" Height="260px" />
+                                        }
+                                        else
+                                        {
+                                            <MudText Typo="Typo.body2">No tested hypotheses yet.</MudText>
+                                        }
+                                    </MudCardContent>
+                                </MudCard>
+                            </MudItem>
+                        </MudGrid>
+                    }
 
                     @if (_iterationOverviewSeries.Count > 0)
                     {
@@ -103,13 +186,14 @@
                             <MudCardHeader>
                                 <CardHeaderContent>
                                     <MudText Typo="Typo.h6">Research iterations &mdash; best server elapsed (after benchmark)</MudText>
-                                    <MudText Typo="Typo.caption">Lower is faster. Each bar is the minimum &ldquo;after&rdquo; elapsed among hypotheses in that iteration. A height of zero means no completed &ldquo;after&rdquo; benchmark yet.</MudText>
+                                    <MudText Typo="Typo.caption">Lower is faster. Baseline is shown next to the best &ldquo;after&rdquo; result of each iteration. A height of zero means no completed &ldquo;after&rdquo; benchmark yet.</MudText>
                                 </CardHeaderContent>
                             </MudCardHeader>
                             <MudCardContent>
                                 <MudChart T="double" ChartType="ChartType.Bar"
                                           ChartSeries="@_iterationOverviewSeries"
-                                          x-axis-labels="@_iterationOverviewLabels"
+                                          XAxisLabels="@_iterationOverviewLabels"
+                                          ChartOptions="@_elapsedChartOptions"
                                           Width="100%" Height="320px" />
                             </MudCardContent>
                         </MudCard>
@@ -127,13 +211,14 @@
                             <MudCardHeader>
                                 <CardHeaderContent>
                                     <MudText Typo="Typo.h6">Iteration #@((int)(object)block.IterationId) &mdash; server elapsed per hypothesis</MudText>
-                                    <MudText Typo="Typo.caption">Hypotheses in run order. Each bar uses the &ldquo;after&rdquo; benchmark; zero means no completed after run for that hypothesis yet.</MudText>
+                                    <MudText Typo="Typo.caption">Hypotheses in run order, baseline (before) vs optimized (after). Zero means no completed run for that hypothesis yet.</MudText>
                                 </CardHeaderContent>
                             </MudCardHeader>
                             <MudCardContent>
                                 <MudChart T="double" ChartType="ChartType.Bar"
                                           ChartSeries="@block.Series"
-                                          x-axis-labels="@block.Labels"
+                                          XAxisLabels="@block.Labels"
+                                          ChartOptions="@_elapsedChartOptions"
                                           Width="100%" Height="280px" />
                             </MudCardContent>
                         </MudCard>
@@ -201,6 +286,21 @@
     private List<ChartSeries<double>> _iterationOverviewSeries = new();
     private List<IterationElapsedChartBlock> _perIterationBlocks = new();
 
+    private int _totalHypotheses;
+    private int _improvedCount;
+    private int _regressedCount;
+    private int _failedCount;
+    private float _bestImprovement;
+    private string? _bestHypothesisTitle;
+
+    private double[] _outcomeChartData = Array.Empty<double>();
+    private string[] _outcomeChartLabels = Array.Empty<string>();
+    private ChartOptions _outcomeChartOptions = new();
+    private List<ChartSeries<double>> _improvementSeries = new();
+    private string[] _improvementLabels = Array.Empty<string>();
+    private readonly ChartOptions _improvementChartOptions = new() { ChartPalette = new[] { "#43A047" } };
+    private readonly ChartOptions _elapsedChartOptions = new() { ChartPalette = new[] { "#90A4AE", "#2196F3" } };
+
     public void Dispose()
     {
         _pageCts.Cancel();
@@ -259,38 +359,112 @@
         var hypotheses = await db.Hypotheses.AsNoTracking()
             .Where(h => iterationIds.Contains(h.ResearchIterationId))
             .Include(h => h.BenchmarkRunAfter)
+            .Include(h => h.BenchmarkRunBefore)
             .OrderBy(h => h.CreatedAt)
             .ToListAsync(ct);
 
-        BuildOverviewCharts(hypotheses);
-        BuildPerIterationCharts(hypotheses);
+        var baselines = await db.BenchmarkRuns.AsNoTracking()
+            .Where(b => _orderedIterations
+                .Where(r => r.BaselineBenchmarkRunId != null)
+                .Select(r => r.BaselineBenchmarkRunId!.Value)
+                .Contains(b.Id))
+            .ToDictionaryAsync(b => b.Id, ct);
+
+        BuildKpis(hypotheses);
+        BuildOverviewCharts(hypotheses, baselines);
+        BuildPerIterationCharts(hypotheses, baselines);
 
         _loading = false;
     }
 
-    private void BuildOverviewCharts(List<Hypothesis> hypotheses)
+    private void BuildKpis(List<Hypothesis> hypotheses)
+    {
+        _totalHypotheses = hypotheses.Count;
+        _failedCount = hypotheses.Count(h => h.Status == HypothesisState.Failed);
+
+        var tested = hypotheses
+            .Where(h => h.Status == HypothesisState.Completed && h.BenchmarkRunAfter != null)
+            .ToList();
+
+        _improvedCount = tested.Count(h => h.ImpovementPercentage > 5);
+        _regressedCount = tested.Count(h => h.ImpovementPercentage < -5);
+        var neutralCount = tested.Count - _improvedCount - _regressedCount;
+        var untested = _totalHypotheses - tested.Count - _failedCount;
+
+        var best = tested.OrderByDescending(h => h.ImpovementPercentage).FirstOrDefault();
+        _bestImprovement = best?.ImpovementPercentage ?? 0;
+        _bestHypothesisTitle = best is null || best.ImpovementPercentage <= 0
+            ? null
+            : $"Hypothesis #{(int)(object)best.Id}: {FirstLine(best.Description)}";
+
+        var outcomes = new List<(string Label, int Count, string Hex)>
+        {
+            ("Improved", _improvedCount, "#43A047"),
+            ("Regressed", _regressedCount, "#E53935"),
+            ("No change", neutralCount, "#90A4AE"),
+            ("Failed", _failedCount, "#6D4C41"),
+            ("Untested", untested, "#BDBDBD"),
+        };
+        var present = outcomes.Where(o => o.Count > 0).ToList();
+        _outcomeChartData = present.Select(o => (double)o.Count).ToArray();
+        _outcomeChartLabels = present.Select(o => $"{o.Label} ({o.Count})").ToArray();
+        _outcomeChartOptions = new ChartOptions { ChartPalette = present.Select(o => o.Hex).ToArray() };
+
+        // Improvement line across all tested hypotheses in run order.
+        _improvementLabels = tested.Select(h => $"#{(int)(object)h.Id}").ToArray();
+        _improvementSeries = tested.Count == 0
+            ? new List<ChartSeries<double>>()
+            : new List<ChartSeries<double>>
+            {
+                new() { Name = "Improvement %", Data = tested.Select(h => (double)h.ImpovementPercentage).ToList() }
+            };
+    }
+
+    private static string FirstLine(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return "(no description)";
+        var line = text.AsSpan();
+        var idx = line.IndexOfAny('\r', '\n');
+        var first = idx >= 0 ? text[..idx] : text;
+        return first.Length > 120 ? first[..120] + "…" : first;
+    }
+
+    private void BuildOverviewCharts(List<Hypothesis> hypotheses, Dictionary<BenchmarkRunId, BenchmarkRun> baselines)
     {
         var overviewLabels = new List<string>();
-        var overviewData = new List<double>();
+        var baselineData = new List<double>();
+        var bestAfterData = new List<double>();
 
         foreach (var iteration in _orderedIterations)
         {
             overviewLabels.Add($"#{(int)(object)iteration.Id}");
+
+            var baselineMs = iteration.BaselineBenchmarkRunId is { } baselineId &&
+                             baselines.TryGetValue(baselineId, out var baseline)
+                ? (double)baseline.TotalServerElapsedTimeMs
+                : 0d;
+            baselineData.Add(baselineMs);
+
             var msValues = hypotheses
                 .Where(h => h.ResearchIterationId == iteration.Id && h.BenchmarkRunAfter != null)
                 .Select(h => (double)h.BenchmarkRunAfter!.TotalServerElapsedTimeMs)
                 .ToList();
 
-            overviewData.Add(msValues.Count == 0 ? 0 : msValues.Min());
+            bestAfterData.Add(msValues.Count == 0 ? 0 : msValues.Min());
         }
 
         _iterationOverviewLabels = overviewLabels.ToArray();
-        _iterationOverviewSeries = overviewData.Count == 0
+        _iterationOverviewSeries = bestAfterData.Count == 0
             ? new List<ChartSeries<double>>()
-            : new List<ChartSeries<double>> { new() { Name = "Best server elapsed (ms)", Data = overviewData } };
+            : new List<ChartSeries<double>>
+            {
+                new() { Name = "Baseline (ms)", Data = baselineData },
+                new() { Name = "Best after (ms)", Data = bestAfterData },
+            };
     }
 
-    private void BuildPerIterationCharts(List<Hypothesis> hypotheses)
+    private void BuildPerIterationCharts(List<Hypothesis> hypotheses, Dictionary<BenchmarkRunId, BenchmarkRun> baselines)
     {
         var blocks = new List<IterationElapsedChartBlock>();
 
@@ -304,15 +478,29 @@
             if (rows.Count == 0)
                 continue;
 
+            var iterationBaselineMs = iteration.BaselineBenchmarkRunId is { } baselineId &&
+                                      baselines.TryGetValue(baselineId, out var baseline)
+                ? (double)baseline.TotalServerElapsedTimeMs
+                : 0d;
+
             var labels = rows.Select(h => $"#{(int)(object)h.Id}").ToArray();
-            var data = rows
+            var beforeData = rows
+                .Select(h => h.BenchmarkRunBefore != null
+                    ? (double)h.BenchmarkRunBefore.TotalServerElapsedTimeMs
+                    : iterationBaselineMs)
+                .ToList();
+            var afterData = rows
                 .Select(h => h.BenchmarkRunAfter != null ? (double)h.BenchmarkRunAfter.TotalServerElapsedTimeMs : 0d)
                 .ToList();
 
             blocks.Add(new IterationElapsedChartBlock(
                 iteration.Id,
                 labels,
-                new List<ChartSeries<double>> { new() { Name = "Server elapsed after (ms)", Data = data } }));
+                new List<ChartSeries<double>>
+                {
+                    new() { Name = "Baseline / before (ms)", Data = beforeData },
+                    new() { Name = "After optimization (ms)", Data = afterData },
+                }));
         }
 
         _perIterationBlocks = blocks;

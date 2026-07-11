@@ -67,4 +67,14 @@ public interface IAIOptimizeDataAccess
     /// Latest change relevant to hypothesis detail (hypothesis row or any log line).
     /// </summary>
     Task<DateTime?> GetHypothesisDetailWatermarkAsync(HypothesisId id, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Max <see cref="DatabaseAnalysis.ModifiedAt"/> across all analyses (for the list view).
+    /// </summary>
+    Task<DateTime?> GetMaxDatabaseAnalysisModifiedAtAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// <see cref="DatabaseAnalysis.ModifiedAt"/> for one analysis (findings/log writes touch it too).
+    /// </summary>
+    Task<DateTime?> GetDatabaseAnalysisModifiedAtAsync(DatabaseAnalysisId id, CancellationToken cancellationToken = default);
 }

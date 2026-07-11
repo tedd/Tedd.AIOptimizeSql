@@ -41,6 +41,14 @@
                                   RequiredError="Connection string is required" MaxLength="4000"
                                   Lines="3" Variant="Variant.Outlined" Class="mb-4" />
 
+                    <MudSwitch @bind-Value="_model.AnalyzeOnly" Color="Color.Warning" Class="mb-1"
+                               Label="Analyze only (production-safe)" />
+                    <MudText Typo="Typo.caption" Color="Color.Secondary" Class="mb-4 d-block">
+                        When enabled, nothing on this connection ever modifies the target database:
+                        AI tools are restricted to read-only queries and estimated execution plans, benchmarks and
+                        hypothesis apply/revert are skipped, and views, stored procedures, and data are never touched.
+                    </MudText>
+
                     @if (!_isNew)
                     {
                         <MudStack Row="true" Spacing="4">
@@ -74,16 +82,19 @@
     private AIOptimizeDbContext? _db;
     private string _baselineName = "";
     private string _baselineConnectionString = "";
+    private bool _baselineAnalyzeOnly;
 
     private bool IsModified =>
         !_loading && _model != null &&
-        (_model.Name != _baselineName || _model.ConnectionString != _baselineConnectionString);
+        (_model.Name != _baselineName || _model.ConnectionString != _baselineConnectionString
+         || _model.AnalyzeOnly != _baselineAnalyzeOnly);
 
     private void CaptureBaseline()
     {
         if (_model == null) return;
         _baselineName = _model.Name;
         _baselineConnectionString = _model.ConnectionString;
+        _baselineAnalyzeOnly = _model.AnalyzeOnly;
     }
 
     public void Dispose()
@@ -134,6 +145,7 @@
             var n = await _db.DatabaseConnections.Where(c => c.Id == id).ExecuteUpdateAsync(s => s
                 .SetProperty(c => c.Name, _model.Name)
                 .SetProperty(c => c.ConnectionString, _model.ConnectionString)
+                .SetProperty(c => c.AnalyzeOnly, _model.AnalyzeOnly)
                 .SetProperty(c => c.ModifiedAt, now));
             if (n != 1)
             {

@@ -18,6 +18,7 @@ public sealed class AiHypothesisService(
     AiAgentFactory agentFactory,
     ISchemaDiscoveryService schemaDiscoveryService,
     HypothesisTestingService hypothesisTestingService,
+    AgentTaskLoopRunner taskLoopRunner,
     IServiceScopeFactory scopeFactory,
     IOptions<OptimizeEngineSettings> settings,
     ILoggerFactory loggerFactory) : IAiHypothesisService
@@ -44,9 +45,18 @@ public sealed class AiHypothesisService(
         if (string.IsNullOrWhiteSpace(iteration.SchemaDiscoveryMarkdown))
             await RunSchemaDiscoveryAsync(iteration, cancellationToken);
 
-        // Run baseline benchmark if not already done
+        var analyzeOnly = iteration.Experiment?.DatabaseConnection?.AnalyzeOnly == true;
+
+        // Run baseline benchmark if not already done. In analyze-only mode we never
+        // benchmark: it clears caches and updates statistics, which mutates server state.
         BenchmarkRun? baseline = null;
-        if (iteration.BaselineBenchmarkRunId == null && !string.IsNullOrWhiteSpace(iteration.Experiment?.BenchmarkSql))
+        if (analyzeOnly)
+        {
+            _logger.LogInformation(
+                "Research iteration {IterationId} targets an analyze-only connection; baseline benchmark and hypothesis testing are skipped",
+                iterationId);
+        }
+        else if (iteration.BaselineBenchmarkRunId == null && !string.IsNullOrWhiteSpace(iteration.Experiment?.BenchmarkSql))
         {
             await UpdateIterationMessageAsync(iterationId, "Running baseline benchmark...", cancellationToken);
             baseline = await hypothesisTestingService.RunBaselineBenchmarkAsync(iteration, cancellationToken);
@@ -159,8 +169,17 @@ public sealed class AiHypothesisService(
                     "HypothesisService",
                     cancellationToken);
 
+                if (analyzeOnly && !string.IsNullOrWhiteSpace(result.OptimizeSql))
+                {
+                    await AppendHypothesisLogAsync(
+                        placeholder.Id,
+                        "Analyze-only connection: hypothesis stored for review only. Apply/Benchmark/Revert is skipped — the target database is never modified.",
+                        "HypothesisService",
+                        cancellationToken);
+                }
+
                 // Test hypothesis if it has executable SQL and we have a baseline
-                if (!string.IsNullOrWhiteSpace(result.OptimizeSql) && baseline != null)
+                if (!analyzeOnly && !string.IsNullOrWhiteSpace(result.OptimizeSql) && baseline != null)
                 {
                     await AppendHypothesisLogAsync(
                         placeholder.Id,
@@ -285,6 +304,8 @@ public sealed class AiHypothesisService(
         var dbConnection = experiment.DatabaseConnection
             ?? throw new InvalidOperationException("DatabaseConnection must be loaded on the experiment.");
 
+        var analyzeOnly = dbConnection.AnalyzeOnly;
+
         var executor = DatabaseExecutorFactory.Create(
             new BenchmarkConfig { DatabaseType = "MSSQL" },
             msg => _logger.LogDebug("{SqlLog}", msg));
@@ -292,17 +313,87 @@ public sealed class AiHypothesisService(
         await using var conn = await executor.OpenConnectionAsync(dbConnection.ConnectionString, cancellationToken);
         using var toolWrapper = new SqlToolWrapper(
             executor, conn, settings.Value.MaxToolResponseBytes,
-            loggerFactory.CreateLogger<SqlToolWrapper>());
+            loggerFactory.CreateLogger<SqlToolWrapper>(), readOnly: analyzeOnly);
         using var schemaTools = new SchemaInspectionToolWrapper(
             executor, conn, settings.Value.MaxToolResponseBytes,
             loggerFactory.CreateLogger<SchemaInspectionToolWrapper>());
+        using var perfTools = new PerformanceMetricsToolWrapper(
+            executor, conn, settings.Value.MaxToolResponseBytes,
+            loggerFactory.CreateLogger<PerformanceMetricsToolWrapper>());
+        using var webTools = CreateWebSearchTools();
+        var taskTools = new AgentTaskToolWrapper(
+            AgentTaskScope.ForHypothesis(hypothesisId),
+            scopeFactory, loggerFactory.CreateLogger<AgentTaskToolWrapper>());
 
+        var tools = BuildAgentTools(toolWrapper, schemaTools, perfTools, webTools, taskTools, analyzeOnly);
+
+        var maxRuns = Math.Clamp(settings.Value.MaxAgentContinuations, 1, 100);
+        var instructions = HypothesisPromptBuilder.BuildInstructions(
+            experiment, iteration, priorHypotheses,
+            schemaDiscoveryMarkdown: iteration.SchemaDiscoveryMarkdown,
+            analyzeOnly: analyzeOnly,
+            maxAgentRuns: maxRuns);
+
+        var agent = agentFactory.Create(aiConnection, instructions, tools);
+
+        var prompt = HypothesisPromptBuilder.BuildPrompt(iteration, priorHypotheses);
+
+        _logger.LogInformation("Invoking AI agent for research iteration {IterationId}, hypothesis #{Number}",
+            iteration.Id, priorHypotheses.Count + 1);
+
+        await AppendHypothesisLogAsync(
+            hypothesisId,
+            $"Invoking AI agent (model context from iteration). Prior hypotheses in iteration: {priorHypotheses.Count}. Task-loop limit: {maxRuns} runs.",
+            "HypothesisService",
+            cancellationToken);
+
+        var loop = await taskLoopRunner.RunAsync(
+            agent,
+            prompt,
+            AgentTaskScope.ForHypothesis(hypothesisId),
+            isResponseAcceptable: r => AiResponseParser.ParseHypothesisResponse(r) != null,
+            shouldAbort: async abortCt =>
+            {
+                var gate = await TryGetIterationRunGateAsync(iteration.Id, abortCt);
+                return gate is null or { State: ResearchIterationState.Stopped or ResearchIterationState.Paused };
+            },
+            log: (msg, logCt) => AppendHypothesisLogAsync(hypothesisId, msg, "HypothesisService", logCt),
+            cancellationToken: cancellationToken);
+
+        _logger.LogInformation("AI agent returned in {ElapsedMs}ms over {Runs} run(s)", loop.ElapsedMs, loop.RunsUsed);
+
+        var parsed = AiResponseParser.ParseHypothesisResponse(loop.LastResponse);
+
+        if (parsed != null)
+        {
+            return new HypothesisGenerationResult(
+                parsed.Description,
+                parsed.Optimize_sql,
+                parsed.Revert_sql,
+                loop.ElapsedMs);
+        }
+
+        // Fallback: treat entire response as description (legacy behavior)
+        _logger.LogWarning("Could not parse structured JSON from AI response, falling back to raw text");
+        return new HypothesisGenerationResult(loop.LastResponse ?? "(no response)", null, null, loop.ElapsedMs);
+    }
+
+    /// <summary>
+    /// Builds the AI tool list for hypothesis generation. In analyze-only mode the
+    /// DDL/DML tool is not exposed at all and query tools run behind the read-only guard.
+    /// </summary>
+    private static List<AITool> BuildAgentTools(
+        SqlToolWrapper sqlTools,
+        SchemaInspectionToolWrapper schemaTools,
+        PerformanceMetricsToolWrapper perfTools,
+        WebSearchToolWrapper? webTools,
+        AgentTaskToolWrapper taskTools,
+        bool analyzeOnly)
+    {
         var tools = new List<AITool>
         {
-            // Existing SQL execution tools
-            AIFunctionFactory.Create(toolWrapper.ExecuteSqlQuery, nameof(toolWrapper.ExecuteSqlQuery)),
-            AIFunctionFactory.Create(toolWrapper.ExecuteSqlNonQuery, nameof(toolWrapper.ExecuteSqlNonQuery)),
-            AIFunctionFactory.Create(toolWrapper.GetExecutionPlan, nameof(toolWrapper.GetExecutionPlan)),
+            AIFunctionFactory.Create(sqlTools.ExecuteSqlQuery, nameof(sqlTools.ExecuteSqlQuery)),
+            AIFunctionFactory.Create(sqlTools.GetExecutionPlan, nameof(sqlTools.GetExecutionPlan)),
             // Primitive schema inspection fallback tools
             AIFunctionFactory.Create(schemaTools.GetObjectDefinition, nameof(schemaTools.GetObjectDefinition)),
             AIFunctionFactory.Create(schemaTools.GetObjectDependencies, nameof(schemaTools.GetObjectDependencies)),
@@ -312,47 +403,39 @@ public sealed class AiHypothesisService(
             AIFunctionFactory.Create(schemaTools.GetTableStorage, nameof(schemaTools.GetTableStorage)),
             AIFunctionFactory.Create(schemaTools.GetTriggerInfo, nameof(schemaTools.GetTriggerInfo)),
             AIFunctionFactory.Create(schemaTools.GetSynonymTarget, nameof(schemaTools.GetSynonymTarget)),
+            // Performance metric tools (read-only DMV queries)
+            AIFunctionFactory.Create(perfTools.GetMissingIndexes, nameof(perfTools.GetMissingIndexes)),
+            AIFunctionFactory.Create(perfTools.GetIndexFragmentation, nameof(perfTools.GetIndexFragmentation)),
+            AIFunctionFactory.Create(perfTools.GetIndexUsageStats, nameof(perfTools.GetIndexUsageStats)),
+            AIFunctionFactory.Create(perfTools.GetStatisticsHealth, nameof(perfTools.GetStatisticsHealth)),
+            AIFunctionFactory.Create(perfTools.GetTopQueries, nameof(perfTools.GetTopQueries)),
+            AIFunctionFactory.Create(perfTools.GetStoredProcedureStats, nameof(perfTools.GetStoredProcedureStats)),
+            AIFunctionFactory.Create(perfTools.GetWaitStatistics, nameof(perfTools.GetWaitStatistics)),
+            AIFunctionFactory.Create(perfTools.GetTableSizes, nameof(perfTools.GetTableSizes)),
+            AIFunctionFactory.Create(perfTools.GetDatabaseConfiguration, nameof(perfTools.GetDatabaseConfiguration)),
         };
 
-        var instructions = HypothesisPromptBuilder.BuildInstructions(
-            experiment, iteration, priorHypotheses,
-            schemaDiscoveryMarkdown: iteration.SchemaDiscoveryMarkdown);
+        if (!analyzeOnly)
+            tools.Insert(1, AIFunctionFactory.Create(sqlTools.ExecuteSqlNonQuery, nameof(sqlTools.ExecuteSqlNonQuery)));
 
-        var agent = agentFactory.Create(aiConnection, instructions, tools);
-
-        var sw = Stopwatch.StartNew();
-        var prompt = HypothesisPromptBuilder.BuildPrompt(iteration, priorHypotheses);
-
-        _logger.LogInformation("Invoking AI agent for research iteration {IterationId}, hypothesis #{Number}",
-            iteration.Id, priorHypotheses.Count + 1);
-
-        await AppendHypothesisLogAsync(
-            hypothesisId,
-            $"Invoking AI agent (model context from iteration). Prior hypotheses in iteration: {priorHypotheses.Count}.",
-            "HypothesisService",
-            cancellationToken);
-
-        var result = await agent.RunAsync(prompt, cancellationToken: cancellationToken);
-        sw.Stop();
-
-        _logger.LogInformation("AI agent returned in {ElapsedMs}ms", sw.ElapsedMilliseconds);
-
-        var rawResponse = result?.ToString();
-        var parsed = AiResponseParser.ParseHypothesisResponse(rawResponse);
-
-        if (parsed != null)
+        if (webTools is not null)
         {
-            return new HypothesisGenerationResult(
-                parsed.Description,
-                parsed.Optimize_sql,
-                parsed.Revert_sql,
-                sw.ElapsedMilliseconds);
+            tools.Add(AIFunctionFactory.Create(webTools.WebSearch, nameof(webTools.WebSearch)));
+            tools.Add(AIFunctionFactory.Create(webTools.FetchWebPage, nameof(webTools.FetchWebPage)));
         }
 
-        // Fallback: treat entire response as description (legacy behavior)
-        _logger.LogWarning("Could not parse structured JSON from AI response, falling back to raw text");
-        return new HypothesisGenerationResult(rawResponse ?? "(no response)", null, null, sw.ElapsedMilliseconds);
+        tools.Add(AIFunctionFactory.Create(taskTools.AddTask, nameof(taskTools.AddTask)));
+        tools.Add(AIFunctionFactory.Create(taskTools.UpdateTask, nameof(taskTools.UpdateTask)));
+        tools.Add(AIFunctionFactory.Create(taskTools.ListTasks, nameof(taskTools.ListTasks)));
+
+        return tools;
     }
+
+    /// <summary>Creates web search tools when an API key is configured; otherwise null.</summary>
+    private WebSearchToolWrapper? CreateWebSearchTools() =>
+        settings.Value.WebSearch.IsConfigured
+            ? new WebSearchToolWrapper(settings.Value.WebSearch, loggerFactory.CreateLogger<WebSearchToolWrapper>())
+            : null;
 
     private static string TruncateForLog(string message, int maxChars = MaxLogMessageChars)
     {
@@ -442,6 +525,8 @@ public sealed class AiHypothesisService(
                 $"Generating combined optimization from {successful.Count} successful hypotheses.",
                 "HypothesisService", ct);
 
+            var analyzeOnly = dbConnection.AnalyzeOnly;
+
             var executor = DatabaseExecutorFactory.Create(
                 new BenchmarkConfig { DatabaseType = "MSSQL" },
                 msg => _logger.LogDebug("{SqlLog}", msg));
@@ -449,45 +534,50 @@ public sealed class AiHypothesisService(
             await using var conn = await executor.OpenConnectionAsync(dbConnection.ConnectionString, ct);
             using var toolWrapper = new SqlToolWrapper(
                 executor, conn, settings.Value.MaxToolResponseBytes,
-                loggerFactory.CreateLogger<SqlToolWrapper>());
+                loggerFactory.CreateLogger<SqlToolWrapper>(), readOnly: analyzeOnly);
             using var schemaTools = new SchemaInspectionToolWrapper(
                 executor, conn, settings.Value.MaxToolResponseBytes,
                 loggerFactory.CreateLogger<SchemaInspectionToolWrapper>());
+            using var perfTools = new PerformanceMetricsToolWrapper(
+                executor, conn, settings.Value.MaxToolResponseBytes,
+                loggerFactory.CreateLogger<PerformanceMetricsToolWrapper>());
+            using var webTools = CreateWebSearchTools();
+            var taskTools = new AgentTaskToolWrapper(
+                AgentTaskScope.ForHypothesis(placeholder.Id),
+                scopeFactory, loggerFactory.CreateLogger<AgentTaskToolWrapper>());
 
-            var tools = new List<AITool>
-            {
-                AIFunctionFactory.Create(toolWrapper.ExecuteSqlQuery, nameof(toolWrapper.ExecuteSqlQuery)),
-                AIFunctionFactory.Create(toolWrapper.ExecuteSqlNonQuery, nameof(toolWrapper.ExecuteSqlNonQuery)),
-                AIFunctionFactory.Create(toolWrapper.GetExecutionPlan, nameof(toolWrapper.GetExecutionPlan)),
-                AIFunctionFactory.Create(schemaTools.GetObjectDefinition, nameof(schemaTools.GetObjectDefinition)),
-                AIFunctionFactory.Create(schemaTools.GetObjectDependencies, nameof(schemaTools.GetObjectDependencies)),
-                AIFunctionFactory.Create(schemaTools.GetObjectParameters, nameof(schemaTools.GetObjectParameters)),
-                AIFunctionFactory.Create(schemaTools.GetObjectColumns, nameof(schemaTools.GetObjectColumns)),
-                AIFunctionFactory.Create(schemaTools.GetTableIndexes, nameof(schemaTools.GetTableIndexes)),
-                AIFunctionFactory.Create(schemaTools.GetTableStorage, nameof(schemaTools.GetTableStorage)),
-                AIFunctionFactory.Create(schemaTools.GetTriggerInfo, nameof(schemaTools.GetTriggerInfo)),
-                AIFunctionFactory.Create(schemaTools.GetSynonymTarget, nameof(schemaTools.GetSynonymTarget)),
-            };
+            var tools = BuildAgentTools(toolWrapper, schemaTools, perfTools, webTools, taskTools, analyzeOnly);
 
+            var maxRuns = Math.Clamp(settings.Value.MaxAgentContinuations, 1, 100);
             var combinedPrompt = HypothesisPromptBuilder.BuildCombinedPrompt(
                 completedHypotheses,
                 iteration.SchemaDiscoveryMarkdown);
 
             var agent = agentFactory.Create(aiConnection,
-                "You are a MSSQL performance optimization expert. Combine the most effective strategies into one ultimate optimization.", tools);
+                "You are a MSSQL performance optimization expert. Combine the most effective strategies into one ultimate optimization.\n\n" +
+                AgentTaskPromptSection.Build(maxRuns), tools);
 
-            var sw = Stopwatch.StartNew();
-            var result = await agent.RunAsync(combinedPrompt, cancellationToken: ct);
-            sw.Stop();
+            var loop = await taskLoopRunner.RunAsync(
+                agent,
+                combinedPrompt,
+                AgentTaskScope.ForHypothesis(placeholder.Id),
+                isResponseAcceptable: r => AiResponseParser.ParseHypothesisResponse(r) != null,
+                shouldAbort: async abortCt =>
+                {
+                    var gate = await TryGetIterationRunGateAsync(iterationId, abortCt);
+                    return gate is null or { State: ResearchIterationState.Stopped or ResearchIterationState.Paused };
+                },
+                log: (msg, logCt) => AppendHypothesisLogAsync(placeholder.Id, msg, "HypothesisService", logCt),
+                cancellationToken: ct);
 
-            var parsed = AiResponseParser.ParseHypothesisResponse(result?.ToString());
+            var parsed = AiResponseParser.ParseHypothesisResponse(loop.LastResponse);
 
             if (parsed != null && !string.IsNullOrWhiteSpace(parsed.Optimize_sql))
             {
                 await FinalizeHypothesisAsync(placeholder.Id,
                     parsed.Description ?? "Combined optimization",
                     parsed.Optimize_sql, parsed.Revert_sql,
-                    sw.ElapsedMilliseconds, ct);
+                    loop.ElapsedMs, ct);
 
                 // Test the combined hypothesis
                 if (baseline != null)
@@ -504,8 +594,8 @@ public sealed class AiHypothesisService(
             else
             {
                 await FinalizeHypothesisAsync(placeholder.Id,
-                    parsed?.Description ?? result?.ToString() ?? "(no response)",
-                    null, null, sw.ElapsedMilliseconds, ct);
+                    parsed?.Description ?? loop.LastResponse ?? "(no response)",
+                    null, null, loop.ElapsedMs, ct);
             }
         }
         catch (Exception ex)
