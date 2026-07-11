@@ -59,4 +59,21 @@ public class AiAgentFactoryTests
         var normalized = AiAgentFactory.NormalizeOpenAIBaseEndpoint(new Uri(input));
         Assert.Equal(new Uri(expected), normalized);
     }
+
+    [Theory]
+    // Azure portal's next-generation "v1" endpoint (meant for plain OpenAI clients)
+    [InlineData("https://myres.openai.azure.com/openai/v1", "https://myres.openai.azure.com/")]
+    [InlineData("https://myres.openai.azure.com/openai/v1/", "https://myres.openai.azure.com/")]
+    // Full deployment/chat URL pasted from portal or docs
+    [InlineData("https://myres.openai.azure.com/openai/deployments/gpt-5/chat/completions?api-version=2024-10-21", "https://myres.openai.azure.com/")]
+    // Bare /openai path
+    [InlineData("https://myres.openai.azure.com/openai", "https://myres.openai.azure.com/")]
+    // Already correct resource root stays unchanged
+    [InlineData("https://myres.openai.azure.com", "https://myres.openai.azure.com/")]
+    [InlineData("https://myres.openai.azure.com/", "https://myres.openai.azure.com/")]
+    public void NormalizeAzureOpenAIEndpoint_strips_paths_to_resource_root(string input, string expected)
+    {
+        var normalized = AiAgentFactory.NormalizeAzureOpenAIEndpoint(new Uri(input));
+        Assert.Equal(new Uri(expected), normalized);
+    }
 }

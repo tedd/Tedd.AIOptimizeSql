@@ -33,14 +33,40 @@ public sealed class AiAgentFactory(ILoggerFactory loggerFactory)
         };
     }
 
-    private static AIAgent CreateAzureOpenAI(AIConnection connection, string instructions, IList<AITool> tools)
+    private AIAgent CreateAzureOpenAI(AIConnection connection, string instructions, IList<AITool> tools)
     {
+        var raw = new Uri(connection.Endpoint);
+        var baseUri = NormalizeAzureOpenAIEndpoint(raw);
+        if (baseUri != raw)
+            _logger.LogWarning(
+                "Azure OpenAI endpoint normalized from {Raw} to {Normalized}; the client expects the resource root and appends /openai/deployments/... itself.",
+                raw,
+                baseUri);
+
         var client = new Azure.AI.OpenAI.AzureOpenAIClient(
-            new Uri(connection.Endpoint),
+            baseUri,
             new System.ClientModel.ApiKeyCredential(connection.ApiKey));
 
         ChatClient chatClient = client.GetChatClient(connection.Model);
         return OpenAIChatClientExtensions.AsAIAgent(chatClient, instructions, tools: tools);
+    }
+
+    /// <summary>
+    /// <see cref="Azure.AI.OpenAI.AzureOpenAIClient"/> expects the bare resource root
+    /// (<c>https://myresource.openai.azure.com</c>) and appends
+    /// <c>/openai/deployments/{deployment}/...</c> itself. The Azure portal prominently
+    /// shows endpoints with paths such as <c>/openai/v1</c> (the next-generation v1 API for
+    /// plain OpenAI clients) or a full <c>/openai/deployments/.../chat/completions</c> URL;
+    /// pasting either doubles the path and every request 404s with "Resource not found".
+    /// </summary>
+    internal static Uri NormalizeAzureOpenAIEndpoint(Uri endpoint)
+    {
+        var builder = new UriBuilder(endpoint)
+        {
+            Path = "/",
+            Query = string.Empty,
+        };
+        return builder.Uri;
     }
 
     private AIAgent CreateOpenAI(AIConnection connection, string instructions, IList<AITool> tools)

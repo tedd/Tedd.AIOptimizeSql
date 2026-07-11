@@ -92,12 +92,33 @@ public sealed class DatabaseAnalysisService(
             }
 
             // ── Phase 3: AI deep dive ───────────────────────────────────────
+            // A deep-dive failure (bad AI endpoint, quota, network) must not throw
+            // away the deterministic results: complete with a warning instead.
+            string? aiFailure = null;
             if (analysis.AIConnection is not null)
             {
                 await SetMessageAsync(analysisId, "AI deep dive in progress...", ct);
-                var aiSummary = await RunAiDeepDiveAsync(analysis, executor, conn, summaryMarkdown, deterministicFindings, ct);
-                if (!string.IsNullOrWhiteSpace(aiSummary))
-                    await StoreAiSummaryAsync(analysisId, aiSummary, ct);
+                try
+                {
+                    var aiSummary = await RunAiDeepDiveAsync(analysis, executor, conn, summaryMarkdown, deterministicFindings, ct);
+                    if (!string.IsNullOrWhiteSpace(aiSummary))
+                        await StoreAiSummaryAsync(analysisId, aiSummary, ct);
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    aiFailure = ex.Message;
+                    _logger.LogError(ex, "AI deep dive failed for analysis {AnalysisId}", analysisId);
+                    await AppendLogAsync(analysisId,
+                        $"AI deep dive failed using {analysis.AIConnection.Provider}/{analysis.AIConnection.Model} " +
+                        $"at {analysis.AIConnection.Endpoint}:\n{Truncate(ex.ToString())}\n\n" +
+                        "Check the AI connection's endpoint, model/deployment name, and API key. " +
+                        "The rule-based findings below are unaffected.",
+                        "AnalysisAgent", CancellationToken.None);
+                }
             }
             else
             {
@@ -107,9 +128,12 @@ public sealed class DatabaseAnalysisService(
             }
 
             var findingCount = await CountFindingsAsync(analysisId, ct);
+            var completionMessage = aiFailure is null
+                ? $"Analysis complete: {findingCount} findings."
+                : $"Analysis complete with warnings: {findingCount} rule-based findings; AI deep dive failed ({Truncate(aiFailure, 300)}) — see log.";
             await SetStateAsync(analysisId, DatabaseAnalysisState.Completed,
-                $"Analysis complete: {findingCount} findings.", CancellationToken.None, stampEndedAt: true);
-            await AppendLogAsync(analysisId, $"Analysis completed with {findingCount} findings.", "AnalysisService", CancellationToken.None);
+                completionMessage, CancellationToken.None, stampEndedAt: true);
+            await AppendLogAsync(analysisId, completionMessage, "AnalysisService", CancellationToken.None);
 
             _logger.LogInformation("Database analysis {AnalysisId} completed with {Count} findings", analysisId, findingCount);
         }
@@ -381,8 +405,8 @@ public sealed class DatabaseAnalysisService(
         }
     }
 
-    private static string Truncate(string message) =>
-        message.Length <= MaxLogMessageChars ? message : message[..MaxLogMessageChars] + "\n… (truncated)";
+    private static string Truncate(string message, int maxChars = MaxLogMessageChars) =>
+        message.Length <= maxChars ? message : message[..maxChars] + "… (truncated)";
 
     #endregion
 }
