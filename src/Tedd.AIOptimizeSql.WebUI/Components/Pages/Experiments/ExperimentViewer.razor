@@ -20,9 +20,13 @@
                    Href="@($"/experiments/{Id}/edit")">
             Edit
         </MudButton>
-        <MudButton Variant="Variant.Outlined" Color="Color.Secondary" StartIcon="@Icons.Material.Filled.PlayArrow"
+        <MudButton Variant="Variant.Outlined" Color="Color.Secondary" StartIcon="@Icons.Material.Filled.Search"
                    Href="@($"/experiments/{Id}/research-iterations")">
             Iterations
+        </MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.AddCircle"
+                   Href="@($"/experiments/{Id}/research-iterations/new")">
+            New Iteration
         </MudButton>
     </MudStack>
 

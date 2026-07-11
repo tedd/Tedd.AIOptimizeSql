@@ -11,7 +11,7 @@ alwaysApply: false
 
 # EF migrations: user-initiated only (Tedd.AIOptimizeSql)
 
-Do **not** run `dotnet ef migrations add`, `dotnet ef migrations remove`, or hand-author new files under `Tedd.AIOptimizeSql.Database/Migrations/` unless the user **clearly asks** in the current conversation (e.g. “add a migration”, “create migration for …”).
+Do **not** run `dotnet ef migrations add` or `dotnet ef migrations remove` unless the user **clearly asks** in the current conversation (e.g. “add a migration”, “create migration for …”). Never hand-author or manually edit files under `Tedd.AIOptimizeSql.Database/Migrations/`; when a migration is needed, use the **add-ef-migration** skill (`dotnet ef migrations add` per project conventions). See **ef-migrations-no-manual-edits**.
 
 Finishing changes to entities, `AIOptimizeDbContext`, or related code **does not** authorize adding a migration. Wait for an explicit request.
 

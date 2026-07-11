@@ -69,8 +69,11 @@ public class AIOptimizeDbContext : DbContext
 
         modelBuilder.Entity<ResearchIteration>(entity =>
         {
-            // Strongly typed enum keys do not get int PK identity conventions; match Hypothesis configuration.
-            entity.Property(r => r.Id).ValueGeneratedOnAdd();
+            // Enum PK: CLR default is 0, which EF can treat as an explicit key — INSERT then sends Id=0 and breaks IDENTITY / duplicates.
+            entity.Property(r => r.Id)
+                .ValueGeneratedOnAdd()
+                .UseIdentityColumn()
+                .HasSentinel(ResearchIterationId.Transient);
 
             entity.HasOne(r => r.Experiment)
                 .WithMany(p => p.ResearchIterations)

@@ -38,3 +38,29 @@ html, body {
 .blazor-error-boundary::after {
     content: "An error has occurred."
 }
+
+/* Hypothesis log SQL expand block */
+.log-sql-block {
+    border: 1px solid var(--mud-palette-divider);
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.log-sql-header {
+    padding: 3px 8px;
+    background: rgba(33, 150, 243, 0.07);
+}
+
+.log-sql-content {
+    margin: 0;
+    padding: 8px 12px;
+    font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+    font-size: 12px;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-break: break-all;
+    background: #1e1e1e;
+    color: #d4d4d4;
+    max-height: 400px;
+    overflow-y: auto;
+}

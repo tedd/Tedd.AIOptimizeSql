@@ -1,0 +1,16 @@
+---
+description: >-
+  Never create or edit EF Core migration files by hand under Database/Migrations;
+  use the add-ef-migration skill (dotnet ef) when the user requests a migration.
+alwaysApply: true
+---
+
+# EF migrations: no manual file edits (Tedd.AIOptimizeSql)
+
+Do **not** add, edit, rename, or scaffold migration code by writing directly to `src/Tedd.AIOptimizeSql.Database/Migrations/` (including `*.cs` migration classes, `*.Designer.cs`, or `AIOptimizeDbContextModelSnapshot.cs`).
+
+When the user **explicitly** asks for a new or changed migration, follow the project skill **add-ef-migration** (`.cursor/skills/add-ef-migration/SKILL.md`): run `dotnet ef migrations add` (or remove only if they explicitly ask) with `--project Tedd.AIOptimizeSql.Database`, `--startup-project Tedd.AIOptimizeSql.WebUI`, and `--context AIOptimizeDbContext` from `src/`, then review generated output.
+
+**Do not** paste migration snippets into new files, duplicate Designer/snapshot content by hand, or “fix” migrations by editing generated files except when the user explicitly asks for a targeted adjustment *after* tooling produced them (prefer re-scaffolding or model fixes first).
+
+Still respect **ef-migrations-user-initiated**: do not run `dotnet ef migrations add` until the user clearly requests it in the conversation.

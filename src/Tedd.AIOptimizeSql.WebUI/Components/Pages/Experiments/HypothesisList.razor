@@ -2,15 +2,12 @@
 @implements IDisposable
 @rendermode InteractiveServer
 @inject IDbContextFactory<AIOptimizeDbContext> DbContextFactory
-@inject IAIOptimizeDataAccess DataAccess
-@inject IOptions<UiPollingOptions> UiPolling
 @inject NavigationManager Navigation
 @inject IDialogService DialogService
 @inject ISnackbar Snackbar
 @using Microsoft.EntityFrameworkCore
 @using Tedd.AIOptimizeSql.Database
 @using Tedd.AIOptimizeSql.Database.Models.Enums
-@using Tedd.AIOptimizeSql.Database.Models
 
 <PageTitle>Hypotheses</PageTitle>
 
@@ -177,34 +174,6 @@
         _pageCts.Dispose();
     }
 
-    protected override Task OnAfterRenderAsync(bool firstRender)
-    {
-        if (firstRender)
-        {
-            var sec = Math.Max(1, UiPolling.Value.ResearchFlowRefreshSeconds);
-            var iterationId = (ResearchIterationId)(object)IterationId;
-            WatermarkBackgroundReload.Start(
-                TimeSpan.FromSeconds(sec),
-                _pageCts.Token,
-                () => DataAccess.GetResearchIterationModifiedAtAsync(iterationId, _pageCts.Token),
-                work => InvokeAsync(work),
-                RefreshPageFromDatabaseAsync);
-        }
-
-        return Task.CompletedTask;
-    }
-
-    private async Task RefreshPageFromDatabaseAsync()
-    {
-        await using var db = await DbContextFactory.CreateDbContextAsync(_pageCts.Token);
-        var iterationId = (ResearchIterationId)(object)IterationId;
-        _run = await db.ResearchIterations.AsNoTracking().FirstOrDefaultAsync(r => r.Id == iterationId, _pageCts.Token);
-        await LoadStats(db, _pageCts.Token);
-        await LoadChartData(db, _pageCts.Token);
-        if (_table is not null)
-            await _table.ReloadServerData();
-    }
-
     protected override Task OnInitializedAsync() =>
         PageLoadCancellation.RunPageLoadAsync(async ct =>
         {
@@ -305,12 +274,10 @@
         if (confirm == true)
         {
             await using var db = await DbContextFactory.CreateDbContextAsync();
-            await NullOutBuildsOnReferencesAsync(db, item.Id);
+            await NullOutBuildsOnReferences(db, item.Id);
             var deleted = await db.Hypotheses.Where(h => h.Id == item.Id).ExecuteDeleteAsync();
             if (deleted == 0)
                 return;
-            var iterationId = (ResearchIterationId)(object)IterationId;
-            await ModifiedAtStamping.TouchResearchIterationAsync(db, iterationId);
             Snackbar.Add("Hypothesis deleted", Severity.Success);
             await _table!.ReloadServerData();
             await RefreshStatsAndChartAfterMutationAsync();
@@ -328,15 +295,10 @@
         {
             var ids = _selectedItems.Select(i => i.Id).ToList();
             await using var db = await DbContextFactory.CreateDbContextAsync();
-            var now = DateTime.UtcNow;
             await db.Hypotheses
                 .Where(h => h.BuildsOnHypothesisId != null && ids.Contains(h.BuildsOnHypothesisId.Value))
-                .ExecuteUpdateAsync(s => s
-                    .SetProperty(h => h.BuildsOnHypothesisId, (HypothesisId?)null)
-                    .SetProperty(h => h.ModifiedAt, now));
+                .ExecuteUpdateAsync(s => s.SetProperty(h => h.BuildsOnHypothesisId, (HypothesisId?)null));
             var deleted = await db.Hypotheses.Where(h => ids.Contains(h.Id)).ExecuteDeleteAsync();
-            var iterationId = (ResearchIterationId)(object)IterationId;
-            await ModifiedAtStamping.TouchResearchIterationAsync(db, iterationId);
             Snackbar.Add(deleted == 0 ? "Nothing deleted" : $"Deleted {deleted} hypothesis/hypotheses", deleted == 0 ? Severity.Info : Severity.Success);
             _selectedItems.Clear();
             await _table!.ReloadServerData();
@@ -344,15 +306,10 @@
         }
     }
 
-    private static async Task NullOutBuildsOnReferencesAsync(AIOptimizeDbContext db, HypothesisId id)
-    {
-        var now = DateTime.UtcNow;
-        await db.Hypotheses
+    private static Task NullOutBuildsOnReferences(AIOptimizeDbContext db, HypothesisId id) =>
+        db.Hypotheses
             .Where(h => h.BuildsOnHypothesisId == id)
-            .ExecuteUpdateAsync(s => s
-                .SetProperty(h => h.BuildsOnHypothesisId, (HypothesisId?)null)
-                .SetProperty(h => h.ModifiedAt, now));
-    }
+            .ExecuteUpdateAsync(s => s.SetProperty(h => h.BuildsOnHypothesisId, (HypothesisId?)null));
 
     private async Task RefreshStatsAndChartAfterMutationAsync()
     {

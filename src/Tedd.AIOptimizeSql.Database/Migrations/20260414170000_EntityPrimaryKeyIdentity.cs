@@ -56,6 +56,10 @@ namespace Tedd.AIOptimizeSql.Database.Migrations
                 name: "DatabaseConnections",
                 newName: "DatabaseConnections_old");
 
+            // Constraint names are schema-wide; table rename does not rename PK.
+            migrationBuilder.Sql(
+                "EXEC sp_rename N'PK_DatabaseConnections', N'PK_DatabaseConnections_legacy', N'OBJECT';");
+
             migrationBuilder.CreateTable(
                 name: "DatabaseConnections",
                 columns: table => new
@@ -91,6 +95,9 @@ namespace Tedd.AIOptimizeSql.Database.Migrations
             migrationBuilder.RenameTable(
                 name: "AIConnections",
                 newName: "AIConnections_old");
+
+            migrationBuilder.Sql(
+                "EXEC sp_rename N'PK_AIConnections', N'PK_AIConnections_legacy', N'OBJECT';");
 
             migrationBuilder.CreateTable(
                 name: "AIConnections",
@@ -130,6 +137,9 @@ namespace Tedd.AIOptimizeSql.Database.Migrations
             migrationBuilder.RenameTable(
                 name: "BenchmarkRuns",
                 newName: "BenchmarkRuns_old");
+
+            migrationBuilder.Sql(
+                "EXEC sp_rename N'PK_BenchmarkRuns', N'PK_BenchmarkRuns_legacy', N'OBJECT';");
 
             migrationBuilder.CreateTable(
                 name: "BenchmarkRuns",
@@ -181,6 +191,15 @@ namespace Tedd.AIOptimizeSql.Database.Migrations
             migrationBuilder.RenameTable(
                 name: "Experiments",
                 newName: "Experiments_old");
+
+            migrationBuilder.Sql(
+                """
+                IF EXISTS (SELECT 1 FROM sys.indexes WHERE object_id = OBJECT_ID(N'[dbo].[Experiments_old]') AND name = N'IX_Experiments_AIConnectionId')
+                    DROP INDEX [IX_Experiments_AIConnectionId] ON [dbo].[Experiments_old];
+                IF EXISTS (SELECT 1 FROM sys.indexes WHERE object_id = OBJECT_ID(N'[dbo].[Experiments_old]') AND name = N'IX_Experiments_DatabaseConnectionId')
+                    DROP INDEX [IX_Experiments_DatabaseConnectionId] ON [dbo].[Experiments_old];
+                EXEC sp_rename N'PK_Experiments', N'PK_Experiments_legacy', N'OBJECT';
+                """);
 
             migrationBuilder.CreateTable(
                 name: "Experiments",
@@ -248,6 +267,18 @@ namespace Tedd.AIOptimizeSql.Database.Migrations
             migrationBuilder.RenameTable(
                 name: "ResearchIterations",
                 newName: "ResearchIterations_old");
+
+            migrationBuilder.Sql(
+                """
+                IF EXISTS (SELECT 1 FROM sys.indexes WHERE object_id = OBJECT_ID(N'[dbo].[ResearchIterations_old]') AND name = N'IX_ResearchIterations_AIConnectionId')
+                    DROP INDEX [IX_ResearchIterations_AIConnectionId] ON [dbo].[ResearchIterations_old];
+                IF EXISTS (SELECT 1 FROM sys.indexes WHERE object_id = OBJECT_ID(N'[dbo].[ResearchIterations_old]') AND name = N'IX_ResearchIterations_BaselineBenchmarkRunId')
+                    DROP INDEX [IX_ResearchIterations_BaselineBenchmarkRunId] ON [dbo].[ResearchIterations_old];
+                IF EXISTS (SELECT 1 FROM sys.indexes WHERE object_id = OBJECT_ID(N'[dbo].[ResearchIterations_old]') AND name = N'IX_ResearchIterations_ExperimentId')
+                    DROP INDEX [IX_ResearchIterations_ExperimentId] ON [dbo].[ResearchIterations_old];
+                IF EXISTS (SELECT 1 FROM sys.key_constraints WHERE parent_object_id = OBJECT_ID(N'[dbo].[ResearchIterations_old]') AND name = N'PK_HypothesisBatches')
+                    EXEC sp_rename N'PK_HypothesisBatches', N'PK_HypothesisBatches_legacy', N'OBJECT';
+                """);
 
             migrationBuilder.CreateTable(
                 name: "ResearchIterations",
@@ -327,6 +358,13 @@ namespace Tedd.AIOptimizeSql.Database.Migrations
             migrationBuilder.RenameTable(
                 name: "RunQueue",
                 newName: "RunQueue_old");
+
+            migrationBuilder.Sql(
+                """
+                IF EXISTS (SELECT 1 FROM sys.indexes WHERE object_id = OBJECT_ID(N'[dbo].[RunQueue_old]') AND name = N'IX_RunQueue_ResearchIterationId')
+                    DROP INDEX [IX_RunQueue_ResearchIterationId] ON [dbo].[RunQueue_old];
+                EXEC sp_rename N'PK_RunQueue', N'PK_RunQueue_legacy', N'OBJECT';
+                """);
 
             migrationBuilder.CreateTable(
                 name: "RunQueue",

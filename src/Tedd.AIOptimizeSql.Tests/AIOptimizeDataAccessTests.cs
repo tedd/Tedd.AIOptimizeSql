@@ -48,6 +48,7 @@ public class AIOptimizeDataAccessTests
 
             var iteration = new ResearchIteration
             {
+                Id = ResearchIterationId.Transient,
                 ExperimentId = experiment.Id,
                 MaxNumberOfHypotheses = 2,
                 State = ResearchIterationState.Stopped,
@@ -84,6 +85,7 @@ public class AIOptimizeDataAccessTests
 
             var iteration = new ResearchIteration
             {
+                Id = ResearchIterationId.Transient,
                 ExperimentId = experiment.Id,
                 State = ResearchIterationState.Queued,
             };
@@ -127,6 +129,7 @@ public class AIOptimizeDataAccessTests
 
             var iteration = new ResearchIteration
             {
+                Id = ResearchIterationId.Transient,
                 ExperimentId = experiment.Id,
                 State = ResearchIterationState.Queued,
             };

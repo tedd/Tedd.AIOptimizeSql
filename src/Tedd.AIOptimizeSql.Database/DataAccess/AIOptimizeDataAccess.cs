@@ -87,6 +87,7 @@ public sealed class AIOptimizeDataAccess(IDbContextFactory<AIOptimizeDbContext> 
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
         var iteration = new ResearchIteration
         {
+            Id = ResearchIterationId.Transient,
             ExperimentId = experimentId,
             Hints = hints,
             MaxNumberOfHypotheses = maxNumberOfHypotheses,

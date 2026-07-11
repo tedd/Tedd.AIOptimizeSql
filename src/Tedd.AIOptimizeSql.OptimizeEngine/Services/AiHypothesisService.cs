@@ -60,25 +60,41 @@ public sealed class AiHypothesisService(
             baseline = await LoadBenchmarkRunAsync(iteration.BaselineBenchmarkRunId.Value, cancellationToken);
         }
 
-        var hypothesesCreated = iteration.Hypotheses.Count;
         var pendingRunStartedLog = runStartedLogLine;
 
-        while (hypothesesCreated < iteration.MaxNumberOfHypotheses)
+        while (true)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            var currentState = await GetIterationStateAsync(iterationId, cancellationToken);
-            if (currentState is ResearchIterationState.Stopped or ResearchIterationState.Paused)
+            var gate = await TryGetIterationRunGateAsync(iterationId, cancellationToken);
+            if (gate is null)
             {
-                _logger.LogInformation("Research iteration {IterationId} is {State}, stopping generation loop", iterationId, currentState);
+                _logger.LogWarning("Research iteration {IterationId} not found during hypothesis loop", iterationId);
+                return;
+            }
+
+            var hypothesisCount = await CountHypothesesForIterationAsync(iterationId, cancellationToken);
+            var maxHypotheses = Math.Max(1, gate.MaxNumberOfHypotheses);
+
+            if (hypothesisCount >= maxHypotheses)
+            {
+                _logger.LogInformation(
+                    "Research iteration {IterationId} reached hypothesis cap ({Current}/{Max}), finishing main loop",
+                    iterationId, hypothesisCount, maxHypotheses);
+                break;
+            }
+
+            if (gate.State is ResearchIterationState.Stopped or ResearchIterationState.Paused)
+            {
+                _logger.LogInformation("Research iteration {IterationId} is {State}, stopping generation loop", iterationId, gate.State);
                 await UpdateIterationMessageAsync(iterationId,
-                    currentState == ResearchIterationState.Paused ? "Paused" : "Stopped by user",
+                    gate.State == ResearchIterationState.Paused ? "Paused" : "Stopped by user",
                     cancellationToken);
                 return;
             }
 
             await UpdateIterationMessageAsync(iterationId,
-                $"Generating hypothesis {hypothesesCreated + 1} of {iteration.MaxNumberOfHypotheses}",
+                $"Generating hypothesis {hypothesisCount + 1} of {maxHypotheses}",
                 cancellationToken);
 
             iteration = await LoadIterationAsync(iterationId, cancellationToken)
@@ -91,7 +107,7 @@ public sealed class AiHypothesisService(
                 .OrderByDescending(h => h.ImpovementPercentage)
                 .FirstOrDefault();
 
-            var placeholder = await InsertPendingHypothesisAsync(iterationId, hypothesesCreated + 1, bestPrior?.Id, cancellationToken);
+            var placeholder = await InsertPendingHypothesisAsync(iterationId, hypothesisCount + 1, bestPrior?.Id, cancellationToken);
 
             if (pendingRunStartedLog is not null)
             {
@@ -105,7 +121,7 @@ public sealed class AiHypothesisService(
 
             await AppendHypothesisLogAsync(
                 placeholder.Id,
-                $"Hypothesis record created (pending). Target slot {hypothesesCreated + 1} of {iteration.MaxNumberOfHypotheses}.",
+                $"Hypothesis record created (pending). Target slot {hypothesisCount + 1} of {maxHypotheses}.",
                 "HypothesisService",
                 cancellationToken);
 
@@ -148,7 +164,7 @@ public sealed class AiHypothesisService(
                 {
                     await AppendHypothesisLogAsync(
                         placeholder.Id,
-                        "Starting Apply → Benchmark → Revert cycle.",
+                        HypothesisTestingService.WithSql("Starting Apply → Benchmark → Revert cycle.", result.OptimizeSql),
                         "HypothesisService",
                         cancellationToken);
 
@@ -170,9 +186,9 @@ public sealed class AiHypothesisService(
                     }
                 }
 
-                hypothesesCreated++;
-
-                _logger.LogInformation("Hypothesis #{Number} created for research iteration {IterationId}", hypothesesCreated, iterationId);
+                _logger.LogInformation(
+                    "Hypothesis #{Number} finished for research iteration {IterationId}",
+                    hypothesisCount + 1, iterationId);
             }
             catch (OperationCanceledException)
             {
@@ -187,38 +203,48 @@ public sealed class AiHypothesisService(
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Failed to generate hypothesis #{Number} for research iteration {IterationId}",
-                    hypothesesCreated + 1, iterationId);
+                    hypothesisCount + 1, iterationId);
                 await AppendHypothesisLogAsync(
                     placeholder.Id,
                     $"Generation failed:\n{TruncateForLog(ex.ToString())}",
                     "HypothesisService",
                     CancellationToken.None);
                 await FailHypothesisAsync(placeholder.Id, ex.Message, CancellationToken.None);
-                hypothesesCreated++;
             }
 
-            var stateAfter = await GetIterationStateAsync(iterationId, cancellationToken);
-            if (stateAfter is ResearchIterationState.Stopped or ResearchIterationState.Paused)
+            var gateAfter = await TryGetIterationRunGateAsync(iterationId, CancellationToken.None);
+            if (gateAfter is null)
             {
-                _logger.LogInformation("Research iteration {IterationId} is {State} after hypothesis, stopping", iterationId, stateAfter);
+                _logger.LogWarning("Research iteration {IterationId} disappeared after hypothesis", iterationId);
+                return;
+            }
+
+            if (gateAfter.State is ResearchIterationState.Stopped or ResearchIterationState.Paused)
+            {
+                _logger.LogInformation("Research iteration {IterationId} is {State} after hypothesis, stopping", iterationId, gateAfter.State);
                 await UpdateIterationMessageAsync(iterationId,
-                    stateAfter == ResearchIterationState.Paused ? "Paused" : "Stopped by user",
+                    gateAfter.State == ResearchIterationState.Paused ? "Paused" : "Stopped by user",
                     CancellationToken.None);
                 return;
             }
         }
 
+        iteration = await LoadIterationAsync(iterationId, cancellationToken)
+            ?? throw new InvalidOperationException($"Research iteration {iterationId} disappeared.");
+
+        var countAfterMainLoop = await CountHypothesesForIterationAsync(iterationId, cancellationToken);
         await UpdateIterationMessageAsync(iterationId,
-            $"All {hypothesesCreated} hypotheses generated, checking for combined optimization...",
+            $"All {countAfterMainLoop} hypotheses generated, checking for combined optimization...",
             cancellationToken);
 
-        _logger.LogInformation("Research iteration {IterationId} hypothesis loop completed ({Count} hypotheses)", iterationId, hypothesesCreated);
+        _logger.LogInformation("Research iteration {IterationId} hypothesis loop completed ({Count} hypotheses)", iterationId, countAfterMainLoop);
 
         // Combined optimization: if 2+ hypotheses succeeded, ask AI to combine the best
         await RunCombinedOptimizationAsync(iterationId, iteration, baseline, cancellationToken);
 
+        var totalHypotheses = await CountHypothesesForIterationAsync(iterationId, cancellationToken);
         await UpdateIterationMessageAsync(iterationId,
-            $"All {hypothesesCreated} hypotheses generated and tested",
+            $"All {totalHypotheses} hypotheses generated and tested",
             cancellationToken);
     }
 
@@ -578,14 +604,27 @@ public sealed class AiHypothesisService(
             .FirstOrDefaultAsync(b => b.Id == iterationId, ct);
     }
 
-    private async Task<ResearchIterationState> GetIterationStateAsync(ResearchIterationId iterationId, CancellationToken ct)
+    private sealed record IterationRunGate(ResearchIterationState State, int MaxNumberOfHypotheses);
+
+    /// <summary>
+    /// Loads current iteration state and cap. Returns null if the row no longer exists (do not treat as Stopped).
+    /// </summary>
+    private async Task<IterationRunGate?> TryGetIterationRunGateAsync(ResearchIterationId iterationId, CancellationToken ct)
     {
         using var scope = scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AIOptimizeDbContext>();
         return await db.ResearchIterations
+            .AsNoTracking()
             .Where(b => b.Id == iterationId)
-            .Select(b => b.State)
+            .Select(b => new IterationRunGate(b.State, b.MaxNumberOfHypotheses))
             .FirstOrDefaultAsync(ct);
+    }
+
+    private async Task<int> CountHypothesesForIterationAsync(ResearchIterationId iterationId, CancellationToken ct)
+    {
+        using var scope = scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AIOptimizeDbContext>();
+        return await db.Hypotheses.CountAsync(h => h.ResearchIterationId == iterationId, ct);
     }
 
     private async Task<IReadOnlyList<Hypothesis>> GetPriorHypothesesAsync(ResearchIterationId iterationId, CancellationToken ct)

@@ -3,7 +3,14 @@ using Tedd.AIOptimizeSql.Database.Models.Enums;
 
 namespace Tedd.AIOptimizeSql.Database.Models;
 
-public enum ResearchIterationId { }
+public enum ResearchIterationId
+{
+    /// <summary>
+    /// In-memory sentinel only: tells EF Core to omit <c>Id</c> on INSERT so SQL Server IDENTITY can run.
+    /// Never persisted; the CLR default for this enum is still <c>0</c>, so new entities must set this explicitly when inserting.
+    /// </summary>
+    Transient = -1,
+}
 
 public record ResearchIteration
 {

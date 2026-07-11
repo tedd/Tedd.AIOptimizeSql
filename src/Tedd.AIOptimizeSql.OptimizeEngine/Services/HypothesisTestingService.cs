@@ -177,16 +177,16 @@ public sealed class HypothesisTestingService(
         {
             try
             {
-                appendLog?.Invoke(hypothesisId, $"Applying optimization (attempt {retry}/{settings.Value.AiMaxRetries})", "TestingService");
+                appendLog?.Invoke(hypothesisId, WithSql($"Applying optimization (attempt {retry}/{settings.Value.AiMaxRetries})", currentOptimizeSql), "TestingService");
                 executor.ExecuteNonQuery(conn, currentOptimizeSql);
                 optimizeSucceeded = true;
                 optimizeRetries = retry;
-                appendLog?.Invoke(hypothesisId, "Optimization applied successfully", "TestingService");
+                appendLog?.Invoke(hypothesisId, WithSql("Optimization applied successfully", currentOptimizeSql), "TestingService");
                 break;
             }
             catch (Exception ex)
             {
-                appendLog?.Invoke(hypothesisId, $"Apply attempt {retry} failed: {ex.Message}", "TestingService");
+                appendLog?.Invoke(hypothesisId, WithSql($"Apply attempt {retry} failed: {ex.Message}", currentOptimizeSql), "TestingService");
                 _logger.LogWarning(ex, "Apply attempt {Retry} failed for hypothesis {Id}", retry, hypothesisId);
 
                 if (retry < settings.Value.AiMaxRetries)
@@ -201,7 +201,7 @@ public sealed class HypothesisTestingService(
                             currentOptimizeSql = fixResult.Optimize_sql;
                         if (!string.IsNullOrWhiteSpace(fixResult.Revert_sql))
                             currentRevertSql = fixResult.Revert_sql;
-                        appendLog?.Invoke(hypothesisId, "AI provided corrected SQL", "TestingService");
+                        appendLog?.Invoke(hypothesisId, WithSql("AI provided corrected SQL", currentOptimizeSql), "TestingService");
                     }
                 }
             }
@@ -276,16 +276,16 @@ public sealed class HypothesisTestingService(
         {
             try
             {
-                appendLog?.Invoke(hypothesisId, $"Reverting optimization (attempt {retry}/{settings.Value.AiMaxRetries})", "TestingService");
+                appendLog?.Invoke(hypothesisId, WithSql($"Reverting optimization (attempt {retry}/{settings.Value.AiMaxRetries})", currentRevertSql), "TestingService");
                 executor.ExecuteNonQuery(conn, currentRevertSql);
                 revertSucceeded = true;
                 revertRetries = retry;
-                appendLog?.Invoke(hypothesisId, "Revert applied successfully", "TestingService");
+                appendLog?.Invoke(hypothesisId, WithSql("Revert applied successfully", currentRevertSql), "TestingService");
                 break;
             }
             catch (Exception ex)
             {
-                appendLog?.Invoke(hypothesisId, $"Revert attempt {retry} failed: {ex.Message}", "TestingService");
+                appendLog?.Invoke(hypothesisId, WithSql($"Revert attempt {retry} failed: {ex.Message}", currentRevertSql), "TestingService");
                 _logger.LogWarning(ex, "Revert attempt {Retry} failed for hypothesis {Id}", retry, hypothesisId);
 
                 if (retry < settings.Value.AiMaxRetries)
@@ -297,7 +297,7 @@ public sealed class HypothesisTestingService(
                     if (fixResult != null && !string.IsNullOrWhiteSpace(fixResult.Revert_sql))
                     {
                         currentRevertSql = fixResult.Revert_sql;
-                        appendLog?.Invoke(hypothesisId, "AI provided corrected revert SQL", "TestingService");
+                        appendLog?.Invoke(hypothesisId, WithSql("AI provided corrected revert SQL", currentRevertSql), "TestingService");
                     }
                 }
             }
@@ -387,6 +387,9 @@ public sealed class HypothesisTestingService(
     }
 
     #endregion
+
+    internal static string WithSql(string message, string? sql) =>
+        string.IsNullOrWhiteSpace(sql) ? message : $"{message}\n[sql]\n{sql.Trim()}\n[/sql]";
 
     #region Helpers
 

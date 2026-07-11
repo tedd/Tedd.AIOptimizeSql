@@ -239,16 +239,7 @@
                     <MudStack Spacing="2">
                         @foreach (var line in _hypothesisLogs)
                         {
-                            <MudPaper Elevation="0" Class="pa-2 rounded" Style="background: var(--mud-palette-background-grey);">
-                                <MudText Typo="Typo.caption" Class="mud-text-secondary">
-                                    @line.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")
-                                    @if (!string.IsNullOrEmpty(line.Source))
-                                    {
-                                        <text> · @line.Source</text>
-                                    }
-                                </MudText>
-                                <MudText Typo="Typo.body2" Style="white-space: pre-wrap; word-break: break-word;">@line.Message</MudText>
-                            </MudPaper>
+                            <HypothesisLogEntry Log="line" />
                         }
                     </MudStack>
                 </MudCardContent>
