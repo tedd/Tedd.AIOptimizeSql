@@ -364,11 +364,13 @@
             .OrderBy(h => h.CreatedAt)
             .ToListAsync(ct);
 
+        var baselineIds = _orderedIterations
+            .Where(r => r.BaselineBenchmarkRunId != null)
+            .Select(r => r.BaselineBenchmarkRunId!.Value)
+            .ToList();
+
         var baselines = await db.BenchmarkRuns.AsNoTracking()
-            .Where(b => _orderedIterations
-                .Where(r => r.BaselineBenchmarkRunId != null)
-                .Select(r => r.BaselineBenchmarkRunId!.Value)
-                .Contains(b.Id))
+            .Where(b => baselineIds.Contains(b.Id))
             .ToDictionaryAsync(b => b.Id, ct);
 
         BuildKpis(hypotheses);
