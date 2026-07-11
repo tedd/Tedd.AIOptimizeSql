@@ -287,11 +287,10 @@
 
         if (confirm == true)
         {
-            await using var db = await DbContextFactory.CreateDbContextAsync();
-            await NullOutBuildsOnReferencesAsync(db, item.Id);
-            var deleted = await db.Hypotheses.Where(h => h.Id == item.Id).ExecuteDeleteAsync();
+            var deleted = await DataAccess.DeleteHypothesesAsync([item.Id]);
             if (deleted == 0)
                 return;
+            await using var db = await DbContextFactory.CreateDbContextAsync();
             var iterationId = (ResearchIterationId)(object)IterationId;
             await ModifiedAtStamping.TouchResearchIterationAsync(db, iterationId);
             Snackbar.Add("Hypothesis deleted", Severity.Success);
@@ -310,14 +309,8 @@
         if (confirm == true)
         {
             var ids = _selectedItems.Select(i => i.Id).ToList();
+            var deleted = await DataAccess.DeleteHypothesesAsync(ids);
             await using var db = await DbContextFactory.CreateDbContextAsync();
-            var now = DateTime.UtcNow;
-            await db.Hypotheses
-                .Where(h => h.BuildsOnHypothesisId != null && ids.Contains(h.BuildsOnHypothesisId.Value))
-                .ExecuteUpdateAsync(s => s
-                    .SetProperty(h => h.BuildsOnHypothesisId, (HypothesisId?)null)
-                    .SetProperty(h => h.ModifiedAt, now));
-            var deleted = await db.Hypotheses.Where(h => ids.Contains(h.Id)).ExecuteDeleteAsync();
             var iterationId = (ResearchIterationId)(object)IterationId;
             await ModifiedAtStamping.TouchResearchIterationAsync(db, iterationId);
             Snackbar.Add(deleted == 0 ? "Nothing deleted" : $"Deleted {deleted} hypothesis/hypotheses", deleted == 0 ? Severity.Info : Severity.Success);
@@ -325,16 +318,6 @@
             await _table!.ReloadServerData();
             await RefreshStatsAndChartAfterMutationAsync();
         }
-    }
-
-    private static async Task NullOutBuildsOnReferencesAsync(AIOptimizeDbContext db, HypothesisId id)
-    {
-        var now = DateTime.UtcNow;
-        await db.Hypotheses
-            .Where(h => h.BuildsOnHypothesisId == id)
-            .ExecuteUpdateAsync(s => s
-                .SetProperty(h => h.BuildsOnHypothesisId, (HypothesisId?)null)
-                .SetProperty(h => h.ModifiedAt, now));
     }
 
     private async Task RefreshStatsAndChartAfterMutationAsync()

@@ -238,8 +238,7 @@
 
         if (confirm == true)
         {
-            await using var db = await DbContextFactory.CreateDbContextAsync();
-            var deleted = await db.ResearchIterations.Where(r => r.Id == vm.Iteration.Id).ExecuteDeleteAsync();
+            var deleted = await DataAccess.DeleteResearchIterationsAsync([vm.Iteration.Id]);
             if (deleted == 0)
                 return;
             Snackbar.Add("Research iteration deleted", Severity.Success);
@@ -258,8 +257,7 @@
         if (confirm == true)
         {
             var ids = _selectedItems.Select(vm => vm.Iteration.Id).ToList();
-            await using var db = await DbContextFactory.CreateDbContextAsync();
-            var deleted = await db.ResearchIterations.Where(r => ids.Contains(r.Id)).ExecuteDeleteAsync();
+            var deleted = await DataAccess.DeleteResearchIterationsAsync(ids);
             Snackbar.Add(deleted == 0 ? "Nothing deleted" : $"Deleted {deleted} research iteration(s)", deleted == 0 ? Severity.Info : Severity.Success);
             _selectedItems.Clear();
             await _table!.ReloadServerData();

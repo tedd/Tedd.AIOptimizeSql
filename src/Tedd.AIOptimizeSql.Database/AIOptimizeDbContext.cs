@@ -198,11 +198,11 @@ public class AIOptimizeDbContext : DbContext
                 .HasForeignKey(f => f.DatabaseAnalysisId)
                 .OnDelete(DeleteBehavior.Cascade);
 
-            // NoAction: experiments can outlive the finding that proposed them.
+            // SetNull: deleting a proposed experiment keeps the finding and just clears the link.
             entity.HasOne(f => f.ProposedExperiment)
                 .WithMany()
                 .HasForeignKey(f => f.ProposedExperimentId)
-                .OnDelete(DeleteBehavior.NoAction);
+                .OnDelete(DeleteBehavior.SetNull);
         });
 
         modelBuilder.Entity<DatabaseAnalysisLog>(entity =>

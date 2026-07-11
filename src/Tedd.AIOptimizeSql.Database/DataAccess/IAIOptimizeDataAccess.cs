@@ -41,6 +41,26 @@ public interface IAIOptimizeDataAccess
 
     Task DeleteResearchIterationAsync(ResearchIterationId id, CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Deletes experiments with all dependents handled: analysis-finding links are cleared,
+    /// iterations/hypotheses/logs/tasks/queue rows cascade, and benchmark runs that are no
+    /// longer referenced by anything are removed. Returns the number of experiments deleted.
+    /// </summary>
+    Task<int> DeleteExperimentsAsync(IReadOnlyCollection<ExperimentId> ids, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Deletes research iterations (hypotheses/logs/tasks/queue rows cascade) and removes
+    /// benchmark runs left unreferenced. Returns the number of iterations deleted.
+    /// </summary>
+    Task<int> DeleteResearchIterationsAsync(IReadOnlyCollection<ResearchIterationId> ids, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Deletes hypotheses with all dependents handled: builds-on references from surviving
+    /// hypotheses are cleared first (self-referencing FK is NO ACTION), logs/tasks cascade,
+    /// and benchmark runs left unreferenced are removed. Returns the number deleted.
+    /// </summary>
+    Task<int> DeleteHypothesesAsync(IReadOnlyCollection<HypothesisId> ids, CancellationToken cancellationToken = default);
+
     Task ClearAiConnectionReferencesAsync(AIConnectionId id, CancellationToken cancellationToken = default);
 
     Task<DateTime?> GetMaxAiConnectionModifiedAtAsync(CancellationToken cancellationToken = default);

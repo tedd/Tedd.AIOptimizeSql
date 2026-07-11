@@ -259,21 +259,159 @@ public sealed class AIOptimizeDataAccess(IDbContextFactory<AIOptimizeDbContext> 
         }
     }
 
-    public async Task DeleteResearchIterationAsync(ResearchIterationId id, CancellationToken cancellationToken = default)
+    public Task DeleteResearchIterationAsync(ResearchIterationId id, CancellationToken cancellationToken = default) =>
+        DeleteResearchIterationsAsync([id], cancellationToken);
+
+    public async Task<int> DeleteExperimentsAsync(IReadOnlyCollection<ExperimentId> ids, CancellationToken cancellationToken = default)
     {
+        if (ids.Count == 0)
+            return 0;
+
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
+        var now = DateTime.UtcNow;
+        int deleted;
+
         if (db.Database.IsRelational())
         {
-            await db.ResearchIterations.Where(b => b.Id == id).ExecuteDeleteAsync(cancellationToken);
+            // Clear analysis-finding links explicitly (defense in depth on top of the
+            // ON DELETE SET NULL constraint) so the finding survives with a stamped change.
+            await db.AnalysisFindings
+                .Where(f => f.ProposedExperimentId != null && ids.Contains(f.ProposedExperimentId.Value))
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(f => f.ProposedExperimentId, (ExperimentId?)null)
+                    .SetProperty(f => f.ModifiedAt, now), cancellationToken);
+
+            deleted = await db.Experiments.Where(e => ids.Contains(e.Id)).ExecuteDeleteAsync(cancellationToken);
+        }
+        else
+        {
+            var findings = await db.AnalysisFindings.AsTracking()
+                .Where(f => f.ProposedExperimentId != null && ids.Contains(f.ProposedExperimentId.Value))
+                .ToListAsync(cancellationToken);
+            foreach (var f in findings)
+            {
+                f.ProposedExperimentId = null;
+                f.ModifiedAt = now;
+            }
+
+            var experiments = await db.Experiments.AsTracking()
+                .Where(e => ids.Contains(e.Id))
+                .ToListAsync(cancellationToken);
+            db.Experiments.RemoveRange(experiments);
+            await db.SaveChangesAsync(cancellationToken);
+            deleted = experiments.Count;
+        }
+
+        await DeleteOrphanBenchmarkRunsAsync(db, cancellationToken);
+        return deleted;
+    }
+
+    public async Task<int> DeleteResearchIterationsAsync(IReadOnlyCollection<ResearchIterationId> ids, CancellationToken cancellationToken = default)
+    {
+        if (ids.Count == 0)
+            return 0;
+
+        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
+        int deleted;
+
+        if (db.Database.IsRelational())
+        {
+            deleted = await db.ResearchIterations.Where(r => ids.Contains(r.Id)).ExecuteDeleteAsync(cancellationToken);
+        }
+        else
+        {
+            var iterations = await db.ResearchIterations.AsTracking()
+                .Where(r => ids.Contains(r.Id))
+                .ToListAsync(cancellationToken);
+            db.ResearchIterations.RemoveRange(iterations);
+            await db.SaveChangesAsync(cancellationToken);
+            deleted = iterations.Count;
+        }
+
+        await DeleteOrphanBenchmarkRunsAsync(db, cancellationToken);
+        return deleted;
+    }
+
+    public async Task<int> DeleteHypothesesAsync(IReadOnlyCollection<HypothesisId> ids, CancellationToken cancellationToken = default)
+    {
+        if (ids.Count == 0)
+            return 0;
+
+        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
+        var now = DateTime.UtcNow;
+        int deleted;
+
+        if (db.Database.IsRelational())
+        {
+            // The self-referencing BuildsOnHypothesisId FK is NO ACTION (SQL Server does not
+            // allow cascading actions on self-references), so clear surviving references first.
+            await db.Hypotheses
+                .Where(h => h.BuildsOnHypothesisId != null && ids.Contains(h.BuildsOnHypothesisId.Value))
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(h => h.BuildsOnHypothesisId, (HypothesisId?)null)
+                    .SetProperty(h => h.ModifiedAt, now), cancellationToken);
+
+            deleted = await db.Hypotheses.Where(h => ids.Contains(h.Id)).ExecuteDeleteAsync(cancellationToken);
+        }
+        else
+        {
+            var referencing = await db.Hypotheses.AsTracking()
+                .Where(h => h.BuildsOnHypothesisId != null && ids.Contains(h.BuildsOnHypothesisId.Value))
+                .ToListAsync(cancellationToken);
+            foreach (var h in referencing)
+            {
+                h.BuildsOnHypothesisId = null;
+                h.ModifiedAt = now;
+            }
+
+            var hypotheses = await db.Hypotheses.AsTracking()
+                .Where(h => ids.Contains(h.Id))
+                .ToListAsync(cancellationToken);
+            db.Hypotheses.RemoveRange(hypotheses);
+            await db.SaveChangesAsync(cancellationToken);
+            deleted = hypotheses.Count;
+        }
+
+        await DeleteOrphanBenchmarkRunsAsync(db, cancellationToken);
+        return deleted;
+    }
+
+    /// <summary>
+    /// Removes benchmark runs no longer referenced by any iteration baseline or hypothesis
+    /// before/after link. Benchmark FKs are NO ACTION, so deletes of their owners leave
+    /// orphans behind; this keeps the table from growing forever.
+    /// </summary>
+    private static async Task DeleteOrphanBenchmarkRunsAsync(AIOptimizeDbContext db, CancellationToken cancellationToken)
+    {
+        if (db.Database.IsRelational())
+        {
+            await db.BenchmarkRuns
+                .Where(b =>
+                    !db.ResearchIterations.Any(r => r.BaselineBenchmarkRunId == b.Id) &&
+                    !db.Hypotheses.Any(h => h.BenchmarkRunIdBefore == b.Id || h.BenchmarkRunIdAfter == b.Id))
+                .ExecuteDeleteAsync(cancellationToken);
             return;
         }
 
-        var iteration = await db.ResearchIterations.AsTracking()
-            .FirstOrDefaultAsync(b => b.Id == id, cancellationToken);
-        if (iteration is null)
-            return;
-        db.ResearchIterations.Remove(iteration);
-        await db.SaveChangesAsync(cancellationToken);
+        var referenced = new HashSet<BenchmarkRunId>();
+        foreach (var id in await db.ResearchIterations.AsNoTracking()
+                     .Where(r => r.BaselineBenchmarkRunId != null)
+                     .Select(r => r.BaselineBenchmarkRunId!.Value).ToListAsync(cancellationToken))
+            referenced.Add(id);
+        foreach (var h in await db.Hypotheses.AsNoTracking()
+                     .Select(h => new { h.BenchmarkRunIdBefore, h.BenchmarkRunIdAfter }).ToListAsync(cancellationToken))
+        {
+            if (h.BenchmarkRunIdBefore is { } before) referenced.Add(before);
+            if (h.BenchmarkRunIdAfter is { } after) referenced.Add(after);
+        }
+
+        var orphans = await db.BenchmarkRuns.AsTracking().ToListAsync(cancellationToken);
+        orphans.RemoveAll(b => referenced.Contains(b.Id));
+        if (orphans.Count > 0)
+        {
+            db.BenchmarkRuns.RemoveRange(orphans);
+            await db.SaveChangesAsync(cancellationToken);
+        }
     }
 
     public async Task ClearAiConnectionReferencesAsync(AIConnectionId id, CancellationToken cancellationToken = default)
