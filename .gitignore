@@ -202,6 +202,9 @@ publish/
 # but database connection strings (with potential passwords) will be unencrypted
 *.pubxml
 *.publishproj
+# The standalone publish profiles are pure build configuration (no credentials)
+# and are required by the GitHub release workflow.
+!src/Tedd.AIOptimizeSql.WebUI/Properties/PublishProfiles/standalone-*.pubxml
 
 # Microsoft Azure Web App publish settings. Comment the next line if you want to
 # checkin your Azure Web App publish settings, but sensitive information contained
