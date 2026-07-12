@@ -463,9 +463,9 @@
                 var newId = await CreateIterationCoreAsync();
                 if (newId is not ResearchIterationId createdId) return;
                 if (runAfter)
-                    await DataAccess.BeginResearchIterationRunAsync(createdId);
+                    await DataAccess.SetResearchIterationStateAsync(createdId, ResearchIterationState.Queued);
 
-                Snackbar.Add(runAfter ? "Research iteration created and run started" : "Research iteration created", Severity.Success);
+                Snackbar.Add(runAfter ? "Research iteration created and queued" : "Research iteration created", Severity.Success);
                 Navigation.NavigateTo($"/research-iterations/{(int)(object)createdId}/edit");
             }
             else if (_iteration != null)
