@@ -155,6 +155,95 @@ public class HypothesisPromptBuilderTests
     }
 
     [Fact]
+    public void FormatBenchmarkRunSummary_includes_stats_messages_and_tool_hint()
+    {
+        var run = new BenchmarkRun
+        {
+            Id = (BenchmarkRunId)42,
+            TotalTimeMs = 5000,
+            TotalServerCpuTimeMs = 120,
+            TotalServerElapsedTimeMs = 340,
+            TotalScanCount = 7,
+            TotalLogicalReads = 9876,
+            TotalPhysicalReads = 54,
+            TotalReadAheadReads = 12,
+            ActualPlanXml = ["<ShowPlanXML/>", "<ShowPlanXML/>"],
+            Messages = "Table 'T'. Scan count 7, logical reads 9876",
+        };
+
+        var text = HypothesisPromptBuilder.FormatBenchmarkRunSummary(run);
+
+        Assert.Contains("Benchmark run id: 42", text, StringComparison.Ordinal);
+        Assert.Contains("- CPU time (median): 120 ms", text, StringComparison.Ordinal);
+        Assert.Contains("- Elapsed time (median): 340 ms", text, StringComparison.Ordinal);
+        Assert.Contains("- Scan count: 7", text, StringComparison.Ordinal);
+        Assert.Contains("- Logical reads: 9876", text, StringComparison.Ordinal);
+        Assert.Contains("- Physical reads: 54", text, StringComparison.Ordinal);
+        Assert.Contains("- Actual execution plans captured: 2", text, StringComparison.Ordinal);
+        Assert.Contains("GetBenchmarkRunDetails(42)", text, StringComparison.Ordinal);
+        Assert.Contains("GetBenchmarkRunPlanXml(42, planIndex)", text, StringComparison.Ordinal);
+        Assert.Contains("Table 'T'. Scan count 7, logical reads 9876", text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void BuildPrompt_includes_benchmark_run_ids_and_tool_hint_for_prior_attempts()
+    {
+        var priors = new List<Hypothesis>
+        {
+            new()
+            {
+                ResearchIterationId = default,
+                Status = HypothesisState.Completed,
+                Description = "Add index A",
+                ImpovementPercentage = 10f,
+                BenchmarkRunAfter = new BenchmarkRun
+                {
+                    Id = (BenchmarkRunId)17,
+                    TotalTimeMs = 1000,
+                    TotalServerCpuTimeMs = 80,
+                    TotalServerElapsedTimeMs = 200,
+                    TotalLogicalReads = 500,
+                    TotalPhysicalReads = 3,
+                },
+            },
+        };
+
+        var text = HypothesisPromptBuilder.BuildPrompt(Iteration(), priors);
+
+        Assert.Contains("call GetBenchmarkRunDetails(id)", text, StringComparison.Ordinal);
+        Assert.Contains("GetBenchmarkRunPlanXml(id, planIndex)", text, StringComparison.Ordinal);
+        Assert.Contains("- **Result (after)**: CPU 80ms, Elapsed 200ms, Logical Reads 500, Physical Reads 3 (benchmark run 17)", text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void BuildCombinedPrompt_includes_after_run_reference_and_baseline_summary()
+    {
+        var text = HypothesisPromptBuilder.BuildCombinedPrompt(
+            [
+                new Hypothesis
+                {
+                    ResearchIterationId = default,
+                    Status = HypothesisState.Completed,
+                    Description = "Add covering index",
+                    ImpovementPercentage = 12.5f,
+                    BenchmarkRunAfter = new BenchmarkRun
+                    {
+                        Id = (BenchmarkRunId)23,
+                        TotalTimeMs = 1000,
+                        TotalServerCpuTimeMs = 70,
+                        TotalServerElapsedTimeMs = 150,
+                        TotalLogicalReads = 400,
+                    },
+                },
+            ],
+            baselinePerformanceSummary: "Benchmark run id: 9");
+
+        Assert.Contains("**Measured (after)**: CPU 70ms, Elapsed 150ms, Logical Reads 400 (benchmark run 23)", text, StringComparison.Ordinal);
+        Assert.Contains("Benchmark run id: 9", text, StringComparison.Ordinal);
+        Assert.Contains("call GetBenchmarkRunDetails(id)", text, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void BuildPrompt_includes_hints_when_present()
     {
         var text = HypothesisPromptBuilder.BuildPrompt(Iteration(hints: "Focus on indexes"), []);

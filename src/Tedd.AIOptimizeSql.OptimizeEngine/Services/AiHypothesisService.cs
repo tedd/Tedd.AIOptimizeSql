@@ -144,7 +144,7 @@ public sealed class AiHypothesisService(
                     "HypothesisService",
                     cancellationToken);
 
-                var result = await GenerateSingleHypothesisAsync(iteration, priorHypotheses, placeholder.Id, cancellationToken);
+                var result = await GenerateSingleHypothesisAsync(iteration, priorHypotheses, placeholder.Id, baseline, cancellationToken);
 
                 await AppendHypothesisLogAsync(
                     placeholder.Id,
@@ -295,6 +295,7 @@ public sealed class AiHypothesisService(
         ResearchIteration iteration,
         IReadOnlyList<Hypothesis> priorHypotheses,
         HypothesisId hypothesisId,
+        BenchmarkRun? baseline,
         CancellationToken cancellationToken)
     {
         var experiment = iteration.Experiment
@@ -324,8 +325,11 @@ public sealed class AiHypothesisService(
         var taskTools = new AgentTaskToolWrapper(
             AgentTaskScope.ForHypothesis(hypothesisId),
             scopeFactory, loggerFactory.CreateLogger<AgentTaskToolWrapper>());
+        var benchmarkTools = new BenchmarkRunToolWrapper(
+            iteration.Id, scopeFactory, settings.Value.MaxToolResponseBytes,
+            loggerFactory.CreateLogger<BenchmarkRunToolWrapper>());
 
-        var tools = BuildAgentTools(toolWrapper, schemaTools, perfTools, webTools, taskTools, analyzeOnly);
+        var tools = BuildAgentTools(toolWrapper, schemaTools, perfTools, webTools, taskTools, benchmarkTools, analyzeOnly);
 
         var relatedFindings = await GetRelatedFindingsAsync(experiment.Id, cancellationToken);
 
@@ -333,6 +337,7 @@ public sealed class AiHypothesisService(
         var instructions = HypothesisPromptBuilder.BuildInstructions(
             experiment, iteration, priorHypotheses,
             schemaDiscoveryMarkdown: iteration.SchemaDiscoveryMarkdown,
+            baselinePerformanceSummary: baseline is null ? null : HypothesisPromptBuilder.FormatBenchmarkRunSummary(baseline),
             analyzeOnly: analyzeOnly,
             maxAgentRuns: maxRuns,
             relatedFindings: relatedFindings);
@@ -392,6 +397,7 @@ public sealed class AiHypothesisService(
         PerformanceMetricsToolWrapper perfTools,
         WebSearchToolWrapper? webTools,
         AgentTaskToolWrapper taskTools,
+        BenchmarkRunToolWrapper benchmarkTools,
         bool analyzeOnly)
     {
         var tools = new List<AITool>
@@ -427,6 +433,9 @@ public sealed class AiHypothesisService(
             tools.Add(AIFunctionFactory.Create(webTools.WebSearch, nameof(webTools.WebSearch)));
             tools.Add(AIFunctionFactory.Create(webTools.FetchWebPage, nameof(webTools.FetchWebPage)));
         }
+
+        tools.Add(AIFunctionFactory.Create(benchmarkTools.GetBenchmarkRunDetails, nameof(benchmarkTools.GetBenchmarkRunDetails)));
+        tools.Add(AIFunctionFactory.Create(benchmarkTools.GetBenchmarkRunPlanXml, nameof(benchmarkTools.GetBenchmarkRunPlanXml)));
 
         tools.Add(AIFunctionFactory.Create(taskTools.AddTask, nameof(taskTools.AddTask)));
         tools.Add(AIFunctionFactory.Create(taskTools.UpdateTask, nameof(taskTools.UpdateTask)));
@@ -549,13 +558,17 @@ public sealed class AiHypothesisService(
             var taskTools = new AgentTaskToolWrapper(
                 AgentTaskScope.ForHypothesis(placeholder.Id),
                 scopeFactory, loggerFactory.CreateLogger<AgentTaskToolWrapper>());
+            var benchmarkTools = new BenchmarkRunToolWrapper(
+                iterationId, scopeFactory, settings.Value.MaxToolResponseBytes,
+                loggerFactory.CreateLogger<BenchmarkRunToolWrapper>());
 
-            var tools = BuildAgentTools(toolWrapper, schemaTools, perfTools, webTools, taskTools, analyzeOnly);
+            var tools = BuildAgentTools(toolWrapper, schemaTools, perfTools, webTools, taskTools, benchmarkTools, analyzeOnly);
 
             var maxRuns = Math.Clamp(settings.Value.MaxAgentContinuations, 1, 100);
             var combinedPrompt = HypothesisPromptBuilder.BuildCombinedPrompt(
                 completedHypotheses,
-                iteration.SchemaDiscoveryMarkdown);
+                iteration.SchemaDiscoveryMarkdown,
+                baselinePerformanceSummary: baseline is null ? null : HypothesisPromptBuilder.FormatBenchmarkRunSummary(baseline));
 
             var agent = agentFactory.Create(aiConnection,
                 "You are a MSSQL performance optimization expert. Combine the most effective strategies into one ultimate optimization.\n\n" +
@@ -618,6 +631,7 @@ public sealed class AiHypothesisService(
         using var scope = scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AIOptimizeDbContext>();
         return await db.Hypotheses.AsNoTracking()
+            .Include(h => h.BenchmarkRunAfter)
             .Where(h => h.ResearchIterationId == iterationId)
             .OrderBy(h => h.CreatedAt)
             .ToListAsync(ct);

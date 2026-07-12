@@ -222,6 +222,8 @@ internal static class HypothesisPromptBuilder
             sb.AppendLine();
             sb.AppendLine("Analyse the previous attempts carefully. Learn from which were GOOD, BAD, FAILED, or had revert/integrity risks. Do NOT repeat materially the same approach if it already failed or regressed.");
             sb.AppendLine();
+            sb.AppendLine("Where a benchmark run id is shown, call GetBenchmarkRunDetails(id) for the full IO statistics and server messages (STATISTICS IO/TIME), and GetBenchmarkRunPlanXml(id, planIndex) for the actual execution plan XML of that run.");
+            sb.AppendLine();
 
             for (var i = 0; i < priorHypotheses.Count; i++)
             {
@@ -237,10 +239,10 @@ internal static class HypothesisPromptBuilder
                     sb.AppendLine($"- **Description**: {h.Description}");
 
                 if (h.BenchmarkRunBefore != null)
-                    sb.AppendLine($"- **Baseline (before)**: CPU {h.BenchmarkRunBefore.TotalServerCpuTimeMs}ms, Elapsed {h.BenchmarkRunBefore.TotalServerElapsedTimeMs}ms, Logical Reads {h.BenchmarkRunBefore.TotalLogicalReads}");
+                    sb.AppendLine($"- **Baseline (before)**: CPU {h.BenchmarkRunBefore.TotalServerCpuTimeMs}ms, Elapsed {h.BenchmarkRunBefore.TotalServerElapsedTimeMs}ms, Logical Reads {h.BenchmarkRunBefore.TotalLogicalReads}, Physical Reads {h.BenchmarkRunBefore.TotalPhysicalReads} (benchmark run {(int)h.BenchmarkRunBefore.Id})");
 
                 if (h.BenchmarkRunAfter != null)
-                    sb.AppendLine($"- **Result (after)**: CPU {h.BenchmarkRunAfter.TotalServerCpuTimeMs}ms, Elapsed {h.BenchmarkRunAfter.TotalServerElapsedTimeMs}ms, Logical Reads {h.BenchmarkRunAfter.TotalLogicalReads}");
+                    sb.AppendLine($"- **Result (after)**: CPU {h.BenchmarkRunAfter.TotalServerCpuTimeMs}ms, Elapsed {h.BenchmarkRunAfter.TotalServerElapsedTimeMs}ms, Logical Reads {h.BenchmarkRunAfter.TotalLogicalReads}, Physical Reads {h.BenchmarkRunAfter.TotalPhysicalReads} (benchmark run {(int)h.BenchmarkRunAfter.Id})");
 
                 if (!string.IsNullOrWhiteSpace(h.OptimizeSql))
                 {
@@ -361,6 +363,8 @@ internal static class HypothesisPromptBuilder
 
         sb.AppendLine("## Previous Results");
         sb.AppendLine();
+        sb.AppendLine("Where a benchmark run id is shown, call GetBenchmarkRunDetails(id) for the full IO statistics and server messages, and GetBenchmarkRunPlanXml(id, planIndex) for the actual execution plan XML of that run.");
+        sb.AppendLine();
 
         foreach (var h in completedHypotheses.OrderByDescending(h => h.ImpovementPercentage))
         {
@@ -369,6 +373,8 @@ internal static class HypothesisPromptBuilder
             sb.AppendLine();
             if (!string.IsNullOrWhiteSpace(h.Description))
                 sb.AppendLine($"**Description**: {h.Description}");
+            if (h.BenchmarkRunAfter != null)
+                sb.AppendLine($"**Measured (after)**: CPU {h.BenchmarkRunAfter.TotalServerCpuTimeMs}ms, Elapsed {h.BenchmarkRunAfter.TotalServerElapsedTimeMs}ms, Logical Reads {h.BenchmarkRunAfter.TotalLogicalReads} (benchmark run {(int)h.BenchmarkRunAfter.Id})");
             if (!string.IsNullOrWhiteSpace(h.OptimizeSql))
             {
                 sb.AppendLine("**Optimisation SQL**:");
@@ -401,6 +407,39 @@ internal static class HypothesisPromptBuilder
 
     private static string Clip(string value, int maxChars = MaxFindingFieldChars) =>
         value.Length <= maxChars ? value : value[..maxChars] + "\n… (truncated)";
+
+    /// <summary>
+    /// Formats a benchmark run as a markdown summary for the agent prompt: key timings,
+    /// full IO statistics, server messages (STATISTICS IO/TIME) and a pointer to the
+    /// benchmark tools for fetching the captured actual execution plan XML.
+    /// </summary>
+    public static string FormatBenchmarkRunSummary(BenchmarkRun run)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine($"Benchmark run id: {(int)run.Id}");
+        sb.AppendLine($"- CPU time (median): {run.TotalServerCpuTimeMs} ms");
+        sb.AppendLine($"- Elapsed time (median): {run.TotalServerElapsedTimeMs} ms");
+        sb.AppendLine($"- Scan count: {run.TotalScanCount}");
+        sb.AppendLine($"- Logical reads: {run.TotalLogicalReads}");
+        sb.AppendLine($"- Physical reads: {run.TotalPhysicalReads}");
+        sb.AppendLine($"- Read-ahead reads: {run.TotalReadAheadReads}");
+        if (run.TotalLobLogicalReads > 0 || run.TotalLobPhysicalReads > 0)
+            sb.AppendLine($"- LOB reads: {run.TotalLobLogicalReads} logical, {run.TotalLobPhysicalReads} physical");
+        sb.AppendLine($"- Actual execution plans captured: {run.ActualPlanXml.Count}");
+        sb.AppendLine();
+        sb.AppendLine($"Use GetBenchmarkRunDetails({(int)run.Id}) for the full IO breakdown and server messages, and GetBenchmarkRunPlanXml({(int)run.Id}, planIndex) for the actual execution plan XML (runtime row counts, spills, warnings).");
+
+        if (!string.IsNullOrWhiteSpace(run.Messages))
+        {
+            sb.AppendLine();
+            sb.AppendLine("Server messages (STATISTICS IO/TIME output):");
+            sb.AppendLine("```");
+            sb.AppendLine(Clip(run.Messages.Trim()));
+            sb.AppendLine("```");
+        }
+
+        return sb.ToString();
+    }
 
     private static string ClassifyOutcome(Hypothesis h)
     {
