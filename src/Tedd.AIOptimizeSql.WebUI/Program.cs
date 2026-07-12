@@ -8,6 +8,7 @@ using Tedd.AIOptimizeSql.Database;
 using Tedd.AIOptimizeSql.Database.DataAccess;
 using Tedd.AIOptimizeSql.WebUI.Components;
 using Tedd.AIOptimizeSql.WebUI.Options;
+using Tedd.AIOptimizeSql.WebUI.Security;
 using Tedd.AIOptimizeSql.WebUI.Services;
 
 namespace Tedd.AIOptimizeSql.WebUI;
@@ -46,6 +47,10 @@ public class Program
                 builder.Configuration.AddCommandLine(args);
         }
 
+        // Loopback-only default binding, optional single-user authentication (auto-required
+        // on Azure App Service), optional remote-IP allowlist. See docs/DEPLOYMENT.md.
+        var security = builder.AddAIOptimizeSecurity();
+
         builder.AddServiceDefaults();
         builder.AddAIOptimizeDatabase();
 
@@ -67,6 +72,10 @@ public class Program
 
         var app = builder.Build();
 
+        // First in the pipeline: forwarded headers (real client address/scheme behind the
+        // Azure App Service proxy) and the remote-IP allowlist.
+        app.UseAIOptimizeSecurity(security);
+
         app.MapDefaultEndpoints();
 
         if (!app.Environment.IsDevelopment())
@@ -78,11 +87,25 @@ public class Program
         app.UseStatusCodePagesWithReExecute("/not-found", createScopeForStatusCodePages: true);
         app.UseHttpsRedirection();
 
+        if (security.AuthenticationEnabled)
+        {
+            app.UseAuthentication();
+            app.UseAuthorization();
+        }
+
         app.UseAntiforgery();
 
         app.MapStaticAssets();
-        app.MapRazorComponents<App>()
+        var componentEndpoints = app.MapRazorComponents<App>()
             .AddInteractiveServerRenderMode();
+
+        if (security.AuthenticationEnabled)
+        {
+            // Every page (and the Blazor circuit hub) requires the signed-in user; the login
+            // page and error/not-found pages opt out via [AllowAnonymous].
+            componentEndpoints.RequireAuthorization();
+            app.MapAuthEndpoints();
+        }
 
         ApplySqliteMigrations(app);
 
@@ -120,8 +143,8 @@ public class Program
             return;
         if (app.Environment.IsDevelopment())
             return;
-        if (!string.IsNullOrEmpty(Environment.GetEnvironmentVariable("WEBSITE_SITE_NAME")))
-            return; // Azure App Service
+        if (SecuritySetup.IsAzureAppService)
+            return;
         if (string.Equals(Environment.GetEnvironmentVariable("DOTNET_RUNNING_IN_CONTAINER"), "true", StringComparison.OrdinalIgnoreCase))
             return;
 

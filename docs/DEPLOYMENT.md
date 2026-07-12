@@ -53,7 +53,8 @@ Double-click the executable or start it from a terminal. On first start it:
 
 1. Creates a SQLite database at `%LocalAppData%\Tedd.AIOptimizeSql\aioptimize.db`
    (Linux/macOS: `~/.local/share/Tedd.AIOptimizeSql/aioptimize.db`) and applies migrations automatically.
-2. Listens on `http://localhost:5000` (override with `Urls`, see below).
+2. Listens on `http://127.0.0.1:5000` — loopback only, so nothing outside your machine
+   can reach it and no login is required (override with `Urls`, see below).
 3. Opens your default browser at that address.
 
 ### Configure
@@ -75,8 +76,11 @@ Environment variables and command-line arguments override the JSON file
 
 | Setting | Default | Purpose |
 |---------|---------|---------|
-| `Urls` | `http://localhost:5000` | Listen address(es) |
+| `Urls` | `http://127.0.0.1:5000` | Listen address(es); the default is loopback-only. Use e.g. `http://0.0.0.0:5000` to accept remote connections — and enable authentication if you do |
 | `LaunchBrowser` | `true` | Open the browser on startup (auto-disabled in containers and on Azure) |
+| `Security:Authentication:Mode` | `Auto` | `Auto` = login required on Azure App Service only; `Enabled` / `Disabled` force it. See [Security](#3-security) |
+| `Security:Authentication:Username` / `:Password` | empty | Credentials for the single user account (required when authentication is active) |
+| `Security:AllowedRemoteIPs` | empty | Optional allowlist of client IPs/CIDR ranges; empty admits everyone. See [Security](#3-security) |
 | `Database:Provider` | inferred | `Sqlite` or `SqlServer`; inferred from the connection string when omitted |
 | `ConnectionStrings:AIOptimizeDb` | local SQLite file | Metadata database. Relative SQLite paths resolve next to the exe |
 | `OptimizeEngine:RunInProcess` | `true` | Host the optimize engine inside the web process |
@@ -127,8 +131,15 @@ az webapp config set -g $RG -n $APP --always-on true
 az webapp config appsettings set -g $RG -n $APP --settings \
   Database__Provider=SqlServer \
   "ConnectionStrings__AIOptimizeDb=Server=tcp:$SQLSRV.database.windows.net,1433;Database=AIOptimizeSql;User ID=aioptadmin;Password=<strong-password>;Encrypt=True;" \
+  Security__Authentication__Username=admin \
+  "Security__Authentication__Password=<strong-login-password>" \
   LaunchBrowser=false
 ```
+
+On App Service the built-in login is **required**: authentication turns on automatically
+(`Security:Authentication:Mode=Auto` detects Azure) and the app refuses to start until
+the two `Security__Authentication__*` settings are present. Details — including the
+optional client-IP allowlist — in [Security](#3-security).
 
 Deploy:
 
@@ -171,7 +182,82 @@ local SQLite file across machines.
 
 ---
 
-## 3. Local development
+## 3. Security
+
+The `Security` configuration section controls who can reach the app and whether a login
+is required. The defaults are deliberately asymmetric:
+
+| | Listen address | Login |
+|---|---|---|
+| **Local (standalone / dev)** | `http://127.0.0.1:5000` (loopback only) | none — single trusted user |
+| **Azure App Service** | provided by the platform | **required** (fails to start unconfigured) |
+
+```json
+{
+  "Security": {
+    "Authentication": {
+      "Mode": "Auto",
+      "Username": "admin",
+      "Password": "<strong-login-password>"
+    },
+    "AllowedRemoteIPs": [ "203.0.113.7", "10.0.0.0/8" ]
+  }
+}
+```
+
+### Authentication
+
+`Security:Authentication:Mode`:
+
+- `Auto` (default) — login required when running on Azure App Service (detected via
+  `WEBSITE_SITE_NAME`), disabled everywhere else.
+- `Enabled` — always require login. Use this when you expose the standalone executable
+  or a container beyond the local machine.
+- `Disabled` — never require login, even on Azure (e.g. when the app sits behind
+  App Service's own authentication or another gateway).
+
+There is a single account: `Username` (case-insensitive) and `Password`. When
+authentication is active but either value is missing the app **fails to start** with a
+message explaining what to set — it never silently runs open. Sessions use a cookie with
+a 12-hour sliding expiration; a sign-out button appears in the top bar. Failed login
+attempts are logged with the client address and throttled by one second.
+
+The password is read as plain configuration — use Azure App Service settings (encrypted
+at rest) or environment variables rather than committing it to a file, and only expose
+the app over HTTPS (App Service terminates TLS for you; the standalone exe serves plain
+HTTP, so keep it on loopback or put a TLS proxy in front when opening it up).
+
+### Listen address
+
+When nothing configures a listen address the app binds `http://127.0.0.1:5000` so a
+fresh install is never reachable from the network. Any explicit configuration wins:
+`Urls` / `ASPNETCORE_URLS` / `--urls`, `HTTP_PORTS`/`HTTPS_PORTS`, or a `Kestrel`
+endpoints section. On Azure App Service and in containers the platform's binding is
+left untouched.
+
+### Remote IP allowlist
+
+`Security:AllowedRemoteIPs` is an optional list of addresses (`"203.0.113.7"`) and CIDR
+ranges (`"10.0.0.0/8"`, IPv6 works too). When the list is non-empty, requests from any
+other address get `403 Forbidden` (and a warning in the log). Loopback is always
+admitted so you cannot lock yourself out of the machine the app runs on. As App Service
+settings, list entries use index suffixes:
+
+```bash
+az webapp config appsettings set -g $RG -n $APP --settings \
+  Security__AllowedRemoteIPs__0=203.0.113.7 \
+  Security__AllowedRemoteIPs__1=198.51.100.0/24
+```
+
+Behind the App Service front end the real client address arrives in `X-Forwarded-For`;
+the app processes that header automatically on Azure (only the entry appended by the
+front end itself is trusted, so clients cannot spoof their way in). Azure's own
+[access restrictions](https://learn.microsoft.com/azure/app-service/app-service-ip-restrictions)
+work as an alternative enforced at the platform edge.
+
+---
+
+## 4. Local development
 
 - `Tedd.AIOptimizeSql.AppHost` (Aspire) starts WebUI and Worker as separate
   processes; `appsettings.Development.json` disables the in-process engine so work

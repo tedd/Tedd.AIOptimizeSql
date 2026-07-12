@@ -108,7 +108,7 @@ The standalone build is a single self-contained executable — no .NET runtime, 
 ./publish-standalone.ps1        # or -Runtime linux-x64 / osx-arm64
 ```
 
-**Run it.** Double-click or start from a terminal. On first start it creates a SQLite database at `%LocalAppData%\Tedd.AIOptimizeSql\aioptimize.db` (Linux/macOS: `~/.local/share/Tedd.AIOptimizeSql/`), applies migrations, listens on `http://localhost:5000`, and opens your browser.
+**Run it.** Double-click or start from a terminal. On first start it creates a SQLite database at `%LocalAppData%\Tedd.AIOptimizeSql\aioptimize.db` (Linux/macOS: `~/.local/share/Tedd.AIOptimizeSql/`), applies migrations, listens on `http://127.0.0.1:5000` (loopback only — nothing outside your machine can reach it, and no login is required), and opens your browser.
 
 **Configure (optional).** Drop an `appsettings.json` next to the executable:
 
@@ -122,7 +122,7 @@ The standalone build is a single self-contained executable — no .NET runtime, 
 }
 ```
 
-Environment variables and command-line arguments override the file (`--Urls http://localhost:8080`, `LaunchBrowser=false`, …). Full configuration reference in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+Environment variables and command-line arguments override the file (`--Urls http://localhost:8080`, `LaunchBrowser=false`, …). To expose the standalone app beyond your own machine, bind a non-loopback address **and** turn on the built-in login (`Security:Authentication:Mode=Enabled` plus a username/password); an IP allowlist is also available. Full configuration and security reference in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
 ## Deploying to Azure (App Service + Azure SQL)
 
@@ -150,8 +150,12 @@ az webapp config set -g $RG -n $APP --always-on true
 az webapp config appsettings set -g $RG -n $APP --settings \
   Database__Provider=SqlServer \
   "ConnectionStrings__AIOptimizeDb=Server=tcp:$SQLSRV.database.windows.net,1433;Database=AIOptimizeSql;User ID=aioptadmin;Password=<strong-password>;Encrypt=True;" \
+  Security__Authentication__Username=admin \
+  "Security__Authentication__Password=<strong-login-password>" \
   LaunchBrowser=false
 ```
+
+On Azure App Service the app **requires** a login: the built-in single-user authentication turns on automatically, and the app refuses to start until the username/password settings above are configured. You can additionally restrict access to known addresses with `Security__AllowedRemoteIPs__0=<ip-or-cidr>` — see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md#3-security).
 
 Deploy the app:
 

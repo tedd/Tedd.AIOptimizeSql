@@ -70,19 +70,20 @@ else
             if (_phase != GuardPhase.Ready)
                 _phase = GuardPhase.Checking;
 
-            var onSetupRoute = IsDatabaseFreeRoute();
+            // Database-free routes must not touch the database at all: the login page is
+            // served to unauthenticated visitors and must work even when the database is down.
+            if (IsDatabaseFreeRoute())
+            {
+                _phase = GuardPhase.Ready;
+                return;
+            }
+
             var status = await Readiness.GetStatusAsync(ct);
 
             if (ct.IsCancellationRequested)
                 return;
 
             if (status.IsReady)
-            {
-                _phase = GuardPhase.Ready;
-                return;
-            }
-
-            if (onSetupRoute)
             {
                 _phase = GuardPhase.Ready;
                 return;
@@ -111,7 +112,8 @@ else
         var relative = Navigation.ToBaseRelativePath(Navigation.Uri);
         var path = relative.Split('?', 2)[0].TrimEnd('/');
         return string.Equals(path, "database/migration", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(path, "documentation", StringComparison.OrdinalIgnoreCase);
+            || string.Equals(path, "documentation", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(path, "login", StringComparison.OrdinalIgnoreCase);
     }
 
     public void Dispose()

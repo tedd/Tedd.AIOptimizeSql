@@ -1,0 +1,63 @@
+@page "/login"
+@attribute [AllowAnonymous]
+@attribute [ExcludeFromInteractiveRouting]
+@layout LoginLayout
+@inject SecurityState Security
+@inject NavigationManager Navigation
+
+@* Rendered with static SSR (no circuit): signing in must set a cookie, which requires a
+   plain form post handled by the /auth/login endpoint rather than interactive Blazor. *@
+
+<PageTitle>Sign in – AI SQL Optimizer</PageTitle>
+
+<div class="login-viewport">
+    <main class="login-card">
+        <div class="login-brand">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="28" height="28" fill="currentColor" aria-hidden="true">
+                <path d="M12 3C7.58 3 4 4.79 4 7s3.58 4 8 4 8-1.79 8-4-3.58-4-8-4zM4 9v3c0 2.21 3.58 4 8 4s8-1.79 8-4V9c0 2.21-3.58 4-8 4s-8-1.79-8-4zm0 5v3c0 2.21 3.58 4 8 4s8-1.79 8-4v-3c0 2.21-3.58 4-8 4s-8-1.79-8-4z" />
+            </svg>
+            <span>AI SQL Optimizer</span>
+        </div>
+
+        <h1>Sign in</h1>
+
+        @if (ShowError)
+        {
+            <div class="login-error" role="alert">Invalid username or password.</div>
+        }
+
+        <form method="post" action="auth/login">
+            <AntiforgeryToken />
+            <input type="hidden" name="returnUrl" value="@(ReturnUrl ?? "/")" />
+
+            <label for="login-username">Username</label>
+            <input id="login-username" name="username" type="text" autocomplete="username" required autofocus />
+
+            <label for="login-password">Password</label>
+            <input id="login-password" name="password" type="password" autocomplete="current-password" required />
+
+            <button type="submit">Sign in</button>
+        </form>
+    </main>
+</div>
+
+@code {
+    [CascadingParameter]
+    private HttpContext? HttpContext { get; set; }
+
+    [SupplyParameterFromQuery(Name = "returnUrl")]
+    public string? ReturnUrl { get; set; }
+
+    [SupplyParameterFromQuery(Name = "error")]
+    public string? Error { get; set; }
+
+    private bool ShowError => !string.IsNullOrEmpty(Error);
+
+    protected override void OnInitialized()
+    {
+        // Nothing to sign in to when authentication is off, and an already-authenticated
+        // user has no business here either — send both back into the app.
+        if (!Security.AuthenticationEnabled || HttpContext?.User.Identity?.IsAuthenticated == true)
+            Navigation.NavigateTo("/");
+    }
+}

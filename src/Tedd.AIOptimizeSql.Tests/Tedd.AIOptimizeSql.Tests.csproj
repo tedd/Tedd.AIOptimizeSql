@@ -31,6 +31,7 @@
     <ProjectReference Include="..\Tedd.AIOptimizeSql.Database\Tedd.AIOptimizeSql.Database.csproj" />
     <ProjectReference Include="..\Tedd.AIOptimizeSql.Database.Models\Tedd.AIOptimizeSql.Database.Models.csproj" />
     <ProjectReference Include="..\Tedd.AIOptimizeSql.OptimizeEngine\Tedd.AIOptimizeSql.OptimizeEngine.csproj" />
+    <ProjectReference Include="..\Tedd.AIOptimizeSql.WebUI\Tedd.AIOptimizeSql.WebUI.csproj" />
   </ItemGroup>
 
 </Project>

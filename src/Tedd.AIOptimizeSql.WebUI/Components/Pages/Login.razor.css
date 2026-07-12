@@ -1,0 +1,94 @@
+/* Matches the app's dark MudBlazor palette (see MainLayout) without depending on MudBlazor. */
+
+.login-viewport {
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(160deg, #0d1b2e 0%, #121212 60%);
+    font-family: 'Inter', 'Helvetica', 'Arial', sans-serif;
+}
+
+.login-card {
+    width: min(400px, calc(100vw - 2rem));
+    background: #1e1e1e;
+    color: #e0e0e0;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 12px;
+    padding: 2.5rem 2.25rem;
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+}
+
+.login-brand {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    color: #42a5f5;
+    font-size: 1.05rem;
+    font-weight: 600;
+    margin-bottom: 1.5rem;
+}
+
+.login-card h1 {
+    font-size: 1.4rem;
+    font-weight: 600;
+    margin: 0 0 1.25rem;
+    color: #ffffff;
+}
+
+.login-error {
+    background: rgba(239, 83, 80, 0.15);
+    border: 1px solid rgba(239, 83, 80, 0.5);
+    color: #ef9a9a;
+    border-radius: 6px;
+    padding: 0.6rem 0.9rem;
+    font-size: 0.875rem;
+    margin-bottom: 1rem;
+}
+
+.login-card label {
+    display: block;
+    font-size: 0.8rem;
+    font-weight: 500;
+    color: #9e9e9e;
+    margin: 0.9rem 0 0.3rem;
+}
+
+.login-card input[type="text"],
+.login-card input[type="password"] {
+    width: 100%;
+    box-sizing: border-box;
+    background: #121212;
+    color: #e0e0e0;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 6px;
+    padding: 0.6rem 0.75rem;
+    font-size: 0.95rem;
+    font-family: inherit;
+    outline: none;
+    transition: border-color 0.15s ease;
+}
+
+.login-card input[type="text"]:focus,
+.login-card input[type="password"]:focus {
+    border-color: #42a5f5;
+}
+
+.login-card button[type="submit"] {
+    width: 100%;
+    margin-top: 1.5rem;
+    background: #1976d2;
+    color: #ffffff;
+    border: none;
+    border-radius: 6px;
+    padding: 0.7rem;
+    font-size: 0.95rem;
+    font-weight: 600;
+    font-family: inherit;
+    cursor: pointer;
+    transition: background 0.15s ease;
+}
+
+.login-card button[type="submit"]:hover {
+    background: #42a5f5;
+}
