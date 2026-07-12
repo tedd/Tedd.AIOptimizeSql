@@ -4,19 +4,15 @@ AI-powered automatic analysis and optimization of SQL Server databases.
 
 ---
 
-## ☠️ DISCLAIMER — READ THIS BEFORE YOU RUN ANYTHING ☠️
+## Before you connect a database
 
-> **The author is not responsible for anything this application may do. Including, but not limited to, deleting your entire production environment — even though "read-only mode" was selected.**
+AIOptimizeSql is genuinely useful — it finds real problems and proves out real fixes. It's also an AI that writes and executes SQL against your database, so it needs to be run responsibly:
 
-This tool hands an AI the keys to your database and lets it execute SQL. Sit with that for a second.
+- **Use a read-only user for analysis.** Database analysis only ever needs `SELECT` and DMV access. Point it at an account without write permissions and the AI physically cannot change anything, no matter what it decides to try.
+- **Use a disposable database for experiments.** Experiments apply real schema changes (indexes, statistics, whatever the AI proposes), benchmark them, and revert them — that revert is best-effort, not guaranteed. Run experiments against a restored backup, a staging copy, or a dev box, not anything you'd miss.
+- **Don't run either mode against production.** Even in read-only mode, a slow or unexpected query from the analysis can add load you didn't plan for.
 
-- **It is destructive by design.** Experiments apply real schema changes (indexes, statistics, whatever the AI dreams up), benchmark them, and then *try* to revert them. "Try" is the operative word. If the process crashes mid-hypothesis, the connection drops, or the AI's revert script is as flawed as its optimization script, your database stays in whatever state it was left in. The tool may not be able to recover itself — and it will not apologize.
-- **AI is unpredictable.** Large language models are famous for creative problem solving. Dropping a table is a *phenomenal* query optimization — that query is now infinitely fast. Truncating your data makes every index tiny. An AI under instruction to "make it faster" has options you did not think to forbid.
-- **Safety switches are suggestions, not guarantees.** "Analyze only", read-only intent, careful instructions — these reduce risk. They do not eliminate it. Treat every database this tool can reach as expendable.
-- **Never point it at production.** Use a restored backup, a staging copy, a dev box — something you can delete without updating your CV. If the data matters, it does not belong anywhere near this tool.
-- **No warranty.** See [LICENSE.md](LICENSE.md). If it breaks your database, you get to keep both pieces.
-
-If any of the above is unacceptable, close this page. If you accept it — welcome, it's genuinely useful. On a disposable database.
+> **Disclaimer:** the author is not responsible for anything this application may do, including if it damages a database you pointed it at — regardless of which mode was selected. See [LICENSE.md](LICENSE.md); there is no warranty. Follow the guidance above and you'll be fine; skip it and you're on your own.
 
 ---
 
