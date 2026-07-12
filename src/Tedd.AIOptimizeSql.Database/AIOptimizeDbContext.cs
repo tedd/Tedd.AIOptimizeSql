@@ -54,6 +54,10 @@ public class AIOptimizeDbContext : DbContext
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
+        // UseIdentityColumn is SQL Server-only; under SQLite the leftover annotation
+        // suppresses autoincrement inference and causes phantom pending-model changes.
+        var isSqlServer = Database.IsSqlServer();
+
         modelBuilder.Entity<DatabaseConnection>(entity =>
         {
             entity.Property(e => e.Id).ValueGeneratedOnAdd();
@@ -82,10 +86,11 @@ public class AIOptimizeDbContext : DbContext
         modelBuilder.Entity<ResearchIteration>(entity =>
         {
             // Enum PK: CLR default is 0, which EF can treat as an explicit key — INSERT then sends Id=0 and breaks IDENTITY / duplicates.
-            entity.Property(r => r.Id)
+            var researchIterationId = entity.Property(r => r.Id)
                 .ValueGeneratedOnAdd()
-                .UseIdentityColumn()
                 .HasSentinel(ResearchIterationId.Transient);
+            if (isSqlServer)
+                researchIterationId.UseIdentityColumn();
 
             entity.HasOne(r => r.Experiment)
                 .WithMany(p => p.ResearchIterations)
@@ -107,13 +112,14 @@ public class AIOptimizeDbContext : DbContext
         {
             entity.Property(e => e.Id).ValueGeneratedOnAdd();
 
-            entity.Property(e => e.ActualPlanXml)
+            var actualPlanXml = entity.Property(e => e.ActualPlanXml)
                 .HasConversion(
                     v => JsonSerializer.Serialize(v),
                     v => string.IsNullOrWhiteSpace(v)
                         ? new List<string>()
-                        : JsonSerializer.Deserialize<List<string>>(v) ?? new List<string>())
-                .HasColumnType("nvarchar(max)");
+                        : JsonSerializer.Deserialize<List<string>>(v) ?? new List<string>());
+            if (isSqlServer)
+                actualPlanXml.HasColumnType("nvarchar(max)");
         });
 
         modelBuilder.Entity<RunQueue>(entity =>
@@ -159,7 +165,8 @@ public class AIOptimizeDbContext : DbContext
         {
             entity.Property(l => l.Id).ValueGeneratedOnAdd();
 
-            entity.Property(l => l.Message).HasColumnType("nvarchar(max)");
+            if (isSqlServer)
+                entity.Property(l => l.Message).HasColumnType("nvarchar(max)");
 
             entity.HasOne(l => l.Hypothesis)
                 .WithMany(h => h.Logs)
@@ -170,10 +177,11 @@ public class AIOptimizeDbContext : DbContext
         modelBuilder.Entity<DatabaseAnalysis>(entity =>
         {
             // Enum PK: CLR default is 0, which EF can treat as an explicit key — INSERT then sends Id=0 and breaks IDENTITY / duplicates.
-            entity.Property(a => a.Id)
+            var databaseAnalysisId = entity.Property(a => a.Id)
                 .ValueGeneratedOnAdd()
-                .UseIdentityColumn()
                 .HasSentinel(DatabaseAnalysisId.Transient);
+            if (isSqlServer)
+                databaseAnalysisId.UseIdentityColumn();
 
             entity.HasOne(a => a.DatabaseConnection)
                 .WithMany()
@@ -188,10 +196,11 @@ public class AIOptimizeDbContext : DbContext
 
         modelBuilder.Entity<AnalysisFinding>(entity =>
         {
-            entity.Property(f => f.Id)
+            var analysisFindingId = entity.Property(f => f.Id)
                 .ValueGeneratedOnAdd()
-                .UseIdentityColumn()
                 .HasSentinel(AnalysisFindingId.Transient);
+            if (isSqlServer)
+                analysisFindingId.UseIdentityColumn();
 
             entity.HasOne(f => f.DatabaseAnalysis)
                 .WithMany(a => a.Findings)
@@ -207,12 +216,14 @@ public class AIOptimizeDbContext : DbContext
 
         modelBuilder.Entity<DatabaseAnalysisLog>(entity =>
         {
-            entity.Property(l => l.Id)
+            var databaseAnalysisLogId = entity.Property(l => l.Id)
                 .ValueGeneratedOnAdd()
-                .UseIdentityColumn()
                 .HasSentinel(DatabaseAnalysisLogId.Transient);
+            if (isSqlServer)
+                databaseAnalysisLogId.UseIdentityColumn();
 
-            entity.Property(l => l.Message).HasColumnType("nvarchar(max)");
+            if (isSqlServer)
+                entity.Property(l => l.Message).HasColumnType("nvarchar(max)");
 
             entity.HasOne(l => l.DatabaseAnalysis)
                 .WithMany(a => a.Logs)
@@ -222,10 +233,11 @@ public class AIOptimizeDbContext : DbContext
 
         modelBuilder.Entity<AgentTask>(entity =>
         {
-            entity.Property(t => t.Id)
+            var agentTaskId = entity.Property(t => t.Id)
                 .ValueGeneratedOnAdd()
-                .UseIdentityColumn()
                 .HasSentinel(AgentTaskId.Transient);
+            if (isSqlServer)
+                agentTaskId.UseIdentityColumn();
 
             entity.HasOne(t => t.DatabaseAnalysis)
                 .WithMany()

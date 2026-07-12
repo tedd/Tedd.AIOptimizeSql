@@ -1,0 +1,35 @@
+@using Markdig
+
+@if (!string.IsNullOrWhiteSpace(Content))
+{
+    <div class="markdown-view @Class">@_html</div>
+}
+
+@code {
+    /// <summary>The markdown source to render. Raw HTML in the source is escaped, not rendered.</summary>
+    [Parameter, EditorRequired] public string? Content { get; set; }
+
+    /// <summary>Optional extra CSS classes on the wrapping div.</summary>
+    [Parameter] public string? Class { get; set; }
+
+    private string? _lastContent;
+    private MarkupString _html;
+
+    // Raw HTML is disabled so AI/tool output cannot inject markup into the page.
+    // Soft line breaks render as hard breaks so plain-text output keeps its line structure.
+    private static readonly MarkdownPipeline Pipeline = new MarkdownPipelineBuilder()
+        .UseAdvancedExtensions()
+        .UseSoftlineBreakAsHardlineBreak()
+        .DisableHtml()
+        .Build();
+
+    protected override void OnParametersSet()
+    {
+        if (ReferenceEquals(Content, _lastContent))
+            return;
+        _lastContent = Content;
+        _html = string.IsNullOrWhiteSpace(Content)
+            ? default
+            : new MarkupString(Markdown.ToHtml(Content, Pipeline));
+    }
+}

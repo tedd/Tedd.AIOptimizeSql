@@ -64,3 +64,135 @@ html, body {
     max-height: 400px;
     overflow-y: auto;
 }
+
+/* Markdown rendering (MarkdownView component) — used for documentation and AI-generated output */
+.markdown-view {
+    font-size: 0.875rem;
+    line-height: 1.6;
+    color: var(--mud-palette-text-primary);
+    word-break: break-word;
+}
+
+.markdown-view > :first-child {
+    margin-top: 0;
+}
+
+.markdown-view > :last-child {
+    margin-bottom: 0;
+}
+
+.markdown-view h1,
+.markdown-view h2,
+.markdown-view h3,
+.markdown-view h4,
+.markdown-view h5,
+.markdown-view h6 {
+    margin: 1.25em 0 0.5em 0;
+    font-weight: 600;
+    line-height: 1.3;
+}
+
+.markdown-view h1 { font-size: 1.5rem; }
+.markdown-view h2 { font-size: 1.3rem; border-bottom: 1px solid var(--mud-palette-divider); padding-bottom: 0.25em; }
+.markdown-view h3 { font-size: 1.15rem; }
+.markdown-view h4 { font-size: 1rem; }
+.markdown-view h5, .markdown-view h6 { font-size: 0.9rem; }
+
+.markdown-view p {
+    margin: 0 0 0.75em 0;
+}
+
+.markdown-view ul,
+.markdown-view ol {
+    margin: 0 0 0.75em 0;
+    padding-left: 1.6em;
+}
+
+.markdown-view li {
+    margin: 0.15em 0;
+}
+
+.markdown-view code {
+    font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+    font-size: 0.85em;
+    background: var(--mud-palette-background-gray);
+    border: 1px solid var(--mud-palette-divider);
+    border-radius: 4px;
+    padding: 0.1em 0.35em;
+}
+
+.markdown-view pre {
+    margin: 0 0 0.75em 0;
+    padding: 10px 12px;
+    background: var(--mud-palette-background-gray);
+    border: 1px solid var(--mud-palette-divider);
+    border-radius: 6px;
+    overflow-x: auto;
+    line-height: 1.5;
+}
+
+.markdown-view pre code {
+    background: none;
+    border: none;
+    padding: 0;
+    font-size: 0.8rem;
+    white-space: pre;
+}
+
+.markdown-view blockquote {
+    margin: 0 0 0.75em 0;
+    padding: 0.25em 1em;
+    border-left: 3px solid var(--mud-palette-primary);
+    background: var(--mud-palette-background-gray);
+    color: var(--mud-palette-text-secondary);
+}
+
+.markdown-view table {
+    border-collapse: collapse;
+    margin: 0 0 0.75em 0;
+    display: block;
+    max-width: 100%;
+    overflow-x: auto;
+}
+
+.markdown-view th,
+.markdown-view td {
+    border: 1px solid var(--mud-palette-divider);
+    padding: 4px 10px;
+    text-align: left;
+}
+
+.markdown-view th {
+    background: var(--mud-palette-background-gray);
+    font-weight: 600;
+}
+
+.markdown-view hr {
+    border: none;
+    border-top: 1px solid var(--mud-palette-divider);
+    margin: 1em 0;
+}
+
+.markdown-view a {
+    color: var(--mud-palette-primary);
+    text-decoration: none;
+}
+
+.markdown-view a:hover {
+    text-decoration: underline;
+}
+
+.markdown-view img {
+    max-width: 100%;
+}
+
+/* Compact variant for small contexts such as log entries */
+.markdown-view.markdown-compact {
+    font-size: 0.8rem;
+}
+
+.markdown-view.markdown-compact p,
+.markdown-view.markdown-compact ul,
+.markdown-view.markdown-compact ol {
+    margin-bottom: 0.4em;
+}

@@ -7,6 +7,7 @@
   <Folder Name="/Database/">
     <Project Path="Tedd.AIOptimizeSql.Database.Models/Tedd.AIOptimizeSql.Database.Models.csproj" Id="2f3af550-121d-4374-b7ff-1b7e8dec8641" />
     <Project Path="Tedd.AIOptimizeSql.Database/Tedd.AIOptimizeSql.Database.csproj" Id="7f186c2e-8ed0-434b-8d76-4a0b3f73322a" />
+    <Project Path="Tedd.AIOptimizeSql.Database.Sqlite/Tedd.AIOptimizeSql.Database.Sqlite.csproj" />
   </Folder>
   <Folder Name="/WebUI/">
     <Project Path="Tedd.AIOptimizeSql.WebUI/Tedd.AIOptimizeSql.WebUI.csproj" />

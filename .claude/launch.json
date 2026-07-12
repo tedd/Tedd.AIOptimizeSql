@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "webui",
+      "runtimeExecutable": "dotnet",
+      "runtimeArgs": ["run", "--project", "src/Tedd.AIOptimizeSql.WebUI", "--no-launch-profile"],
+      "env": { "ASPNETCORE_URLS": "http://localhost:5023" },
+      "port": 5023
+    }
+  ]
+}

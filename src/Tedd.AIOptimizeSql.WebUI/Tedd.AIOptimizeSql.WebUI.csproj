@@ -10,11 +10,14 @@
   <ItemGroup>
     <ProjectReference Include="..\Tedd.AIOptimizeSql.Database\Tedd.AIOptimizeSql.Database.csproj" />
     <ProjectReference Include="..\Tedd.AIOptimizeSql.Database.Models\Tedd.AIOptimizeSql.Database.Models.csproj" />
+    <ProjectReference Include="..\Tedd.AIOptimizeSql.Database.Sqlite\Tedd.AIOptimizeSql.Database.Sqlite.csproj" />
+    <ProjectReference Include="..\Tedd.AIOptimizeSql.OptimizeEngine\Tedd.AIOptimizeSql.OptimizeEngine.csproj" />
     <ProjectReference Include="..\Tedd.AIOptimizeSql.ServiceDefaults\Tedd.AIOptimizeSql.ServiceDefaults.csproj" />
   </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="BlazorMonaco" Version="3.3.0" />
+    <PackageReference Include="Markdig" Version="1.3.2" />
     <PackageReference Include="Riok.Mapperly" Version="4.3.1" />
     <PackageReference Include="Microsoft.Data.SqlClient" Version="7.0.0" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.5">
@@ -23,5 +26,69 @@
     </PackageReference>
     <PackageReference Include="MudBlazor" Version="9.3.0" />
   </ItemGroup>
+
+  <!-- Ship dev-only settings (local connection strings, API keys) never leave the machine. -->
+  <ItemGroup>
+    <Content Update="appsettings.Development.json" CopyToPublishDirectory="Never" />
+  </ItemGroup>
+
+  <!-- Single-file standalone build: the StaticWebAssets SDK copies wwwroot content (incl.
+       RCL assets like MudBlazor and Monaco) loose next to the exe via its own publish
+       pipeline, which also runs AFTER the single-file bundle is produced. To get ONE
+       executable we compute the same publish asset list ourselves before bundling, feed it
+       to the bundler (plus the endpoints manifest MapStaticAssets needs), and then suppress
+       the SDK's loose copies. Assets self-extract at startup with the rest of the content. -->
+  <Target Name="_StandaloneBundleStaticWebAssets"
+          BeforeTargets="_ComputeFilesToBundle"
+          DependsOnTargets="StaticWebAssetsPrepareForPublish;LoadStaticWebAssetsPublishManifest"
+          Condition="'$(PublishSingleFile)' == 'true' AND '$(IncludeAllContentForSelfExtract)' == 'true'">
+
+    <ComputeStaticWebAssetsForCurrentProject
+        Assets="@(StaticWebAsset)"
+        ProjectMode="$(StaticWebAssetProjectMode)"
+        AssetKind="Publish"
+        Source="$(PackageId)">
+      <Output TaskParameter="StaticWebAssets" ItemName="_StandaloneStaticWebAssetToBundle" />
+    </ComputeStaticWebAssetsForCurrentProject>
+
+    <ComputeStaticWebAssetsTargetPaths Assets="@(_StandaloneStaticWebAssetToBundle)" PathPrefix="wwwroot">
+      <Output TaskParameter="AssetsWithTargetPath" ItemName="_StandaloneStaticWebAssetWithTargetPath" />
+    </ComputeStaticWebAssetsTargetPaths>
+
+    <ItemGroup>
+      <ResolvedFileToPublish Include="@(_StandaloneStaticWebAssetWithTargetPath)">
+        <RelativePath>%(_StandaloneStaticWebAssetWithTargetPath.TargetPath)</RelativePath>
+        <CopyToPublishDirectory>Never</CopyToPublishDirectory>
+        <ExcludeFromSingleFile>false</ExcludeFromSingleFile>
+      </ResolvedFileToPublish>
+      <ResolvedFileToPublish Include="$(StaticWebAssetEndpointsPublishManifestPath)"
+                             Condition="Exists('$(StaticWebAssetEndpointsPublishManifestPath)')">
+        <RelativePath>$(TargetName).staticwebassets.endpoints.json</RelativePath>
+        <CopyToPublishDirectory>Never</CopyToPublishDirectory>
+        <ExcludeFromSingleFile>false</ExcludeFromSingleFile>
+      </ResolvedFileToPublish>
+      <!-- Symbols are neither bundled nor useful next to a standalone exe. -->
+      <ResolvedFileToPublish Remove="@(ResolvedFileToPublish)"
+                             Condition="'%(ResolvedFileToPublish.Extension)' == '.pdb'" />
+    </ItemGroup>
+
+    <Message Importance="high"
+             Text="Standalone bundle: embedding @(_StandaloneStaticWebAssetWithTargetPath->Count()) static web assets into the single-file executable." />
+  </Target>
+
+  <Target Name="_StandaloneSuppressLooseStaticWebAssets"
+          AfterTargets="_SplitPublishStaticWebAssetsByCopyOptions"
+          BeforeTargets="_PublishCopyStaticWebAssetsPreserveNewest;_PublishCopyStaticWebAssetsAlways;_PublishCopyStaticWebAssetsIfDifferent;CopyStaticWebAssetsEndpointsManifest"
+          Condition="'$(PublishSingleFile)' == 'true' AND '$(IncludeAllContentForSelfExtract)' == 'true'">
+    <ItemGroup>
+      <_PublishStaticWebAssetsPreserveNewest Remove="@(_PublishStaticWebAssetsPreserveNewest)" />
+      <_PublishStaticWebAssetsCopyAlways Remove="@(_PublishStaticWebAssetsCopyAlways)" />
+      <_PublishStaticWebAssetsIfDifferent Remove="@(_PublishStaticWebAssetsIfDifferent)" />
+    </ItemGroup>
+    <PropertyGroup>
+      <!-- Already bundled; blanking the path skips the loose endpoints manifest copy. -->
+      <StaticWebAssetEndpointsPublishManifestPath></StaticWebAssetEndpointsPublishManifestPath>
+    </PropertyGroup>
+  </Target>
 
 </Project>

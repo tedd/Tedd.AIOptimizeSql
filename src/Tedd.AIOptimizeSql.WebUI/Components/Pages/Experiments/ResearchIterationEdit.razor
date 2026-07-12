@@ -117,7 +117,7 @@
                         <MudExpansionPanels Class="mb-2">
                             <MudExpansionPanel Text="Schema Discovery Output" Expanded="false">
                                 <MudPaper Class="pa-3" Elevation="0" Outlined="true" Style="max-height:600px;overflow:auto;">
-                                    <pre style="white-space:pre-wrap;word-break:break-word;margin:0;font-size:0.85rem;">@_iteration.SchemaDiscoveryMarkdown</pre>
+                                    <MarkdownView Content="@_iteration.SchemaDiscoveryMarkdown" Class="markdown-compact" />
                                 </MudPaper>
                             </MudExpansionPanel>
                         </MudExpansionPanels>

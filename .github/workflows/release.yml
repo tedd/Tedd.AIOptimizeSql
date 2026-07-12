@@ -1,0 +1,102 @@
+name: Release standalone builds
+
+# Builds the standalone single-file executable for every supported OS and
+# publishes them as GitHub Release assets. Version = <VERSION file>.<run number>.
+on:
+  push:
+    branches: [deploy]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-deploy
+  cancel-in-progress: false
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: ver
+        run: echo "version=$(tr -d ' \n' < VERSION).${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - run: dotnet test src/Tedd.AIOptimizeSql.Tests/Tedd.AIOptimizeSql.Tests.csproj -c Release
+
+  build:
+    needs: [version, test]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            rid: win-x64
+          - os: ubuntu-latest
+            rid: linux-x64
+          - os: macos-latest
+            rid: osx-arm64
+    runs-on: ${{ matrix.os }}
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Publish standalone single-file executable
+        shell: bash
+        run: >
+          dotnet publish src/Tedd.AIOptimizeSql.WebUI/Tedd.AIOptimizeSql.WebUI.csproj
+          -p:PublishProfile=standalone-${{ matrix.rid }}
+          -p:Version=$VERSION
+
+      - name: Package (bare exe for Windows, tar.gz elsewhere to keep the exec bit)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir dist
+          cd publish/standalone-${{ matrix.rid }}
+          if [[ "${{ matrix.rid }}" == win-* ]]; then
+            cp Tedd.AIOptimizeSql.WebUI.exe "../../dist/AIOptimizeSql-$VERSION-${{ matrix.rid }}.exe"
+          else
+            tar -czf "../../dist/AIOptimizeSql-$VERSION-${{ matrix.rid }}.tar.gz" Tedd.AIOptimizeSql.WebUI appsettings.json
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AIOptimizeSql-${{ needs.version.outputs.version }}-${{ matrix.rid }}
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    needs: [version, build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Create GitHub release with binaries
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: >
+          gh release create "v$VERSION" dist/*
+          --title "AIOptimizeSql $VERSION"
+          --target "$GITHUB_SHA"
+          --generate-notes

@@ -1,0 +1,147 @@
+@page "/documentation"
+
+<PageTitle>Documentation</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.Medium" Class="mt-4 mb-8">
+    <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-4">
+        <MudIcon Icon="@Icons.Material.Filled.MenuBook" Color="Color.Primary" Size="Size.Large" />
+        <MudText Typo="Typo.h4">Documentation</MudText>
+    </MudStack>
+
+    <MudPaper Elevation="2" Class="pa-6 rounded-lg">
+        <MarkdownView Content="@DocumentationMarkdown" />
+    </MudPaper>
+</MudContainer>
+
+@code {
+    private const string DocumentationMarkdown = """
+# AI SQL Optimizer — user guide
+
+AI SQL Optimizer analyzes and optimizes SQL Server databases using AI. It works in two complementary ways:
+
+- **Database analysis** — a broad health check of an entire database. The AI inspects metrics, schema, and query statistics, then reports findings with severities and recommendations.
+- **Experiments** — focused optimization of a specific query. The AI proposes concrete optimizations (*hypotheses*), applies them to the database, benchmarks them against a baseline, and reverts them — so you get measured, evidence-based results.
+
+All AI work runs in a background worker, so you can queue work and come back later. Pages refresh automatically while something is running.
+
+---
+
+## Quick start
+
+1. **Add a database connection** (*DB Connections*) — the SQL Server database you want to analyze or optimize.
+2. **Add an AI connection** (*AI Connections*) — the AI provider and model to use (OpenAI, Azure OpenAI, Anthropic, Ollama, …).
+3. Then either:
+   - run a **Database analysis** to get a health report of the whole database, or
+   - create an **Experiment** around a specific query you want to make faster.
+
+> **Important:** experiments apply real schema changes (indexes, statistics, etc.) to the target database while testing, and then revert them. Use a **non-production** copy of your database, or at minimum a database where temporary changes are acceptable.
+
+---
+
+## DB Connections
+
+A database connection points at the SQL Server database the tool works against. Each connection has a name and a connection string. You can test the connection before saving.
+
+The account used should have permission to read system views (DMVs) and — for experiments — to create and drop indexes and other objects referenced by the AI's optimization scripts.
+
+## AI Connections
+
+An AI connection defines which AI provider and model to use, along with the endpoint and API key. Multiple connections can be configured, e.g. a cheap/fast model for routine work and a stronger model for difficult problems. Experiments and analyses each pick which AI connection to use.
+
+---
+
+## Database analysis
+
+A database analysis is a broad, read-only health check of one database.
+
+**How to run one:** go to *Database analysis*, create a new analysis, select the database and AI connection, then press **Run**. The worker picks it up from the queue.
+
+**What happens during a run:**
+
+1. **Metrics snapshot** — the tool collects server and database metrics: table sizes, index fragmentation, missing/unused indexes, top queries by CPU, wait statistics, configuration settings, and more.
+2. **Rule-based checks** — deterministic checks translate the metrics into findings (e.g. heavily fragmented indexes, missing indexes with high impact).
+3. **AI deep dive** — the AI creates its own **work plan** (visible live on the *Plan* tab), investigates the database, and adds its own findings. The run continues automatically until the plan is complete.
+4. **Executive summary** — the AI writes a summary of the overall state of the database.
+
+**Reading the results:**
+
+- **Dashboard** — health score, problem counts, charts, top problems, and the AI executive summary.
+- **Plan** — the AI's task list for the deep dive, updated live while it works.
+- **Findings** — every finding with severity (**Critical**, **High**, **Medium**, **Low**, **Info**, **Good**), category, evidence, a recommendation, and often a suggested SQL script. Suggested SQL is **never executed automatically** — review it before use.
+- **Metrics** — the raw collected metrics summary.
+- **Log** — a step-by-step log of the run.
+
+Some findings include a **proposed experiment**: a ready-made experiment for testing the recommendation safely. Open it from the finding and run it like any other experiment.
+
+---
+
+## Experiments
+
+An experiment is the unit of focused query optimization: *"make this query faster on this database using this AI."*
+
+**Fields on an experiment:**
+
+- **Name / Description** — for humans; the description is not used by the system.
+- **Database connection** and **AI connection** — what to optimize and with which AI.
+- **Instructions** — optional extra context for the AI, e.g. constraints ("do not add indexes to table X") or hints about the workload. Leave empty to let the AI figure things out itself.
+- **Benchmark SQL** — the query (or batch) used to measure performance. This is what the AI is trying to make faster.
+- **Pre/Post run SQL** — optional setup and cleanup scripts:
+  - *Experiment pre/post run* — run once around the whole run (e.g. create temp tables, set database settings).
+  - *Hypothesis pre/post run* — run around each hypothesis (e.g. clear caches so measurements are comparable).
+
+## Research iterations
+
+Running an experiment happens through **research iterations**. One iteration is a batch of AI optimization attempts against the current state of the database.
+
+**What happens when an iteration runs:**
+
+1. **Schema discovery** — the tool maps the tables, indexes, statistics, and dependencies relevant to the benchmark SQL. The output is stored on the iteration.
+2. **Baseline benchmark** — the benchmark SQL is executed and measured *before* any changes. All hypotheses are compared against this baseline.
+3. **Hypothesis loop** — the AI generates and tests hypotheses one at a time, up to the configured **max number of hypotheses**.
+4. **Data integrity check** — checksums over the involved base tables verify that optimizations did not change query results or data.
+
+You can give an iteration **hints** — free-text guidance passed to the AI for this iteration only (e.g. "focus on the join order" or "the previous index attempt regressed, try something else").
+
+The *Research iterations* page in the main menu lists all iterations across experiments, with queue state and results.
+
+## Hypotheses
+
+A **hypothesis** is one concrete optimization idea, e.g. *"adding a covering index on `Orders (CustomerId) INCLUDE (Total)` will speed up the query."*
+
+Each hypothesis moves through a lifecycle:
+
+| State | Meaning |
+|-------|---------|
+| Pending | Created, waiting to be processed |
+| Generating | The AI is writing the optimization and revert SQL |
+| Applying | The optimization SQL is being applied to the database |
+| Benchmarking | The benchmark SQL is measured with the optimization in place |
+| Reverting | The revert SQL restores the database to its previous state |
+| Completed | Done — the improvement percentage is recorded |
+| Failed | Something went wrong (see the error and activity log) |
+
+For every hypothesis you can inspect:
+
+- the AI-generated **optimization SQL** and **revert SQL**,
+- the **before/after benchmark runs** (timings, logical reads, execution plans),
+- the **improvement percentage** (positive = faster, negative = regression),
+- the **AI work plan** and the full **activity log**, including the AI's reasoning.
+
+Hypotheses can **build on** each other: a later hypothesis can be applied on top of an earlier successful one, forming a chain of compounding optimizations.
+
+## Benchmark runs
+
+Every measurement is stored as a benchmark run: total time, server elapsed time, logical reads, execution plans, and server messages. Open a run from a hypothesis or iteration to see full details and compare *before* vs. *after*.
+
+---
+
+## Tips
+
+- **Start with a database analysis** if you don't know where the problems are; start with an **experiment** if you already have a slow query.
+- **Make benchmarks representative.** The AI optimizes whatever the benchmark SQL measures — include realistic parameters and enough executions for stable numbers.
+- **Use instructions and hints** to steer the AI away from unacceptable changes and toward what you care about.
+- **Review suggested SQL** from analyses before running it manually; only experiment hypotheses apply and revert changes automatically.
+- **Check data integrity results** — if a hypothesis changed query results, its improvement number is meaningless.
+- If a run appears stuck, check the **Log** / **activity log** tabs; the worker records every step, including AI errors and retries.
+""";
+}

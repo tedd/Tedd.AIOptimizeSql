@@ -1,4 +1,5 @@
 using Microsoft.Data.SqlClient;
+using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 
 using Tedd.AIOptimizeSql.Database;
@@ -10,19 +11,21 @@ public sealed class DatabaseReadinessService : IDatabaseReadinessService
     private const string ConnectionName = "AIOptimizeDb";
 
     private readonly IDbContextFactory<AIOptimizeDbContext> _dbFactory;
-    private readonly IConfiguration _configuration;
+    private readonly AIOptimizeDatabaseOptions _dbOptions;
 
     public DatabaseReadinessService(
         IDbContextFactory<AIOptimizeDbContext> dbFactory,
-        IConfiguration configuration)
+        AIOptimizeDatabaseOptions dbOptions)
     {
         _dbFactory = dbFactory;
-        _configuration = configuration;
+        _dbOptions = dbOptions;
     }
+
+    private bool IsSqlite => _dbOptions.Provider == AIOptimizeDatabaseProvider.Sqlite;
 
     public async Task<DatabaseReadinessStatus> GetStatusAsync(CancellationToken cancellationToken = default)
     {
-        var cs = _configuration.GetConnectionString(ConnectionName);
+        var cs = _dbOptions.ConnectionString;
         var info = TryParseConnectionString(cs);
 
         if (string.IsNullOrWhiteSpace(cs))
@@ -43,6 +46,17 @@ public sealed class DatabaseReadinessService : IDatabaseReadinessService
             var canConnect = await db.Database.CanConnectAsync(cancellationToken);
             if (!canConnect)
             {
+                if (IsSqlite)
+                {
+                    return new DatabaseReadinessStatus(
+                        State: DatabaseReadinessState.DatabaseUnavailable,
+                        DatabaseExists: false,
+                        PendingMigrations: [],
+                        Message: "The SQLite database file could not be opened. Check that the path is writable, then apply migrations to create it.",
+                        TechnicalDetails: null,
+                        ConnectionInfo: info);
+                }
+
                 return await BuildConnectivityFailureStatusAsync(cs, info, technicalDetails: null, cancellationToken);
             }
 
@@ -67,7 +81,7 @@ public sealed class DatabaseReadinessService : IDatabaseReadinessService
         {
             throw;
         }
-        catch (Exception ex) when (IsLikelyConnectivityIssue(ex))
+        catch (Exception ex) when (!IsSqlite && IsLikelyConnectivityIssue(ex))
         {
             return await BuildConnectivityFailureStatusAsync(cs, info, ex.Message, cancellationToken);
         }
@@ -85,7 +99,7 @@ public sealed class DatabaseReadinessService : IDatabaseReadinessService
 
     public async Task<DatabaseReadinessStatus> ApplyMigrationsAsync(CancellationToken cancellationToken = default)
     {
-        var cs = _configuration.GetConnectionString(ConnectionName);
+        var cs = _dbOptions.ConnectionString;
         var info = TryParseConnectionString(cs);
 
         if (string.IsNullOrWhiteSpace(cs))
@@ -109,7 +123,7 @@ public sealed class DatabaseReadinessService : IDatabaseReadinessService
         {
             throw;
         }
-        catch (Exception ex) when (IsLikelyConnectivityIssue(ex))
+        catch (Exception ex) when (!IsSqlite && IsLikelyConnectivityIssue(ex))
         {
             return await BuildMigrationFailureStatusAsync(cs, info, ex.Message, cancellationToken);
         }
@@ -243,10 +257,24 @@ public sealed class DatabaseReadinessService : IDatabaseReadinessService
             || (ex.InnerException is not null && IsLikelyConnectivityIssue(ex.InnerException));
     }
 
-    private static SqlConnectionDisplayInfo? TryParseConnectionString(string? connectionString)
+    private SqlConnectionDisplayInfo? TryParseConnectionString(string? connectionString)
     {
         if (string.IsNullOrWhiteSpace(connectionString))
             return null;
+
+        if (IsSqlite)
+        {
+            try
+            {
+                var sqliteBuilder = new SqliteConnectionStringBuilder(connectionString);
+                var path = string.IsNullOrEmpty(sqliteBuilder.DataSource) ? "(not set)" : sqliteBuilder.DataSource;
+                return new SqlConnectionDisplayInfo("SQLite (local file)", path, "file access");
+            }
+            catch
+            {
+                return null;
+            }
+        }
 
         try
         {

@@ -303,7 +303,7 @@
                                 </CardHeaderContent>
                             </MudCardHeader>
                             <MudCardContent>
-                                <MudText Typo="Typo.body2" Style="white-space: pre-wrap;">@_analysis.AiSummaryMarkdown</MudText>
+                                <MarkdownView Content="@_analysis.AiSummaryMarkdown" />
                             </MudCardContent>
                         </MudCard>
                     }
@@ -376,21 +376,21 @@
                                         {
                                             <div>
                                                 <MudText Typo="Typo.subtitle2">What was found</MudText>
-                                                <MudText Typo="Typo.body2" Style="white-space: pre-wrap;">@f.Description</MudText>
+                                                <MarkdownView Content="@f.Description" />
                                             </div>
                                         }
                                         @if (!string.IsNullOrWhiteSpace(f.Evidence))
                                         {
                                             <div>
                                                 <MudText Typo="Typo.subtitle2">Evidence</MudText>
-                                                <MudText Typo="Typo.body2" Style="white-space: pre-wrap;">@f.Evidence</MudText>
+                                                <MarkdownView Content="@f.Evidence" />
                                             </div>
                                         }
                                         @if (!string.IsNullOrWhiteSpace(f.Recommendation))
                                         {
                                             <div>
                                                 <MudText Typo="Typo.subtitle2">Recommendation</MudText>
-                                                <MudText Typo="Typo.body2" Style="white-space: pre-wrap;">@f.Recommendation</MudText>
+                                                <MarkdownView Content="@f.Recommendation" />
                                             </div>
                                         }
                                         @if (!string.IsNullOrWhiteSpace(f.RecommendationSql))
@@ -440,9 +440,7 @@
                     {
                         <MudCard Elevation="2" Class="rounded-lg">
                             <MudCardContent>
-                                <MudText Typo="Typo.body2" Style="white-space: pre-wrap; font-family: var(--mud-typography-caption-family); font-size: 0.8rem;">
-                                    @_analysis.MetricsSummaryMarkdown
-                                </MudText>
+                                <MarkdownView Content="@_analysis.MetricsSummaryMarkdown" Class="markdown-compact" />
                             </MudCardContent>
                         </MudCard>
                     }

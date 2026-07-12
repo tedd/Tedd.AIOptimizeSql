@@ -12,9 +12,15 @@
     <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" Version="10.0.5" />
   </ItemGroup>
 
+  <!-- Dev-only settings (local connection strings, API keys) never leave the machine. -->
+  <ItemGroup>
+    <Content Update="appsettings.Development.json" CopyToPublishDirectory="Never" />
+  </ItemGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\Tedd.AIOptimizeSql.ServiceDefaults\Tedd.AIOptimizeSql.ServiceDefaults.csproj" />
     <ProjectReference Include="..\Tedd.AIOptimizeSql.Database\Tedd.AIOptimizeSql.Database.csproj" />
+    <ProjectReference Include="..\Tedd.AIOptimizeSql.Database.Sqlite\Tedd.AIOptimizeSql.Database.Sqlite.csproj" />
     <ProjectReference Include="..\Tedd.AIOptimizeSql.OptimizeEngine\Tedd.AIOptimizeSql.OptimizeEngine.csproj" />
   </ItemGroup>
 </Project>

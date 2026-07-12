@@ -12,7 +12,7 @@
             <text> · @Log.Source</text>
         }
     </MudText>
-    <MudText Typo="Typo.body2" Style="white-space: pre-wrap; word-break: break-word;">@textPart</MudText>
+    <MarkdownView Content="@textPart" Class="markdown-compact" />
 
     @if (!string.IsNullOrWhiteSpace(sqlPart))
     {
