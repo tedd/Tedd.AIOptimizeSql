@@ -1,3 +1,16 @@
+# License
+
+**In plain English:** the author keeps copyright, you're free to use, modify,
+and share this software for any noncommercial purpose (personal, hobby,
+research, education, nonprofit, government), it comes with absolutely no
+warranty, and the author isn't liable for anything it does. You may not sell
+it, offer it as a paid service, or otherwise use it commercially.
+
+The legally binding terms are the full text below: the **PolyForm
+Noncommercial License 1.0.0**.
+
+---
+
 # PolyForm Noncommercial License 1.0.0
 
 <https://polyformproject.org/licenses/noncommercial/1.0.0>
