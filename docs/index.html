@@ -1,0 +1,367 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AIOptimizeSql — AI-powered SQL Server optimization</title>
+<meta name="description" content="AI-powered automatic analysis and optimization of SQL Server databases. Free, open source, download for Windows, Linux, and macOS.">
+<style>
+  :root{
+    --bg:#0b0d12; --bg-alt:#11141b; --panel:#161a23; --border:#242938;
+    --text:#e7e9ee; --muted:#9aa3b5; --accent:#5b8cff; --accent-2:#7ee3c3;
+    --code-bg:#0e1117; --shadow: 0 10px 30px rgba(0,0,0,.35);
+  }
+  @media (prefers-color-scheme: light){
+    :root{
+      --bg:#f7f8fb; --bg-alt:#ffffff; --panel:#ffffff; --border:#e3e6ee;
+      --text:#161a23; --muted:#5b6373; --accent:#3b63e0; --accent-2:#1f9b74;
+      --code-bg:#0e1117; --shadow: 0 10px 30px rgba(20,25,40,.08);
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#0b0d12; --bg-alt:#11141b; --panel:#161a23; --border:#242938;
+    --text:#e7e9ee; --muted:#9aa3b5; --accent:#5b8cff; --accent-2:#7ee3c3;
+  }
+  :root[data-theme="light"]{
+    --bg:#f7f8fb; --bg-alt:#ffffff; --panel:#ffffff; --border:#e3e6ee;
+    --text:#161a23; --muted:#5b6373; --accent:#3b63e0; --accent-2:#1f9b74;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    background:var(--bg); color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    line-height:1.55;
+  }
+  .wrap{max-width:1080px;margin:0 auto;padding:0 24px}
+  a{color:var(--accent)}
+
+  header.hero{
+    background:
+      radial-gradient(1100px 500px at 15% -10%, rgba(91,140,255,.18), transparent 60%),
+      radial-gradient(900px 420px at 100% 0%, rgba(126,227,195,.14), transparent 55%),
+      var(--bg-alt);
+    border-bottom:1px solid var(--border);
+    padding:72px 0 56px;
+  }
+  .badge{
+    display:inline-block; font-size:12px; letter-spacing:.04em; text-transform:uppercase;
+    color:var(--accent-2); background:rgba(126,227,195,.12); border:1px solid rgba(126,227,195,.3);
+    padding:4px 10px; border-radius:999px; margin-bottom:18px;
+  }
+  h1{font-size:clamp(32px,5vw,52px); line-height:1.08; margin:0 0 16px; letter-spacing:-0.02em}
+  .lede{font-size:19px; color:var(--muted); max-width:640px; margin:0 0 32px}
+  .cta-row{display:flex; gap:12px; flex-wrap:wrap; align-items:center}
+  .btn{
+    display:inline-flex; align-items:center; gap:8px;
+    background:var(--accent); color:#fff; text-decoration:none;
+    padding:12px 20px; border-radius:10px; font-weight:600; font-size:15px;
+    box-shadow: var(--shadow); border:1px solid transparent;
+    transition:transform .12s ease, filter .12s ease;
+  }
+  .btn:hover{filter:brightness(1.08); transform:translateY(-1px)}
+  .btn.secondary{
+    background:transparent; color:var(--text); border:1px solid var(--border);
+    box-shadow:none;
+  }
+  .btn small{font-weight:400; opacity:.85; font-size:12px}
+
+  section{padding:56px 0}
+  section h2{font-size:26px; margin:0 0 6px; letter-spacing:-0.01em}
+  section .sub{color:var(--muted); margin:0 0 28px; font-size:15px}
+
+  .safety{
+    background:var(--panel); border:1px solid var(--border); border-radius:14px;
+    padding:22px 24px; margin:40px 0 0;
+  }
+  .safety h3{margin:0 0 10px; font-size:15px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted)}
+  .safety ul{margin:0; padding-left:20px; font-size:14px; color:var(--text)}
+  .safety li{margin:6px 0}
+
+  .grid3{display:grid; grid-template-columns:repeat(3,1fr); gap:18px}
+  @media (max-width:820px){ .grid3{grid-template-columns:1fr} }
+  .card{
+    background:var(--panel); border:1px solid var(--border); border-radius:14px; padding:22px;
+  }
+  .card h3{margin:0 0 8px; font-size:17px}
+  .card p{margin:0; color:var(--muted); font-size:14px}
+
+  .steps{counter-reset:step; display:grid; gap:16px}
+  .step{
+    display:grid; grid-template-columns:44px 1fr; gap:16px; align-items:start;
+    background:var(--panel); border:1px solid var(--border); border-radius:14px; padding:18px 20px;
+  }
+  .step .num{
+    counter-increment:step; width:32px; height:32px; border-radius:50%;
+    background:linear-gradient(135deg,var(--accent),var(--accent-2)); color:#0b0d12;
+    display:flex; align-items:center; justify-content:center; font-weight:700; font-size:14px;
+  }
+  .step .num::before{content:counter(step)}
+  .step h3{margin:0 0 4px; font-size:16px}
+  .step p{margin:0; color:var(--muted); font-size:14px}
+
+  .shots{display:grid; grid-template-columns:1fr 1fr; gap:16px}
+  @media (max-width:720px){ .shots{grid-template-columns:1fr} }
+  .shot{
+    border:1px solid var(--border); border-radius:12px; overflow:hidden; background:var(--panel);
+  }
+  .shot img{display:block; width:100%; height:auto}
+  .shot figcaption{padding:10px 14px; font-size:13px; color:var(--muted); border-top:1px solid var(--border)}
+
+  .downloads{
+    background:var(--panel); border:1px solid var(--border); border-radius:16px; padding:28px;
+  }
+  .dl-grid{display:grid; grid-template-columns:repeat(3,1fr); gap:14px; margin-top:20px}
+  @media (max-width:820px){ .dl-grid{grid-template-columns:1fr} }
+  .dl-card{
+    border:1px solid var(--border); border-radius:12px; padding:18px; background:var(--bg-alt);
+    display:flex; flex-direction:column; gap:10px;
+  }
+  .dl-card .os{display:flex; align-items:center; gap:10px; font-weight:600; font-size:15px}
+  .dl-card .os svg{width:20px; height:20px; flex:none}
+  .dl-card .meta{font-size:12px; color:var(--muted); min-height:16px}
+  .dl-card a.btn{justify-content:center; padding:10px 14px; font-size:14px}
+  .dl-card a.btn[aria-disabled="true"]{
+    opacity:.5; pointer-events:none;
+  }
+  .version-tag{
+    font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:13px; color:var(--muted);
+  }
+  .dl-status{font-size:13px; color:var(--muted); margin-top:14px}
+  .other-assets{margin-top:16px; font-size:13px; color:var(--muted)}
+  .other-assets a{color:var(--muted); text-decoration:underline}
+
+  footer{
+    border-top:1px solid var(--border); padding:32px 0; color:var(--muted); font-size:13px;
+  }
+  footer a{color:var(--muted)}
+  code{
+    background:var(--code-bg); color:#e7e9ee; padding:2px 6px; border-radius:4px; font-size:12.5px;
+  }
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <div class="wrap">
+    <span class="badge">Open source · MIT-style license · Windows / Linux / macOS</span>
+    <h1>AI-powered analysis and optimization<br>for SQL Server databases.</h1>
+    <p class="lede">
+      AIOptimizeSql finds real problems and proves out real fixes — it doesn't just guess
+      an index might help, it applies the change, benchmarks it, and reverts it, so you get
+      measured evidence instead of a hunch.
+    </p>
+    <div class="cta-row">
+      <a class="btn" href="#download">Download <small>free, self-contained executable</small></a>
+      <a class="btn secondary" href="https://github.com/tedd/Tedd.AIOptimizeSql" target="_blank" rel="noopener">View source on GitHub</a>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <div class="safety">
+    <h3>Before you connect a database</h3>
+    <ul>
+      <li><strong>Use a read-only user for analysis.</strong> Analysis only needs <code>SELECT</code> and DMV access — a read-only account means the AI physically cannot change anything.</li>
+      <li><strong>Use a disposable database for experiments.</strong> Experiments apply real schema changes, benchmark them, and revert them — that revert is best-effort, not guaranteed. Use a restored backup or a dev/staging copy.</li>
+      <li><strong>Don't run either mode against production.</strong> Even read-only analysis can add unplanned load.</li>
+    </ul>
+  </div>
+
+  <section id="features">
+    <h2>What it does</h2>
+    <p class="sub">Three ways it makes SQL Server databases faster.</p>
+    <div class="grid3">
+      <div class="card">
+        <h3>Automatic analysis</h3>
+        <p>A broad health check — missing indexes, fragmentation, stale statistics, expensive queries, wait stats, procs, views, configuration. Deterministic checks run first, then the AI investigates and produces findings with severity, evidence, and suggested SQL. Read-only against the target database.</p>
+      </div>
+      <div class="card">
+        <h3>Automatic experiments</h3>
+        <p>Findings can include a proposed experiment — a ready-made test for that recommendation. One click turns "this index might help" into "this index made the query 63% faster, here are the numbers."</p>
+      </div>
+      <div class="card">
+        <h3>Your own experiments</h3>
+        <p>Already know which query is slow? Give it the benchmark SQL, pick a database and an AI, and let it test hypotheses against the real database — measuring instead of guessing.</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="how-it-works">
+    <h2>How experiments work</h2>
+    <p class="sub">Instead of an AI guessing, it tests hypotheses against the real database and measures.</p>
+    <div class="steps">
+      <div class="step"><span class="num"></span><div><h3>Schema discovery</h3><p>Maps the tables, indexes, statistics, and dependencies relevant to your benchmark query.</p></div></div>
+      <div class="step"><span class="num"></span><div><h3>Baseline benchmark</h3><p>The query is measured before any changes. Every hypothesis is compared against this.</p></div></div>
+      <div class="step"><span class="num"></span><div><h3>Hypothesis loop</h3><p>The AI proposes a concrete optimization, writes the apply and revert SQL, applies it, benchmarks it, and reverts it.</p></div></div>
+      <div class="step"><span class="num"></span><div><h3>Building on what works</h3><p>Later hypotheses build on earlier successes, forming chains of compounding optimizations. What regressed is discarded.</p></div></div>
+      <div class="step"><span class="num"></span><div><h3>Data integrity check</h3><p>Checksums over the involved tables verify optimizations didn't silently change query results.</p></div></div>
+    </div>
+  </section>
+
+  <section id="screenshots">
+    <h2>See it in action</h2>
+    <p class="sub">Home → connect a database → connect an AI → analyze → experiment.</p>
+    <div class="shots">
+      <figure class="shot">
+        <img src="screenshots/home.png" alt="AIOptimizeSql home page" loading="lazy">
+        <figcaption>The home page walks you through the flow.</figcaption>
+      </figure>
+      <figure class="shot">
+        <img src="screenshots/analysis-viewer.png" alt="Analysis dashboard with findings" loading="lazy">
+        <figcaption>Analysis dashboard — health score, findings, evidence, suggested SQL.</figcaption>
+      </figure>
+      <figure class="shot">
+        <img src="screenshots/experiment-viewer.png" alt="Experiment results with before/after benchmarks" loading="lazy">
+        <figcaption>Experiment results — before/after benchmarks and full reasoning log.</figcaption>
+      </figure>
+      <figure class="shot">
+        <img src="screenshots/experiment-edit-sql.png" alt="Experiment editor with benchmark SQL" loading="lazy">
+        <figcaption>Bring your own benchmark SQL and let the AI iterate on it.</figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <section id="download">
+    <h2>Download</h2>
+    <p class="sub">Self-contained single-file executable — no .NET runtime required. Stores its own state in a local SQLite file.</p>
+
+    <div class="downloads">
+      <div id="dl-header">
+        <span class="version-tag" id="dl-version">Loading latest release…</span>
+      </div>
+
+      <div class="dl-grid" id="dl-grid">
+        <div class="dl-card" data-os="win">
+          <div class="os">
+            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 5.5 10 4.4V11H3zm0 13-.03-6H10v6.9zM11 4.25 21 3v8H11zM11 12h10v8.75L11 19.5z"/></svg>
+            Windows
+          </div>
+          <div class="meta">x64 · .exe, double-click to run</div>
+          <a class="btn" href="https://github.com/tedd/Tedd.AIOptimizeSql/releases/latest" aria-disabled="true">Resolving link…</a>
+        </div>
+        <div class="dl-card" data-os="linux">
+          <div class="os">
+            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2c-1.5 0-2.7 1.6-2.7 4 0 1.3.4 2.4 1 3.2-1.7.7-3.6 2.4-4.3 4.6-.5 1.6-.2 2.9.6 3.6.2.2.3.5.2.8-.3 1-.1 1.8.6 2.3.9.7 2.4.6 3.6 0 .5-.2 1-.2 1.5 0 1.2.6 2.7.7 3.6 0 .7-.5.9-1.3.6-2.3-.1-.3 0-.6.2-.8.8-.7 1.1-2 .6-3.6-.7-2.2-2.6-3.9-4.3-4.6.6-.8 1-1.9 1-3.2C14.7 3.6 13.5 2 12 2z"/></svg>
+            Linux
+          </div>
+          <div class="meta">x64 · .tar.gz, preserves exec bit</div>
+          <a class="btn" href="https://github.com/tedd/Tedd.AIOptimizeSql/releases/latest" aria-disabled="true">Resolving link…</a>
+        </div>
+        <div class="dl-card" data-os="mac">
+          <div class="os">
+            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M16.7 13.4c0-2.6 2.1-3.8 2.2-3.9-1.2-1.7-3-2-3.7-2-1.6-.2-3.1.9-3.9.9-.8 0-2-.9-3.3-.9-1.7 0-3.3 1-4.1 2.5-1.8 3.1-.5 7.6 1.3 10.1.9 1.2 1.9 2.6 3.2 2.6 1.3-.1 1.8-.8 3.3-.8s2 .8 3.3.8c1.4 0 2.3-1.2 3.1-2.5.6-1 1-1.9 1.3-2.9-3.1-1.1-3.7-1.9-3.7-3.9zM14 5.6c.7-.8 1.1-1.9 1-3-1 0-2.1.6-2.8 1.4-.6.7-1.2 1.8-1 2.9 1.1.1 2.1-.5 2.8-1.3z"/></svg>
+            macOS
+          </div>
+          <div class="meta">Apple Silicon (arm64) · .tar.gz</div>
+          <a class="btn" href="https://github.com/tedd/Tedd.AIOptimizeSql/releases/latest" aria-disabled="true">Resolving link…</a>
+        </div>
+      </div>
+
+      <p class="dl-status" id="dl-status"></p>
+      <p class="other-assets">All builds, checksums, and release notes: <a href="https://github.com/tedd/Tedd.AIOptimizeSql/releases" target="_blank" rel="noopener">GitHub Releases</a></p>
+    </div>
+  </section>
+
+  <section id="modes">
+    <h2>Two ways to run it</h2>
+    <div class="grid3" style="grid-template-columns:1fr 1fr">
+      <div class="card">
+        <h3>Standalone (this download)</h3>
+        <p>One self-contained executable, SQLite storage, zero configuration. Best for trying it out or single-user desktop/server use.</p>
+      </div>
+      <div class="card">
+        <h3>Azure App Service</h3>
+        <p>Web UI plus optional separate worker, backed by Azure SQL / SQL Server. Best for team use and always-on deployments. See <a href="https://github.com/tedd/Tedd.AIOptimizeSql/blob/main/docs/DEPLOYMENT.md">the deployment guide</a>.</p>
+      </div>
+    </div>
+  </section>
+
+</div>
+
+<footer>
+  <div class="wrap">
+    Tedd.AIOptimizeSql — see <a href="https://github.com/tedd/Tedd.AIOptimizeSql/blob/main/LICENSE.md">LICENSE.md</a> for terms; provided without warranty.
+    <br>
+    <a href="https://github.com/tedd/Tedd.AIOptimizeSql" target="_blank" rel="noopener">Source on GitHub</a>
+    · <a href="https://github.com/tedd/Tedd.AIOptimizeSql/blob/main/docs/DEPLOYMENT.md">Deployment guide</a>
+    · <a href="https://github.com/tedd/Tedd.AIOptimizeSql/issues" target="_blank" rel="noopener">Report an issue</a>
+  </div>
+</footer>
+
+<script>
+(function () {
+  var REPO = "tedd/Tedd.AIOptimizeSql";
+  var osMatchers = {
+    win:   /win-x64.*\.exe$/i,
+    linux: /linux-x64.*\.tar\.gz$/i,
+    mac:   /osx-arm64.*\.tar\.gz$/i
+  };
+
+  function humanSize(bytes) {
+    if (!bytes) return "";
+    var mb = bytes / (1024 * 1024);
+    return mb >= 1000 ? (mb / 1024).toFixed(2) + " GB" : mb.toFixed(0) + " MB";
+  }
+
+  function setCardState(card, href, label, meta) {
+    var link = card.querySelector("a.btn");
+    link.href = href;
+    link.textContent = label;
+    link.removeAttribute("aria-disabled");
+    if (meta) {
+      var metaEl = card.querySelector(".meta");
+      metaEl.textContent = metaEl.textContent + " · " + meta;
+    }
+  }
+
+  function fallbackToReleasesPage(reason) {
+    document.querySelectorAll(".dl-card").forEach(function (card) {
+      setCardState(card, "https://github.com/" + REPO + "/releases/latest", "Go to Releases");
+    });
+    document.getElementById("dl-version").textContent = "Latest release";
+    document.getElementById("dl-status").textContent =
+      reason || "Couldn't auto-detect assets — pick your platform on the Releases page.";
+  }
+
+  fetch("https://api.github.com/repos/" + REPO + "/releases/latest", {
+    headers: { "Accept": "application/vnd.github+json" }
+  })
+    .then(function (r) {
+      if (!r.ok) throw new Error("GitHub API returned " + r.status);
+      return r.json();
+    })
+    .then(function (release) {
+      document.getElementById("dl-version").textContent =
+        (release.name || release.tag_name) + " · released " +
+        new Date(release.published_at).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+
+      var assets = release.assets || [];
+      var found = 0;
+
+      document.querySelectorAll(".dl-card").forEach(function (card) {
+        var os = card.getAttribute("data-os");
+        var matcher = osMatchers[os];
+        var asset = assets.find(function (a) { return matcher.test(a.name); });
+        if (asset) {
+          found++;
+          setCardState(card, asset.browser_download_url, "Download", humanSize(asset.size));
+        } else {
+          setCardState(card, "https://github.com/" + REPO + "/releases/latest", "See Releases");
+        }
+      });
+
+      document.getElementById("dl-status").textContent = found
+        ? "Direct links to " + release.tag_name + " release assets."
+        : "No matching assets found for auto-detection — see the Releases page.";
+    })
+    .catch(function (err) {
+      fallbackToReleasesPage();
+      console.error("AIOptimizeSql: failed to resolve latest release", err);
+    });
+})();
+</script>
+
+</body>
+</html>
