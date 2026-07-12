@@ -51,6 +51,11 @@ html, body {
     background: rgba(33, 150, 243, 0.07);
 }
 
+.log-output-header {
+    padding: 3px 8px;
+    background: rgba(255, 152, 0, 0.07);
+}
+
 .log-sql-content {
     margin: 0;
     padding: 8px 12px;

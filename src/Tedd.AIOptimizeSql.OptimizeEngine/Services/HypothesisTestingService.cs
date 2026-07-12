@@ -23,6 +23,7 @@ namespace Tedd.AIOptimizeSql.OptimizeEngine.Services;
 public sealed class HypothesisTestingService(
     AiAgentFactory agentFactory,
     IServiceScopeFactory scopeFactory,
+    ResearchIterationLogger iterationLogger,
     IOptions<OptimizeEngineSettings> settings,
     ILoggerFactory loggerFactory)
 {
@@ -50,6 +51,17 @@ public sealed class HypothesisTestingService(
         if (string.IsNullOrWhiteSpace(experiment.BenchmarkSql))
             throw new InvalidOperationException("BenchmarkSql is required for benchmarking.");
 
+        var warmUps = settings.Value.WarmUpIterations;
+        var timedRuns = settings.Value.BenchmarkIterations;
+        var totalSw = Stopwatch.StartNew();
+
+        // Live feedback: activity log rows plus a moving status line with elapsed time.
+        Task Log(string message) =>
+            iterationLogger.AppendAsync(iteration.Id, message, "Benchmark", CancellationToken.None);
+        Task Status(string message) =>
+            iterationLogger.SetMessageAsync(iteration.Id,
+                $"Baseline benchmark: {message} ({FormatDuration(totalSw.Elapsed)} elapsed)", CancellationToken.None);
+
         var config = new BenchmarkConfig
         {
             DatabaseType = "MSSQL",
@@ -57,36 +69,60 @@ public sealed class HypothesisTestingService(
         };
         var executor = DatabaseExecutorFactory.Create(config, msg => _logger.LogDebug("{SqlLog}", msg));
 
+        await Log(WithSql(
+            $"Baseline benchmark starting: {warmUps} warm-up + {timedRuns} timed runs. Each run clears caches " +
+            "(CHECKPOINT; DBCC DROPCLEANBUFFERS; DBCC FREEPROCCACHE), waits for storage I/O to settle " +
+            $"(+{config.PostClearStabilizationMs} ms), then executes the benchmark SQL below with SET STATISTICS TIME/IO/XML ON.",
+            experiment.BenchmarkSql));
+
         await using var conn = await executor.OpenConnectionAsync(dbConnection.ConnectionString, ct);
 
         // Run ExperimentPreRunSql if configured
         if (!string.IsNullOrWhiteSpace(experiment.ExperimentPreRunSql))
         {
             _logger.LogInformation("Running ExperimentPreRunSql");
+            await Status("running ExperimentPreRunSql…");
+            var preSw = Stopwatch.StartNew();
             executor.ExecuteNonQuery(conn, experiment.ExperimentPreRunSql);
+            await Log(WithSql($"ExperimentPreRunSql completed in {FormatDuration(preSw.Elapsed)}.", experiment.ExperimentPreRunSql));
         }
 
         // Update statistics before baseline
         _logger.LogInformation("Updating statistics before baseline benchmark");
+        await Status("updating statistics on all tables…");
+        await Log("Updating statistics (EXEC sp_MSforeachtable 'UPDATE STATISTICS ? WITH FULLSCAN') — " +
+                  "on large databases this can take several minutes with no further output.");
+        var statsSw = Stopwatch.StartNew();
         executor.UpdateStatistics(conn);
+        await Log($"Statistics update completed in {FormatDuration(statsSw.Elapsed)}.");
 
         // Warm-up
-        for (var i = 0; i < settings.Value.WarmUpIterations; i++)
+        for (var i = 0; i < warmUps; i++)
         {
-            _logger.LogDebug("Baseline warm-up iteration {I}/{Total}", i + 1, settings.Value.WarmUpIterations);
+            ct.ThrowIfCancellationRequested();
+            _logger.LogDebug("Baseline warm-up iteration {I}/{Total}", i + 1, warmUps);
+            await Status($"warm-up {i + 1}/{warmUps} — clearing caches…");
             executor.ClearCache(conn);
-            executor.ExecuteWithTiming(conn, experiment.BenchmarkSql);
+            await Status($"warm-up {i + 1}/{warmUps} — executing benchmark SQL…");
+            var runSw = Stopwatch.StartNew();
+            var warmTiming = executor.ExecuteWithTiming(conn, experiment.BenchmarkSql);
+            await Log(DescribeRun($"Warm-up {i + 1}/{warmUps}", runSw.Elapsed, warmTiming) + " Timing discarded.");
         }
 
         // Timed iterations
         var timings = new List<SqlExecutionResult>();
         var sw = Stopwatch.StartNew();
-        for (var i = 0; i < settings.Value.BenchmarkIterations; i++)
+        for (var i = 0; i < timedRuns; i++)
         {
-            _logger.LogDebug("Baseline benchmark iteration {I}/{Total}", i + 1, settings.Value.BenchmarkIterations);
+            ct.ThrowIfCancellationRequested();
+            _logger.LogDebug("Baseline benchmark iteration {I}/{Total}", i + 1, timedRuns);
+            await Status($"timed run {i + 1}/{timedRuns} — clearing caches…");
             executor.ClearCache(conn);
+            await Status($"timed run {i + 1}/{timedRuns} — executing benchmark SQL…");
+            var runSw = Stopwatch.StartNew();
             var timing = executor.ExecuteWithTiming(conn, experiment.BenchmarkSql);
             timings.Add(timing);
+            await Log(WithOutput(DescribeRun($"Timed run {i + 1}/{timedRuns}", runSw.Elapsed, timing), timing.Messages));
         }
         sw.Stop();
 
@@ -110,6 +146,10 @@ public sealed class HypothesisTestingService(
         _logger.LogInformation("Baseline benchmark complete: CPU={Cpu}ms, Elapsed={Elapsed}ms over {Iters} iterations",
             aggregated.TotalServerCpuTimeMs, aggregated.TotalServerElapsedTimeMs, settings.Value.BenchmarkIterations);
 
+        await Log($"Baseline benchmark completed in {FormatDuration(totalSw.Elapsed)} — " +
+                  $"median server elapsed {Inv(aggregated.TotalServerElapsedTimeMs)} ms, median CPU {Inv(aggregated.TotalServerCpuTimeMs)} ms " +
+                  $"over {timedRuns} timed runs.");
+
         return aggregated;
     }
 
@@ -121,12 +161,15 @@ public sealed class HypothesisTestingService(
     /// Runs the full Apply → Benchmark → Revert cycle for a hypothesis.
     /// Returns true if the cycle completed successfully (including revert).
     /// Returns false if revert failed -- caller must halt the iteration.
+    /// <paramref name="statusLabel"/> names the hypothesis in the iteration's live status
+    /// line, e.g. "hypothesis 3/10".
     /// </summary>
     public async Task<bool> TestHypothesisAsync(
         HypothesisId hypothesisId,
         ResearchIteration iteration,
         BenchmarkRun baseline,
         Action<HypothesisId, string, string?>? appendLog,
+        string? statusLabel,
         CancellationToken ct)
     {
         var experiment = iteration.Experiment
@@ -135,6 +178,14 @@ public sealed class HypothesisTestingService(
             ?? throw new InvalidOperationException("DatabaseConnection must be loaded.");
         var aiConnection = iteration.AIConnection
             ?? throw new InvalidOperationException("AIConnection must be loaded.");
+
+        var label = string.IsNullOrWhiteSpace(statusLabel) ? "hypothesis" : statusLabel;
+        var totalSw = Stopwatch.StartNew();
+
+        // Moving status line on the iteration so the UI shows what the tester is doing right now.
+        Task Status(string message) =>
+            iterationLogger.SetMessageAsync(iteration.Id,
+                $"Testing {label}: {message} ({FormatDuration(totalSw.Elapsed)} elapsed)", CancellationToken.None);
 
         if (dbConnection.AnalyzeOnly)
         {
@@ -170,6 +221,7 @@ public sealed class HypothesisTestingService(
         // 1. HypothesisPreRunSql
         if (!string.IsNullOrWhiteSpace(experiment.HypothesisPreRunSql))
         {
+            await Status("running HypothesisPreRunSql…");
             appendLog?.Invoke(hypothesisId, "Running HypothesisPreRunSql", "TestingService");
             executor.ExecuteNonQuery(conn, experiment.HypothesisPreRunSql);
         }
@@ -179,8 +231,10 @@ public sealed class HypothesisTestingService(
         Dictionary<string, (long RowCount, long? Checksum, string Summary)>? baselineChecksums = null;
         if (baseTableList.Count > 0)
         {
+            await Status($"computing data checksums for {baseTableList.Count} tables…");
+            var checksumSw = Stopwatch.StartNew();
             baselineChecksums = executor.ComputeDataChecksums(conn, baseTableList);
-            appendLog?.Invoke(hypothesisId, $"Baseline checksums computed for {baseTableList.Count} tables", "TestingService");
+            appendLog?.Invoke(hypothesisId, $"Baseline checksums computed for {baseTableList.Count} tables in {FormatDuration(checksumSw.Elapsed)}", "TestingService");
         }
 
         // 3. APPLY optimize_sql with retry loop
@@ -191,6 +245,7 @@ public sealed class HypothesisTestingService(
         {
             try
             {
+                await Status($"applying optimization (attempt {retry}/{settings.Value.AiMaxRetries})…");
                 appendLog?.Invoke(hypothesisId, WithSql($"Applying optimization (attempt {retry}/{settings.Value.AiMaxRetries})", currentOptimizeSql), "TestingService");
                 executor.ExecuteNonQuery(conn, currentOptimizeSql);
                 optimizeSucceeded = true;
@@ -205,6 +260,7 @@ public sealed class HypothesisTestingService(
 
                 if (retry < settings.Value.AiMaxRetries)
                 {
+                    await Status($"apply attempt {retry} failed — asking AI for corrected SQL…");
                     var fixResult = await RequestAiFixAsync(
                         aiConnection, currentOptimizeSql, ex.Message,
                         isRevert: false, originalOptimizeSql: null, ct);
@@ -235,6 +291,7 @@ public sealed class HypothesisTestingService(
         // 4. Data integrity check after apply
         if (baselineChecksums != null)
         {
+            await Status("verifying data integrity after apply…");
             var afterApplyChecksums = executor.ComputeDataChecksums(conn, baseTableList);
             var integrityIssues = CompareChecksums(baselineChecksums, afterApplyChecksums);
             if (integrityIssues.Count > 0)
@@ -250,15 +307,29 @@ public sealed class HypothesisTestingService(
 
         // 5. Update statistics, then benchmark
         await UpdateHypothesisStatusAsync(hypothesisId, HypothesisState.Benchmarking, ct);
+        await Status("updating statistics on all tables…");
+        appendLog?.Invoke(hypothesisId,
+            "Updating statistics (EXEC sp_MSforeachtable 'UPDATE STATISTICS ? WITH FULLSCAN') — " +
+            "on large databases this can take several minutes with no further output.", "TestingService");
+        var statsSw = Stopwatch.StartNew();
         executor.UpdateStatistics(conn);
+        appendLog?.Invoke(hypothesisId, $"Statistics update completed in {FormatDuration(statsSw.Elapsed)}.", "TestingService");
 
+        var timedRuns = settings.Value.BenchmarkIterations;
         var afterTimings = new List<SqlExecutionResult>();
         var benchSw = Stopwatch.StartNew();
-        for (var i = 0; i < settings.Value.BenchmarkIterations; i++)
+        for (var i = 0; i < timedRuns; i++)
         {
-            appendLog?.Invoke(hypothesisId, $"Benchmark iteration {i + 1}/{settings.Value.BenchmarkIterations}", "TestingService");
+            ct.ThrowIfCancellationRequested();
+            await Status($"benchmark run {i + 1}/{timedRuns} — clearing caches…");
             executor.ClearCache(conn);
-            afterTimings.Add(executor.ExecuteWithTiming(conn, experiment.BenchmarkSql!));
+            await Status($"benchmark run {i + 1}/{timedRuns} — executing benchmark SQL…");
+            var runSw = Stopwatch.StartNew();
+            var timing = executor.ExecuteWithTiming(conn, experiment.BenchmarkSql!);
+            afterTimings.Add(timing);
+            appendLog?.Invoke(hypothesisId,
+                WithOutput(DescribeRun($"Benchmark run {i + 1}/{timedRuns}", runSw.Elapsed, timing), timing.Messages),
+                "TestingService");
         }
         benchSw.Stop();
 
@@ -290,6 +361,7 @@ public sealed class HypothesisTestingService(
         {
             try
             {
+                await Status($"reverting optimization (attempt {retry}/{settings.Value.AiMaxRetries})…");
                 appendLog?.Invoke(hypothesisId, WithSql($"Reverting optimization (attempt {retry}/{settings.Value.AiMaxRetries})", currentRevertSql), "TestingService");
                 executor.ExecuteNonQuery(conn, currentRevertSql);
                 revertSucceeded = true;
@@ -304,6 +376,7 @@ public sealed class HypothesisTestingService(
 
                 if (retry < settings.Value.AiMaxRetries)
                 {
+                    await Status($"revert attempt {retry} failed — asking AI for corrected SQL…");
                     var fixResult = await RequestAiFixAsync(
                         aiConnection, currentRevertSql, ex.Message,
                         isRevert: true, originalOptimizeSql: originalOptimizeSql, ct);
@@ -329,6 +402,7 @@ public sealed class HypothesisTestingService(
         // 7. Data integrity check after revert
         if (baselineChecksums != null)
         {
+            await Status("verifying data integrity after revert…");
             var afterRevertChecksums = executor.ComputeDataChecksums(conn, baseTableList);
             var integrityIssues = CompareChecksums(baselineChecksums, afterRevertChecksums);
             if (integrityIssues.Count > 0)
@@ -343,10 +417,16 @@ public sealed class HypothesisTestingService(
         }
 
         // 8. Verify revert via timing comparison
+        await Status("verifying revert — re-running benchmark SQL on cold cache…");
         executor.ClearCache(conn);
+        var verifySw = Stopwatch.StartNew();
         var verifyTiming = executor.ExecuteWithTiming(conn, experiment.BenchmarkSql!);
         var verifyElapsed = verifyTiming.ExecutionElapsedTimeMs + verifyTiming.ParseAndCompileElapsedTimeMs;
         var baselineElapsed = baseline.TotalServerElapsedTimeMs;
+        appendLog?.Invoke(hypothesisId,
+            DescribeRun("Revert verification run", verifySw.Elapsed, verifyTiming) +
+            $" Baseline server elapsed for comparison: {Inv(baselineElapsed)} ms.",
+            "TestingService");
         if (baselineElapsed > 0 && verifyElapsed < baselineElapsed * 0.5)
         {
             appendLog?.Invoke(hypothesisId,
@@ -404,6 +484,43 @@ public sealed class HypothesisTestingService(
 
     internal static string WithSql(string message, string? sql) =>
         string.IsNullOrWhiteSpace(sql) ? message : $"{message}\n[sql]\n{sql.Trim()}\n[/sql]";
+
+    /// <summary>Attaches raw server output (e.g. SET STATISTICS TIME/IO messages) as a collapsible block.</summary>
+    internal static string WithOutput(string message, string? output)
+    {
+        if (string.IsNullOrWhiteSpace(output))
+            return message;
+        var trimmed = output.Trim();
+        const int maxOutputChars = 4_000;
+        if (trimmed.Length > maxOutputChars)
+            trimmed = trimmed[..maxOutputChars] + "\n… (truncated)";
+        return $"{message}\n[output]\n{trimmed}\n[/output]";
+    }
+
+    /// <summary>One-line result summary for a single benchmark execution. Invariant culture so logs are stable.</summary>
+    internal static string DescribeRun(string label, TimeSpan wallTime, SqlExecutionResult timing)
+    {
+        var serverElapsed = timing.ExecutionElapsedTimeMs + timing.ParseAndCompileElapsedTimeMs;
+        var serverCpu = timing.ExecutionCpuTimeMs + timing.ParseAndCompileCpuTimeMs;
+        return $"{label} completed in {FormatDuration(wallTime)} — server elapsed {Inv(serverElapsed)} ms, " +
+               $"CPU {Inv(serverCpu)} ms, logical reads {Inv(timing.TotalLogicalReads)}, physical reads {Inv(timing.TotalPhysicalReads)}.";
+    }
+
+    /// <summary>Invariant thousands-separated number for log lines ("60,297" regardless of host culture).</summary>
+    internal static string Inv(long value) =>
+        value.ToString("N0", System.Globalization.CultureInfo.InvariantCulture);
+
+    /// <summary>Human-readable duration with explicit units ("8.3 s", "2 m 05 s", "1 h 02 m 03 s").</summary>
+    internal static string FormatDuration(TimeSpan t)
+    {
+        if (t.TotalHours >= 1)
+            return FormattableString.Invariant($"{(int)t.TotalHours} h {t.Minutes:00} m {t.Seconds:00} s");
+        if (t.TotalMinutes >= 1)
+            return FormattableString.Invariant($"{t.Minutes} m {t.Seconds:00} s");
+        return t.TotalSeconds >= 10
+            ? FormattableString.Invariant($"{t.TotalSeconds:0} s")
+            : FormattableString.Invariant($"{t.TotalSeconds:0.0} s");
+    }
 
     #region Helpers
 

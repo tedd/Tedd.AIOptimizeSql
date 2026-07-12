@@ -1,0 +1,101 @@
+@inject IJSRuntime JS
+
+@{
+    var parsed = ParseMessage(Message);
+}
+
+<MudPaper Elevation="0" Class="pa-2 rounded hypothesis-log-entry" Style="background: var(--mud-palette-background-grey);">
+    <MudText Typo="Typo.caption" Class="mud-text-secondary">
+        @CreatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")
+        @if (!string.IsNullOrEmpty(Source))
+        {
+            <text> · @Source</text>
+        }
+    </MudText>
+    <MarkdownView Content="@parsed.Text" Class="markdown-compact" />
+
+    @if (!string.IsNullOrWhiteSpace(parsed.Sql))
+    {
+        <div class="log-sql-block mt-1">
+            <MudStack Row="true" AlignItems="AlignItems.Center" Class="log-sql-header"
+                      @onclick="ToggleSql" Style="cursor: pointer; user-select: none;">
+                <MudIcon Icon="@(_sqlExpanded ? Icons.Material.Filled.ExpandLess : Icons.Material.Filled.ChevronRight)"
+                         Size="Size.Small" Color="Color.Info" />
+                <MudText Typo="Typo.caption" Color="Color.Info" Class="ml-1">SQL</MudText>
+                <MudSpacer />
+                <span @onclick="@(() => CopyToClipboardAsync(parsed.Sql))" @onclick:stopPropagation="true" title="Copy SQL to clipboard">
+                    <MudIconButton Icon="@Icons.Material.Filled.ContentCopy" Size="Size.Small" />
+                </span>
+            </MudStack>
+            <MudCollapse Expanded="_sqlExpanded">
+                <pre class="log-sql-content">@parsed.Sql</pre>
+            </MudCollapse>
+        </div>
+    }
+
+    @if (!string.IsNullOrWhiteSpace(parsed.Output))
+    {
+        <div class="log-sql-block mt-1">
+            <MudStack Row="true" AlignItems="AlignItems.Center" Class="log-output-header"
+                      @onclick="ToggleOutput" Style="cursor: pointer; user-select: none;">
+                <MudIcon Icon="@(_outputExpanded ? Icons.Material.Filled.ExpandLess : Icons.Material.Filled.ChevronRight)"
+                         Size="Size.Small" Color="Color.Warning" />
+                <MudText Typo="Typo.caption" Color="Color.Warning" Class="ml-1">Server output</MudText>
+                <MudSpacer />
+                <span @onclick="@(() => CopyToClipboardAsync(parsed.Output))" @onclick:stopPropagation="true" title="Copy output to clipboard">
+                    <MudIconButton Icon="@Icons.Material.Filled.ContentCopy" Size="Size.Small" />
+                </span>
+            </MudStack>
+            <MudCollapse Expanded="_outputExpanded">
+                <pre class="log-sql-content">@parsed.Output</pre>
+            </MudCollapse>
+        </div>
+    }
+</MudPaper>
+
+@code {
+    [Parameter, EditorRequired] public DateTime CreatedAt { get; set; }
+    [Parameter] public string? Source { get; set; }
+    [Parameter, EditorRequired] public string Message { get; set; } = "";
+
+    private bool _sqlExpanded;
+    private bool _outputExpanded;
+
+    private void ToggleSql() => _sqlExpanded = !_sqlExpanded;
+    private void ToggleOutput() => _outputExpanded = !_outputExpanded;
+
+    private async Task CopyToClipboardAsync(string? text)
+    {
+        if (!string.IsNullOrWhiteSpace(text))
+            await JS.InvokeVoidAsync("navigator.clipboard.writeText", text);
+    }
+
+    /// <summary>
+    /// Splits a log message into visible text and optional collapsible
+    /// <c>[sql]…[/sql]</c> and <c>[output]…[/output]</c> blocks.
+    /// </summary>
+    internal static (string Text, string? Sql, string? Output) ParseMessage(string message)
+    {
+        var (afterSql, sql) = ExtractBlock(message, "[sql]", "[/sql]");
+        var (text, output) = ExtractBlock(afterSql, "[output]", "[/output]");
+        return (text.TrimEnd('\n', '\r', ' '), sql, output);
+    }
+
+    private static (string Remainder, string? Block) ExtractBlock(string message, string open, string close)
+    {
+        var start = message.IndexOf(open, StringComparison.Ordinal);
+        if (start < 0)
+            return (message, null);
+
+        var blockStart = start + open.Length;
+        var end = message.IndexOf(close, blockStart, StringComparison.Ordinal);
+        var block = end < 0
+            ? message[blockStart..].Trim()
+            : message[blockStart..end].Trim();
+
+        var remainder = end < 0
+            ? message[..start]
+            : message[..start] + message[(end + close.Length)..];
+        return (remainder, block);
+    }
+}

@@ -79,7 +79,17 @@
                             <MudText Typo="Typo.body2">State: <strong>@_iteration.State</strong></MudText>
                             <MudText Typo="Typo.body2">Started: @FormatNullable(_iteration.StartedAt)</MudText>
                             <MudText Typo="Typo.body2">Ended: @FormatNullable(_iteration.EndedAt)</MudText>
-                            <MudText Typo="Typo.body2">Last message: @(_iteration.LastMessage ?? "—")</MudText>
+                            @if (_iteration.StartedAt.HasValue && (_iteration.State == ResearchIterationState.Running || _iteration.EndedAt.HasValue))
+                            {
+                                <MudText Typo="Typo.body2">Elapsed: <strong>@FormatElapsed(_iteration)</strong></MudText>
+                            }
+                            <MudText Typo="Typo.body2">
+                                Last message: @(_iteration.LastMessage ?? "—")
+                                @if (_iteration.State == ResearchIterationState.Running)
+                                {
+                                    <span class="mud-text-secondary"> — updated @FormatAgo(_iteration.ModifiedAt) ago</span>
+                                }
+                            </MudText>
                             <MudText Typo="Typo.body2">
                                 AI snapshot: @(_iteration.AiProviderUsed?.ToString() ?? "—") / @(_iteration.AiModelUsed ?? "—")
                                 @if (_iteration.AIConnection is { } ac)
@@ -186,6 +196,36 @@
                 }
             </MudCardActions>
         </MudCard>
+
+        @if (!_isNew && _iteration != null && (_logs.Count > 0 || _iteration.State == ResearchIterationState.Running))
+        {
+            <MudCard Elevation="3" Class="rounded-lg mt-4">
+                <MudCardHeader>
+                    <CardHeaderContent>
+                        <MudText Typo="Typo.h6">Activity log</MudText>
+                        <MudText Typo="Typo.caption">
+                            Live progress for this run: schema discovery, benchmark runs with timings, and the SQL being executed.
+                            Newest entries first. Per-hypothesis details are on each hypothesis page.
+                        </MudText>
+                    </CardHeaderContent>
+                </MudCardHeader>
+                <MudCardContent Class="pt-0">
+                    @if (_logs.Count == 0)
+                    {
+                        <MudText Typo="Typo.body2" Class="mud-text-secondary">No activity recorded yet.</MudText>
+                    }
+                    else
+                    {
+                        <MudStack Spacing="2">
+                            @foreach (var line in _logs)
+                            {
+                                <ActivityLogEntry CreatedAt="line.CreatedAt" Source="@line.Source" Message="@line.Message" />
+                            }
+                        </MudStack>
+                    }
+                </MudCardContent>
+            </MudCard>
+        }
     }
 </MudContainer>
 
@@ -224,9 +264,14 @@
         _baselineSelectedExperimentId = _selectedExperimentId;
     }
 
+    private const int MaxLogRows = 300;
+    private List<ResearchIterationLog> _logs = new();
+
     private CancellationTokenSource? _loadCts;
     private CancellationTokenSource _pageCts = new();
+    private readonly CancellationTokenSource _tickerCts = new();
     private bool _pollStarted;
+    private bool _tickerStarted;
     private int? _wiredPollIterationId;
 
     private CancellationToken StartNewLoad()
@@ -243,6 +288,8 @@
         _loadCts?.Dispose();
         _pageCts.Cancel();
         _pageCts.Dispose();
+        _tickerCts.Cancel();
+        _tickerCts.Dispose();
     }
 
     protected override async Task OnParametersSetAsync()
@@ -300,6 +347,7 @@
                     {
                         _hints = _iteration.Hints;
                         _maxHypotheses = _iteration.MaxNumberOfHypotheses;
+                        _logs = await LoadLogsAsync(db, iid, ct);
                     }
                 }
             }
@@ -319,6 +367,12 @@
 
     protected override Task OnAfterRenderAsync(bool firstRender)
     {
+        if (!_tickerStarted)
+        {
+            _tickerStarted = true;
+            _ = RunElapsedTickerAsync();
+        }
+
         if (_loading || _isNew || !IterationId.HasValue)
             return Task.CompletedTask;
 
@@ -369,6 +423,62 @@
             _maxHypotheses = fresh.MaxNumberOfHypotheses;
             CaptureBaseline();
         }
+
+        await using var db = await DbContextFactory.CreateDbContextAsync(_pageCts.Token);
+        _logs = await LoadLogsAsync(db, iid, _pageCts.Token);
+    }
+
+    private static Task<List<ResearchIterationLog>> LoadLogsAsync(AIOptimizeDbContext db, ResearchIterationId iterationId, CancellationToken ct) =>
+        db.ResearchIterationLogs.AsNoTracking()
+            .Where(l => l.ResearchIterationId == iterationId)
+            .OrderByDescending(l => l.Id)
+            .Take(MaxLogRows)
+            .ToListAsync(ct);
+
+    /// <summary>
+    /// Re-renders once a second while the iteration is running so the elapsed/"updated ago"
+    /// texts tick without waiting for a database watermark change.
+    /// </summary>
+    private async Task RunElapsedTickerAsync()
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(1));
+        try
+        {
+            while (await timer.WaitForNextTickAsync(_tickerCts.Token))
+            {
+                if (!_loading && _iteration?.State == ResearchIterationState.Running)
+                    await InvokeAsync(StateHasChanged);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // page disposed
+        }
+    }
+
+    private static string FormatElapsed(ResearchIteration iteration)
+    {
+        if (!iteration.StartedAt.HasValue)
+            return "—";
+        var end = iteration.EndedAt ?? DateTime.UtcNow;
+        var elapsed = end - iteration.StartedAt.Value;
+        if (elapsed < TimeSpan.Zero)
+            elapsed = TimeSpan.Zero;
+        return elapsed.TotalHours >= 1
+            ? $"{(int)elapsed.TotalHours}:{elapsed.Minutes:00}:{elapsed.Seconds:00}"
+            : $"{elapsed.Minutes:00}:{elapsed.Seconds:00}";
+    }
+
+    private static string FormatAgo(DateTime utc)
+    {
+        var ago = DateTime.UtcNow - utc;
+        if (ago < TimeSpan.Zero)
+            ago = TimeSpan.Zero;
+        if (ago.TotalSeconds < 60)
+            return $"{(int)ago.TotalSeconds} s";
+        if (ago.TotalMinutes < 60)
+            return $"{(int)ago.TotalMinutes} m {ago.Seconds} s";
+        return $"{(int)ago.TotalHours} h {ago.Minutes} m";
     }
 
     private static string FormatNullable(DateTime? utc) =>

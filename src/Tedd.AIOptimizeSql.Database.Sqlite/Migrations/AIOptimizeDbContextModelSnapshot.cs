@@ -15,7 +15,7 @@ namespace Tedd.AIOptimizeSql.Database.Sqlite.Migrations
         protected override void BuildModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
-            modelBuilder.HasAnnotation("ProductVersion", "10.0.5");
+            modelBuilder.HasAnnotation("ProductVersion", "10.0.9");
 
             modelBuilder.Entity("Tedd.AIOptimizeSql.Database.Models.AIConnection", b =>
                 {
@@ -578,6 +578,36 @@ namespace Tedd.AIOptimizeSql.Database.Sqlite.Migrations
                     b.ToTable("ResearchIterations");
                 });
 
+            modelBuilder.Entity("Tedd.AIOptimizeSql.Database.Models.ResearchIterationLog", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Message")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("ModifiedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("ResearchIterationId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Source")
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ResearchIterationId");
+
+                    b.ToTable("ResearchIterationLogs");
+                });
+
             modelBuilder.Entity("Tedd.AIOptimizeSql.Database.Models.RunQueue", b =>
                 {
                     b.Property<int>("Id")
@@ -749,6 +779,17 @@ namespace Tedd.AIOptimizeSql.Database.Sqlite.Migrations
                     b.Navigation("Experiment");
                 });
 
+            modelBuilder.Entity("Tedd.AIOptimizeSql.Database.Models.ResearchIterationLog", b =>
+                {
+                    b.HasOne("Tedd.AIOptimizeSql.Database.Models.ResearchIteration", "ResearchIteration")
+                        .WithMany("Logs")
+                        .HasForeignKey("ResearchIterationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("ResearchIteration");
+                });
+
             modelBuilder.Entity("Tedd.AIOptimizeSql.Database.Models.RunQueue", b =>
                 {
                     b.HasOne("Tedd.AIOptimizeSql.Database.Models.ResearchIteration", "ResearchIteration")
@@ -780,6 +821,8 @@ namespace Tedd.AIOptimizeSql.Database.Sqlite.Migrations
             modelBuilder.Entity("Tedd.AIOptimizeSql.Database.Models.ResearchIteration", b =>
                 {
                     b.Navigation("Hypotheses");
+
+                    b.Navigation("Logs");
                 });
 #pragma warning restore 612, 618
         }

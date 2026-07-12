@@ -20,6 +20,7 @@ public class AIOptimizeDbContext : DbContext
     public DbSet<ResearchIteration> ResearchIterations => Set<ResearchIteration>();
     public DbSet<Hypothesis> Hypotheses => Set<Hypothesis>();
     public DbSet<HypothesisLog> HypothesisLogs => Set<HypothesisLog>();
+    public DbSet<ResearchIterationLog> ResearchIterationLogs => Set<ResearchIterationLog>();
     public DbSet<BenchmarkRun> BenchmarkRuns => Set<BenchmarkRun>();
     public DbSet<RunQueue> RunQueue => Set<RunQueue>();
     public DbSet<DatabaseAnalysis> DatabaseAnalyses => Set<DatabaseAnalysis>();
@@ -35,6 +36,7 @@ public class AIOptimizeDbContext : DbContext
         builder.Properties<ResearchIterationId>().HaveConversion<int>();
         builder.Properties<HypothesisId>().HaveConversion<int>();
         builder.Properties<HypothesisLogId>().HaveConversion<int>();
+        builder.Properties<ResearchIterationLogId>().HaveConversion<int>();
         builder.Properties<BenchmarkRunId>().HaveConversion<int>();
         builder.Properties<RunQueueId>().HaveConversion<int>();
         builder.Properties<DatabaseAnalysisId>().HaveConversion<int>();
@@ -171,6 +173,23 @@ public class AIOptimizeDbContext : DbContext
             entity.HasOne(l => l.Hypothesis)
                 .WithMany(h => h.Logs)
                 .HasForeignKey(l => l.HypothesisId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<ResearchIterationLog>(entity =>
+        {
+            var researchIterationLogId = entity.Property(l => l.Id)
+                .ValueGeneratedOnAdd()
+                .HasSentinel(ResearchIterationLogId.Transient);
+            if (isSqlServer)
+                researchIterationLogId.UseIdentityColumn();
+
+            if (isSqlServer)
+                entity.Property(l => l.Message).HasColumnType("nvarchar(max)");
+
+            entity.HasOne(l => l.ResearchIteration)
+                .WithMany(r => r.Logs)
+                .HasForeignKey(l => l.ResearchIterationId)
                 .OnDelete(DeleteBehavior.Cascade);
         });
 

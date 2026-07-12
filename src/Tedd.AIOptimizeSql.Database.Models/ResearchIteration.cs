@@ -67,6 +67,8 @@ public record ResearchIteration
 
     public List<Hypothesis> Hypotheses { get; set; } = new List<Hypothesis>();
 
+    public List<ResearchIterationLog> Logs { get; set; } = new List<ResearchIterationLog>();
+
     /// <summary>
     /// Created UTC
     /// </summary>

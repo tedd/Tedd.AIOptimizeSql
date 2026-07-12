@@ -17,6 +17,7 @@ public static class Startup
 
         builder.Services.AddSingleton<AiAgentFactory>();
         builder.Services.AddSingleton<ISchemaDiscoveryService, SchemaDiscoveryService>();
+        builder.Services.AddSingleton<ResearchIterationLogger>();
         builder.Services.AddSingleton<HypothesisTestingService>();
         builder.Services.AddSingleton<IAiHypothesisService, AiHypothesisService>();
         builder.Services.AddSingleton<ResearchIterationProcessingEngine>();

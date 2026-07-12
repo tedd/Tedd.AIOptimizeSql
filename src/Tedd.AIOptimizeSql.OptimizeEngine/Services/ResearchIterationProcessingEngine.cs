@@ -12,6 +12,7 @@ namespace Tedd.AIOptimizeSql.OptimizeEngine.Services;
 public sealed class ResearchIterationProcessingEngine(
     IServiceScopeFactory scopeFactory,
     IAiHypothesisService hypothesisService,
+    ResearchIterationLogger iterationLogger,
     ILogger<ResearchIterationProcessingEngine> logger)
 {
     public async Task ProcessIterationAsync(ResearchIterationId iterationId, CancellationToken cancellationToken)
@@ -20,18 +21,30 @@ public sealed class ResearchIterationProcessingEngine(
 
         try
         {
+            await iterationLogger.AppendAsync(iterationId,
+                "Iteration dequeued from run queue; processing started.",
+                "ProcessingEngine", cancellationToken);
+
             await hypothesisService.RunIterationAsync(
                 iterationId,
                 cancellationToken,
                 runStartedLogLine: "[QueueMonitor] Iteration dequeued from run queue; hypothesis generation started.");
 
             await RunExperimentPostRunSqlAsync(iterationId, cancellationToken);
+            await iterationLogger.AppendAsync(iterationId,
+                "Iteration completed: all hypotheses generated and tested.",
+                "ProcessingEngine", CancellationToken.None);
             await CompleteIterationAsync(iterationId, "All hypotheses generated and tested");
             logger.LogInformation("Research iteration {IterationId} completed", iterationId);
         }
         catch (OperationCanceledException)
         {
             logger.LogInformation("Research iteration {IterationId} cancelled due to shutdown", iterationId);
+            await iterationLogger.AppendAsync(
+                iterationId,
+                "Research iteration cancelled (host shutdown or token cancelled).",
+                "ProcessingEngine",
+                CancellationToken.None);
             await hypothesisService.AppendLogToLatestHypothesisInIterationAsync(
                 iterationId,
                 "Research iteration cancelled (host shutdown or token cancelled).",
@@ -42,6 +55,11 @@ public sealed class ResearchIterationProcessingEngine(
         catch (Exception ex)
         {
             logger.LogError(ex, "Research iteration {IterationId} failed with error", iterationId);
+            await iterationLogger.AppendAsync(
+                iterationId,
+                $"Research iteration processing failed: {ex}",
+                "ProcessingEngine",
+                CancellationToken.None);
             await hypothesisService.AppendLogToLatestHypothesisInIterationAsync(
                 iterationId,
                 $"Research iteration processing failed: {ex}",
@@ -70,6 +88,9 @@ public sealed class ResearchIterationProcessingEngine(
             if (string.IsNullOrWhiteSpace(connStr)) return;
 
             logger.LogInformation("Running ExperimentPostRunSql for iteration {IterationId}", iterationId);
+            await iterationLogger.AppendAsync(iterationId,
+                HypothesisTestingService.WithSql("Running ExperimentPostRunSql", postRunSql),
+                "ProcessingEngine", ct);
 
             var executor = DatabaseExecutorFactory.Create(
                 new OptimizeEngine.Models.BenchmarkConfig { DatabaseType = "MSSQL" },
@@ -81,6 +102,9 @@ public sealed class ResearchIterationProcessingEngine(
         catch (Exception ex)
         {
             logger.LogWarning(ex, "ExperimentPostRunSql failed for iteration {IterationId}", iterationId);
+            await iterationLogger.AppendAsync(iterationId,
+                $"ExperimentPostRunSql failed: {ex.Message}",
+                "ProcessingEngine", CancellationToken.None);
         }
     }
 

@@ -85,7 +85,7 @@
             <MudCardContent>
                 <MudChart T="double" ChartType="ChartType.Bar"
                           ChartSeries="@_hypothesisChartSeries"
-                          x-axis-labels="@_chartLabels" Width="100%" Height="250px" />
+                          ChartLabels="@_chartLabels" Width="100%" Height="250px" />
             </MudCardContent>
         </MudCard>
     }
@@ -233,7 +233,9 @@
 
         var data = hypotheses.Select(h => (double)h.ImpovementPercentage).ToList();
         _chartLabels = hypotheses.Select(h => $"#{(int)(object)h.Id}").ToArray();
-        _hypothesisChartSeries = data.Count == 0
+        // All-zero data draws no bars at all — only a floating legend label — so skip the chart until
+        // at least one hypothesis has a measured improvement or regression.
+        _hypothesisChartSeries = data.All(d => d == 0)
             ? new List<ChartSeries<double>>()
             : new List<ChartSeries<double>> { new() { Name = "Improvement %", Data = data } };
     }

@@ -19,6 +19,7 @@ public sealed class AiHypothesisService(
     ISchemaDiscoveryService schemaDiscoveryService,
     HypothesisTestingService hypothesisTestingService,
     AgentTaskLoopRunner taskLoopRunner,
+    ResearchIterationLogger iterationLogger,
     IServiceScopeFactory scopeFactory,
     IOptions<OptimizeEngineSettings> settings,
     ILoggerFactory loggerFactory) : IAiHypothesisService
@@ -68,6 +69,10 @@ public sealed class AiHypothesisService(
         else if (iteration.BaselineBenchmarkRunId != null)
         {
             baseline = await LoadBenchmarkRunAsync(iteration.BaselineBenchmarkRunId.Value, cancellationToken);
+            await iterationLogger.AppendAsync(iterationId,
+                $"Reusing existing baseline benchmark run #{(int)(object)iteration.BaselineBenchmarkRunId.Value} " +
+                $"(server elapsed {HypothesisTestingService.Inv(baseline?.TotalServerElapsedTimeMs ?? 0)} ms).",
+                "HypothesisService", cancellationToken);
         }
 
         var pendingRunStartedLog = runStartedLogLine;
@@ -194,6 +199,7 @@ public sealed class AiHypothesisService(
                     var revertOk = await hypothesisTestingService.TestHypothesisAsync(
                         placeholder.Id, iteration, baseline,
                         (hid, msg, src) => AppendHypothesisLogAsync(hid, msg, src, CancellationToken.None).GetAwaiter().GetResult(),
+                        statusLabel: $"hypothesis {hypothesisCount + 1}/{maxHypotheses}",
                         cancellationToken);
 
                     if (!revertOk)
@@ -605,6 +611,7 @@ public sealed class AiHypothesisService(
                     await hypothesisTestingService.TestHypothesisAsync(
                         placeholder.Id, iteration, baseline,
                         (hid, msg, src) => AppendHypothesisLogAsync(hid, msg, src, CancellationToken.None).GetAwaiter().GetResult(),
+                        statusLabel: "combined hypothesis",
                         ct);
                 }
             }
@@ -654,6 +661,10 @@ public sealed class AiHypothesisService(
         _logger.LogInformation("Running deterministic schema discovery for iteration {IterationId}", iteration.Id);
 
         await UpdateIterationMessageAsync(iteration.Id, "Running schema discovery...", ct);
+        await iterationLogger.AppendAsync(iteration.Id,
+            "Schema discovery starting — parsing the benchmark SQL and walking object dependencies.",
+            "SchemaDiscovery", ct);
+        var discoverySw = Stopwatch.StartNew();
 
         var executor = DatabaseExecutorFactory.Create(
             new BenchmarkConfig { DatabaseType = "MSSQL" },
@@ -684,6 +695,11 @@ public sealed class AiHypothesisService(
 
         _logger.LogInformation("Schema discovery stored: {Objects} objects, {Tables} base tables",
             discoveryResult.Objects.Count, discoveryResult.BaseTables.Count);
+
+        await iterationLogger.AppendAsync(iteration.Id,
+            $"Schema discovery completed in {HypothesisTestingService.FormatDuration(discoverySw.Elapsed)} — " +
+            $"{discoveryResult.Objects.Count} objects discovered, {discoveryResult.BaseTables.Count} base tables registered for integrity checks.",
+            "SchemaDiscovery", ct);
     }
 
     #endregion
@@ -838,24 +854,8 @@ public sealed class AiHypothesisService(
         }
     }
 
-    private async Task UpdateIterationMessageAsync(ResearchIterationId iterationId, string message, CancellationToken ct)
-    {
-        try
-        {
-            using var scope = scopeFactory.CreateScope();
-            var db = scope.ServiceProvider.GetRequiredService<AIOptimizeDbContext>();
-            var now = DateTime.UtcNow;
-            await db.ResearchIterations
-                .Where(b => b.Id == iterationId)
-                .ExecuteUpdateAsync(s => s
-                    .SetProperty(b => b.LastMessage, message)
-                    .SetProperty(b => b.ModifiedAt, now), ct);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to update research iteration {IterationId} message", iterationId);
-        }
-    }
+    private Task UpdateIterationMessageAsync(ResearchIterationId iterationId, string message, CancellationToken ct) =>
+        iterationLogger.SetMessageAsync(iterationId, message, ct);
 
     #endregion
 }

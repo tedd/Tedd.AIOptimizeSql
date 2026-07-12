@@ -259,7 +259,7 @@
                     <MudStack Spacing="2">
                         @foreach (var line in _hypothesisLogs)
                         {
-                            <HypothesisLogEntry Log="line" />
+                            <ActivityLogEntry CreatedAt="line.CreatedAt" Source="@line.Source" Message="@line.Message" />
                         }
                     </MudStack>
                 </MudCardContent>
