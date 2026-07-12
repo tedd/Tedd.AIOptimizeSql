@@ -84,13 +84,13 @@ public sealed class AnalysisFindingToolWrapper(
         }
     }
 
-    [Description("Creates a new optimization experiment from your analysis so the user can benchmark a hypothesis with the full apply/benchmark/revert cycle on a non-production copy. Use this when a finding deserves measured verification (e.g. a promising index or query rewrite). The experiment is created in this application, not on the analyzed database.")]
+    [Description("Creates a new optimization experiment from your analysis so the user can benchmark a hypothesis with the full apply/benchmark/revert cycle on a non-production copy. Use this when a finding deserves measured verification (e.g. a promising index or query rewrite). The experiment is created in this application, not on the analyzed database. The experiment is later run by a separate optimization AI that sees ONLY: the description, instructions, benchmarkSql, and the full content of the finding linked via relatedFindingId. It cannot look up your other findings or this analysis, so write description and instructions to be self-contained: never reference finding numbers or analysis results without restating the relevant details (object names, candidate index DDL, parameter values, measurements) inline.")]
     public async Task<string> ProposeExperiment(
         [Description("Short experiment name")] string name,
-        [Description("Human-readable description of what the experiment tests and why")] string description,
+        [Description("Human-readable description of what the experiment tests and why. Shown to the optimization AI running the experiment — must stand alone without access to your analysis")] string description,
         [Description("The SQL workload to benchmark (the query/procedure call whose performance should be measured)")] string benchmarkSql,
-        [Description("Instructions for the optimization AI: which optimization directions to explore (optional)")] string? instructions = null,
-        [Description("Id of a previously reported finding this experiment verifies (optional)")] int? relatedFindingId = null)
+        [Description("Instructions for the optimization AI: which optimization directions to explore, with concrete details (candidate DDL, object names, representative parameter values) restated inline (optional)")] string? instructions = null,
+        [Description("Id of a previously reported finding this experiment verifies. Strongly recommended: the linked finding's full content (description, evidence, recommendation, SQL) is automatically shown to the optimization AI (optional)")] int? relatedFindingId = null)
     {
         logger.LogDebug("AI tool: ProposeExperiment '{Name}'", name);
 

@@ -327,12 +327,15 @@ public sealed class AiHypothesisService(
 
         var tools = BuildAgentTools(toolWrapper, schemaTools, perfTools, webTools, taskTools, analyzeOnly);
 
+        var relatedFindings = await GetRelatedFindingsAsync(experiment.Id, cancellationToken);
+
         var maxRuns = Math.Clamp(settings.Value.MaxAgentContinuations, 1, 100);
         var instructions = HypothesisPromptBuilder.BuildInstructions(
             experiment, iteration, priorHypotheses,
             schemaDiscoveryMarkdown: iteration.SchemaDiscoveryMarkdown,
             analyzeOnly: analyzeOnly,
-            maxAgentRuns: maxRuns);
+            maxAgentRuns: maxRuns,
+            relatedFindings: relatedFindings);
 
         var agent = agentFactory.Create(aiConnection, instructions, tools);
 
@@ -343,7 +346,8 @@ public sealed class AiHypothesisService(
 
         await AppendHypothesisLogAsync(
             hypothesisId,
-            $"Invoking AI agent (model context from iteration). Prior hypotheses in iteration: {priorHypotheses.Count}. Task-loop limit: {maxRuns} runs.",
+            $"Invoking AI agent (model context from iteration). Prior hypotheses in iteration: {priorHypotheses.Count}. " +
+            $"Related analysis findings included in prompt: {relatedFindings.Count}. Task-loop limit: {maxRuns} runs.",
             "HypothesisService",
             cancellationToken);
 
@@ -715,6 +719,23 @@ public sealed class AiHypothesisService(
         using var scope = scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AIOptimizeDbContext>();
         return await db.Hypotheses.CountAsync(h => h.ResearchIterationId == iterationId, ct);
+    }
+
+    /// <summary>
+    /// Loads the analysis findings that proposed this experiment (linked via
+    /// <see cref="AnalysisFinding.ProposedExperimentId"/>) so the optimization agent
+    /// sees the evidence and recommended SQL the analysis already produced.
+    /// </summary>
+    private async Task<IReadOnlyList<AnalysisFinding>> GetRelatedFindingsAsync(ExperimentId experimentId, CancellationToken ct)
+    {
+        using var scope = scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AIOptimizeDbContext>();
+        return await db.AnalysisFindings
+            .AsNoTracking()
+            .Where(f => f.ProposedExperimentId == experimentId)
+            .OrderByDescending(f => f.ImpactScore)
+            .ThenBy(f => f.Id)
+            .ToListAsync(ct);
     }
 
     private async Task<IReadOnlyList<Hypothesis>> GetPriorHypothesesAsync(ResearchIterationId iterationId, CancellationToken ct)

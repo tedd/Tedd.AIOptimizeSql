@@ -7,6 +7,10 @@ namespace Tedd.AIOptimizeSql.OptimizeEngine.Utils;
 
 internal static class HypothesisPromptBuilder
 {
+    /// <summary>Per-field cap for finding content embedded in the prompt, so one verbose
+    /// finding cannot crowd out the rest of the instructions.</summary>
+    private const int MaxFindingFieldChars = 4_000;
+
     public static string BuildInstructions(
         Experiment experiment,
         ResearchIteration iteration,
@@ -14,7 +18,8 @@ internal static class HypothesisPromptBuilder
         string? schemaDiscoveryMarkdown = null,
         string? baselinePerformanceSummary = null,
         bool analyzeOnly = false,
-        int maxAgentRuns = 20)
+        int maxAgentRuns = 20,
+        IReadOnlyList<AnalysisFinding>? relatedFindings = null)
     {
         var sb = new StringBuilder();
 
@@ -89,6 +94,15 @@ internal static class HypothesisPromptBuilder
             sb.AppendLine();
         }
 
+        // Experiment description (what the experiment tests and why)
+        if (!string.IsNullOrWhiteSpace(experiment.Description))
+        {
+            sb.AppendLine("## Experiment description (what this experiment tests and why)");
+            sb.AppendLine();
+            sb.AppendLine(experiment.Description);
+            sb.AppendLine();
+        }
+
         // Experiment instructions
         if (!string.IsNullOrWhiteSpace(experiment.Instructions))
         {
@@ -96,6 +110,59 @@ internal static class HypothesisPromptBuilder
             sb.AppendLine();
             sb.AppendLine(experiment.Instructions);
             sb.AppendLine();
+        }
+
+        // Analysis findings this experiment was created to verify
+        if (relatedFindings is { Count: > 0 })
+        {
+            sb.AppendLine("## Related analysis findings");
+            sb.AppendLine();
+            sb.AppendLine("This experiment was proposed by a database analysis to verify the finding(s) below. Use them as your starting point, but verify their evidence against the live database before relying on it.");
+            sb.AppendLine();
+
+            foreach (var f in relatedFindings)
+            {
+                sb.AppendLine($"### Finding #{(int)f.Id} [{f.Severity}/{f.Category}]: {f.Title}");
+                sb.AppendLine();
+
+                if (!string.IsNullOrWhiteSpace(f.ObjectName))
+                {
+                    var obj = string.IsNullOrWhiteSpace(f.ObjectSchema) ? f.ObjectName : $"{f.ObjectSchema}.{f.ObjectName}";
+                    sb.AppendLine($"- **Affected object**: {obj}");
+                }
+                if (f.ImpactScore > 0)
+                    sb.AppendLine($"- **Impact score**: {f.ImpactScore:0.##}");
+
+                if (!string.IsNullOrWhiteSpace(f.Description))
+                {
+                    sb.AppendLine();
+                    sb.AppendLine(Clip(f.Description));
+                }
+                if (!string.IsNullOrWhiteSpace(f.Evidence))
+                {
+                    sb.AppendLine();
+                    sb.AppendLine("**Evidence:**");
+                    sb.AppendLine();
+                    sb.AppendLine(Clip(f.Evidence));
+                }
+                if (!string.IsNullOrWhiteSpace(f.Recommendation))
+                {
+                    sb.AppendLine();
+                    sb.AppendLine("**Recommendation:**");
+                    sb.AppendLine();
+                    sb.AppendLine(Clip(f.Recommendation));
+                }
+                if (!string.IsNullOrWhiteSpace(f.RecommendationSql))
+                {
+                    sb.AppendLine();
+                    sb.AppendLine("**Recommended SQL (candidate only, not yet applied):**");
+                    sb.AppendLine();
+                    sb.AppendLine("```sql");
+                    sb.AppendLine(Clip(f.RecommendationSql));
+                    sb.AppendLine("```");
+                }
+                sb.AppendLine();
+            }
         }
 
         // Schema discovery
@@ -331,6 +398,9 @@ internal static class HypothesisPromptBuilder
 
         return sb.ToString();
     }
+
+    private static string Clip(string value, int maxChars = MaxFindingFieldChars) =>
+        value.Length <= maxChars ? value : value[..maxChars] + "\n… (truncated)";
 
     private static string ClassifyOutcome(Hypothesis h)
     {

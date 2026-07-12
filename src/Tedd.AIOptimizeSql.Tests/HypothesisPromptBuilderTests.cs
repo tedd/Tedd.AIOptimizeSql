@@ -6,10 +6,11 @@ namespace Tedd.AIOptimizeSql.Tests;
 
 public class HypothesisPromptBuilderTests
 {
-    private static Experiment Experiment(string? instructions = null, string? benchmarkSql = null) =>
+    private static Experiment Experiment(string? instructions = null, string? benchmarkSql = null, string? description = null) =>
         new()
         {
             Name = "Test experiment",
+            Description = description,
             Instructions = instructions,
             BenchmarkSql = benchmarkSql,
         };
@@ -68,6 +69,89 @@ public class HypothesisPromptBuilderTests
         Assert.DoesNotContain("## Benchmark SQL", text, StringComparison.Ordinal);
         Assert.DoesNotContain("## Schema Information", text, StringComparison.Ordinal);
         Assert.DoesNotContain("## Baseline Performance", text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void BuildInstructions_includes_experiment_description_when_present()
+    {
+        var text = HypothesisPromptBuilder.BuildInstructions(
+            Experiment(description: "Tests whether a narrow covering index helps"),
+            Iteration(),
+            []);
+
+        Assert.Contains("## Experiment description (what this experiment tests and why)", text, StringComparison.Ordinal);
+        Assert.Contains("Tests whether a narrow covering index helps", text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void BuildInstructions_omits_experiment_description_when_missing()
+    {
+        var text = HypothesisPromptBuilder.BuildInstructions(Experiment(description: "  "), Iteration(), []);
+
+        Assert.DoesNotContain("## Experiment description", text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void BuildInstructions_includes_related_findings_when_present()
+    {
+        var finding = new AnalysisFinding
+        {
+            Id = (AnalysisFindingId)114,
+            DatabaseAnalysisId = default,
+            Category = FindingCategory.MissingIndex,
+            Severity = FindingSeverity.High,
+            Title = "Narrow covering index on LedgerPostings",
+            Description = "Wide key lookups dominate the plan.",
+            Evidence = "avg_user_impact 92.3, 1.2M seeks",
+            Recommendation = "Add a narrow covering index on PartyId, PostingDate.",
+            RecommendationSql = "CREATE INDEX IX_LP_Party ON dbo.LedgerPostings (PartyId, PostingDate);",
+            ObjectSchema = "dbo",
+            ObjectName = "LedgerPostings",
+            ImpactScore = 1234.5,
+        };
+
+        var text = HypothesisPromptBuilder.BuildInstructions(
+            Experiment(), Iteration(), [], relatedFindings: [finding]);
+
+        Assert.Contains("## Related analysis findings", text, StringComparison.Ordinal);
+        Assert.Contains("### Finding #114 [High/MissingIndex]: Narrow covering index on LedgerPostings", text, StringComparison.Ordinal);
+        Assert.Contains("- **Affected object**: dbo.LedgerPostings", text, StringComparison.Ordinal);
+        Assert.Contains("- **Impact score**: 1234.5", text, StringComparison.Ordinal);
+        Assert.Contains("Wide key lookups dominate the plan.", text, StringComparison.Ordinal);
+        Assert.Contains("**Evidence:**", text, StringComparison.Ordinal);
+        Assert.Contains("avg_user_impact 92.3, 1.2M seeks", text, StringComparison.Ordinal);
+        Assert.Contains("**Recommendation:**", text, StringComparison.Ordinal);
+        Assert.Contains("Add a narrow covering index on PartyId, PostingDate.", text, StringComparison.Ordinal);
+        Assert.Contains("**Recommended SQL (candidate only, not yet applied):**", text, StringComparison.Ordinal);
+        Assert.Contains("CREATE INDEX IX_LP_Party ON dbo.LedgerPostings (PartyId, PostingDate);", text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void BuildInstructions_omits_related_findings_section_when_none()
+    {
+        var withNull = HypothesisPromptBuilder.BuildInstructions(Experiment(), Iteration(), []);
+        var withEmpty = HypothesisPromptBuilder.BuildInstructions(Experiment(), Iteration(), [], relatedFindings: []);
+
+        Assert.DoesNotContain("## Related analysis findings", withNull, StringComparison.Ordinal);
+        Assert.DoesNotContain("## Related analysis findings", withEmpty, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void BuildInstructions_truncates_oversized_finding_fields()
+    {
+        var finding = new AnalysisFinding
+        {
+            Id = (AnalysisFindingId)7,
+            DatabaseAnalysisId = default,
+            Title = "Big evidence",
+            Evidence = new string('x', 10_000),
+        };
+
+        var text = HypothesisPromptBuilder.BuildInstructions(
+            Experiment(), Iteration(), [], relatedFindings: [finding]);
+
+        Assert.Contains("… (truncated)", text, StringComparison.Ordinal);
+        Assert.DoesNotContain(new string('x', 5_000), text, StringComparison.Ordinal);
     }
 
     [Fact]
