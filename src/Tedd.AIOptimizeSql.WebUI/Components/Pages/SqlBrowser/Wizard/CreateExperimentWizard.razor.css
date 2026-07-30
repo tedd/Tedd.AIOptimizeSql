@@ -1,0 +1,27 @@
+.wizard-content {
+    min-width: 60vw;
+    max-width: 900px;
+}
+
+.wizard-option {
+    transition: border-color 0.15s ease-in-out;
+}
+
+.wizard-list {
+    margin: 0;
+    padding-left: 1.25rem;
+}
+
+.wizard-list li {
+    margin-bottom: 4px;
+}
+
+.wizard-log {
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-family: 'Cascadia Code', Consolas, 'Courier New', monospace;
+    font-size: 0.8rem;
+    max-height: 260px;
+    overflow-y: auto;
+    margin: 0;
+}

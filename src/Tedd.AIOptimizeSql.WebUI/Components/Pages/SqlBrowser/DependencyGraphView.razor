@@ -1,0 +1,276 @@
+@using Tedd.AIOptimizeSql.OptimizeEngine.Models
+@using Tedd.AIOptimizeSql.OptimizeEngine.Models.SqlBrowser
+
+<div class="dep-graph-root">
+    @if (Loading)
+    {
+        <div class="dep-graph-loading">
+            <MudProgressCircular Color="Color.Primary" Indeterminate="true" Size="Size.Large" />
+        </div>
+    }
+    else if (Graph is null || Graph.Nodes.Count == 0)
+    {
+        <div class="dep-graph-empty">
+            <MudText Typo="Typo.body1" Color="Color.Secondary">
+                Dependencies appear once a query or object is selected.
+            </MudText>
+        </div>
+    }
+    else
+    {
+        @if (Graph.Warnings.Count > 0)
+        {
+            <MudAlert Severity="Severity.Warning" Class="dep-graph-warnings" ShowCloseIcon="true"
+                      Dense="true" Variant="Variant.Outlined">
+                <MudText Typo="Typo.subtitle2" Class="mb-1">@Graph.Warnings.Count warning(s) during dependency discovery</MudText>
+                <ul class="dep-graph-warning-list">
+                    @foreach (var w in Graph.Warnings)
+                    {
+                        <li>@w</li>
+                    }
+                </ul>
+            </MudAlert>
+        }
+
+        <div class="dep-graph-toolbar">
+            <div class="dep-graph-headers">
+                <div class="dep-graph-header-cell" style="flex-grow:@(NegativeColumnCount())">
+                    @if (NegativeColumnCount() > 0)
+                    {
+                        <span>Depends on this</span>
+                    }
+                </div>
+                <div class="dep-graph-header-cell dep-graph-header-root" style="flex-grow:@(RootColumnCount())">
+                    <span>Selected</span>
+                </div>
+                <div class="dep-graph-header-cell" style="flex-grow:@(PositiveColumnCount())">
+                    @if (PositiveColumnCount() > 0)
+                    {
+                        <span>This depends on</span>
+                    }
+                </div>
+            </div>
+            <div class="dep-graph-zoom-controls">
+                <MudIconButton Icon="@Icons.Material.Filled.ZoomOut" Size="Size.Small" OnClick="ZoomOut" title="Zoom out" />
+                <MudText Typo="Typo.caption" Class="dep-graph-zoom-label">@((_scale * 100).ToString("0"))%</MudText>
+                <MudIconButton Icon="@Icons.Material.Filled.ZoomIn" Size="Size.Small" OnClick="ZoomIn" title="Zoom in" />
+                <MudIconButton Icon="@Icons.Material.Filled.RestartAlt" Size="Size.Small" OnClick="ResetView" title="Reset view" />
+            </div>
+        </div>
+
+        <div class="dep-graph-canvas-wrapper">
+            <svg class="dep-graph-svg"
+                 width="@(_layout.Width)" height="@(_layout.Height)"
+                 viewBox="@($"0 0 {_layout.Width.ToString(System.Globalization.CultureInfo.InvariantCulture)} {_layout.Height.ToString(System.Globalization.CultureInfo.InvariantCulture)}")"
+                 @onpointerdown="OnPointerDown" @onpointermove="OnPointerMove"
+                 @onpointerup="OnPointerUp" @onpointerleave="OnPointerUp">
+                <defs>
+                    <marker id="dep-arrow" viewBox="0 0 10 10" refX="9" refY="5"
+                            markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                        <path d="M 0 0 L 10 5 L 0 10 z" class="dep-arrow-head" />
+                    </marker>
+                </defs>
+                <g transform="@($"translate({_panX.ToString(System.Globalization.CultureInfo.InvariantCulture)},{_panY.ToString(System.Globalization.CultureInfo.InvariantCulture)}) scale({_scale.ToString(System.Globalization.CultureInfo.InvariantCulture)})")">
+
+                    @foreach (var edge in _layout.Edges)
+                    {
+                        var highlighted = _hoveredKey != null && (edge.Link.FromKey == _hoveredKey || edge.Link.ToKey == _hoveredKey);
+                        <path d="@edge.PathData"
+                              class="dep-edge @(edge.Link.IsSchemabound ? "dep-edge-solid" : "dep-edge-dashed") @(highlighted ? "dep-edge-highlighted" : "")"
+                              marker-end="url(#dep-arrow)" />
+                    }
+
+                    @foreach (var nl in _layout.Nodes)
+                    {
+                        var node = nl.Node;
+                        var kindClass = KindCssClass(node.Kind);
+                        var isHovered = _hoveredKey == node.Key;
+                        <g class="dep-node @(isHovered ? "dep-node-hovered" : "")"
+                           data-key="@node.Key"
+                           @onmouseenter="() => SetHovered(node.Key)"
+                           @onmouseleave="() => SetHovered(null)"
+                           @onclick="() => OnNodeSelected.InvokeAsync(node)"
+                           @ondblclick="() => OnNodeScriptRequested.InvokeAsync(node)"
+                           style="cursor:pointer;">
+                            <title>@BuildTooltip(node)</title>
+                            <rect x="@Fmt(nl.X)" y="@Fmt(nl.Y)" width="@Fmt(nl.Width)" height="@Fmt(nl.Height)"
+                                  rx="6" class="dep-node-box @kindClass @(node.IsRoot ? "dep-node-root" : "")" />
+                            @SvgText(nl.X + 8, nl.Y + 15, "dep-node-caption", KindLabel(node.Kind))
+                            @SvgText(nl.X + 8, nl.Y + 32, "dep-node-label", Truncate($"[{node.Schema}].[{node.Name}]", nl.Width - 34))
+
+                            @if (node.Note != null)
+                            {
+                                <circle cx="@Fmt(nl.X + nl.Width - 12)" cy="@Fmt(nl.Y + 12)" r="7" class="dep-node-warning-badge" />
+                                @SvgText(nl.X + nl.Width - 12, nl.Y + 16, "dep-node-warning-glyph", "!", "middle")
+                            }
+
+                            @SvgText(nl.X + nl.Width - 10, nl.Y + nl.Height - 6, "dep-node-script-btn", "</>", "end",
+                                     () => OnNodeScriptRequested.InvokeAsync(node))
+                        </g>
+                    }
+                </g>
+            </svg>
+        </div>
+
+        <div class="dep-graph-legend">
+            <div class="dep-graph-legend-item"><span class="dep-legend-swatch kind-table"></span> Table</div>
+            <div class="dep-graph-legend-item"><span class="dep-legend-swatch kind-view"></span> View</div>
+            <div class="dep-graph-legend-item"><span class="dep-legend-swatch kind-procedure"></span> Stored procedure</div>
+            <div class="dep-graph-legend-item"><span class="dep-legend-swatch kind-function"></span> Function</div>
+            <div class="dep-graph-legend-item"><span class="dep-legend-swatch kind-trigger"></span> Trigger</div>
+            <div class="dep-graph-legend-item"><span class="dep-legend-swatch kind-other"></span> Synonym / sequence / other</div>
+            <div class="dep-graph-legend-item"><span class="dep-legend-line dep-legend-line-solid"></span> Schemabound</div>
+            <div class="dep-graph-legend-item"><span class="dep-legend-line dep-legend-line-dashed"></span> Not schemabound</div>
+            <div class="dep-graph-legend-item"><span class="dep-legend-badge">!</span> Note / warning on object</div>
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter] public ObjectDependencyGraph? Graph { get; set; }
+    [Parameter] public bool Loading { get; set; }
+    [Parameter] public EventCallback<DependencyNode> OnNodeSelected { get; set; }
+    [Parameter] public EventCallback<DependencyNode> OnNodeScriptRequested { get; set; }
+
+    private DependencyGraphLayoutResult _layout = new(
+        Array.Empty<DependencyNodeLayout>(), Array.Empty<DependencyEdgeLayout>(),
+        Array.Empty<DependencyColumnLayout>(), 0, 0);
+
+    private ObjectDependencyGraph? _lastGraph;
+    private string? _hoveredKey;
+
+    // Pan/zoom state — implemented entirely in C#, no JS interop.
+    private double _scale = 1.0;
+    private double _panX;
+    private double _panY;
+    private bool _isPanning;
+    private double _pointerStartX;
+    private double _pointerStartY;
+    private double _panStartX;
+    private double _panStartY;
+
+    private const double MinScale = 0.25;
+    private const double MaxScale = 2.5;
+
+    protected override void OnParametersSet()
+    {
+        if (!ReferenceEquals(Graph, _lastGraph))
+        {
+            _layout = DependencyGraphLayout.Layout(Graph);
+            _lastGraph = Graph;
+            ResetView();
+        }
+    }
+
+    private int NegativeColumnCount() => _layout.Columns.Count(c => c.Level < 0) > 0 ? _layout.Columns.Count(c => c.Level < 0) : 1;
+    private int RootColumnCount() => Math.Max(1, _layout.Columns.Count(c => c.Level == 0));
+    private int PositiveColumnCount() => _layout.Columns.Count(c => c.Level > 0) > 0 ? _layout.Columns.Count(c => c.Level > 0) : 1;
+
+    private void SetHovered(string? key) => _hoveredKey = key;
+
+    /// <summary>
+    /// Builds an SVG &lt;text&gt; element via <see cref="Microsoft.AspNetCore.Components.Rendering.RenderTreeBuilder"/>
+    /// rather than markup: Razor reserves the literal &lt;text&gt; tag for its own text-content directive and refuses
+    /// to let it carry attributes (RZ1023), so the real SVG element has to be built manually.
+    /// </summary>
+    private RenderFragment SvgText(double x, double y, string cssClass, string content, string? textAnchor = null, Action? onClick = null) => builder =>
+    {
+        builder.OpenElement(0, "text");
+        builder.AddAttribute(1, "x", Fmt(x));
+        builder.AddAttribute(2, "y", Fmt(y));
+        builder.AddAttribute(3, "class", cssClass);
+        if (textAnchor != null)
+            builder.AddAttribute(4, "text-anchor", textAnchor);
+        if (onClick != null)
+            builder.AddAttribute(5, "onclick", Microsoft.AspNetCore.Components.EventCallback.Factory.Create(this, onClick));
+        builder.AddContent(6, content);
+        builder.CloseElement();
+    };
+
+    private static string Fmt(double v) => v.ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+    private static string KindCssClass(SqlObjectKind kind) => kind switch
+    {
+        SqlObjectKind.Table => "kind-table",
+        SqlObjectKind.View => "kind-view",
+        SqlObjectKind.StoredProcedure => "kind-procedure",
+        SqlObjectKind.ScalarFunction => "kind-function",
+        SqlObjectKind.TableValuedFunction => "kind-function",
+        SqlObjectKind.InlineTableValuedFunction => "kind-function",
+        SqlObjectKind.Trigger => "kind-trigger",
+        _ => "kind-other"
+    };
+
+    private static string KindLabel(SqlObjectKind kind) => kind switch
+    {
+        SqlObjectKind.Table => "Table",
+        SqlObjectKind.View => "View",
+        SqlObjectKind.StoredProcedure => "Stored procedure",
+        SqlObjectKind.ScalarFunction => "Scalar function",
+        SqlObjectKind.TableValuedFunction => "Table-valued function",
+        SqlObjectKind.InlineTableValuedFunction => "Inline TVF",
+        SqlObjectKind.Trigger => "Trigger",
+        SqlObjectKind.Synonym => "Synonym",
+        SqlObjectKind.Sequence => "Sequence",
+        SqlObjectKind.TableType => "Table type",
+        _ => "Unknown"
+    };
+
+    private static string BuildTooltip(DependencyNode node)
+    {
+        var text = $"[{node.Schema}].[{node.Name}] — {KindLabel(node.Kind)}";
+        if (node.Note != null)
+            text += $"\n{node.Note}";
+        return text;
+    }
+
+    /// <summary>Rough character-width based truncation so long names fit the fixed box width.</summary>
+    private static string Truncate(string text, double maxWidthPx)
+    {
+        const double avgCharWidth = 6.4; // approx px per character at the label's font-size
+        var maxChars = (int)(maxWidthPx / avgCharWidth);
+        if (maxChars < 1) maxChars = 1;
+        if (text.Length <= maxChars) return text;
+        if (maxChars <= 1) return "…";
+        return text[..(maxChars - 1)] + "…";
+    }
+
+    private void ZoomIn()
+    {
+        _scale = Math.Min(MaxScale, Math.Round(_scale + 0.15, 2));
+    }
+
+    private void ZoomOut()
+    {
+        _scale = Math.Max(MinScale, Math.Round(_scale - 0.15, 2));
+    }
+
+    private void ResetView()
+    {
+        _scale = 1.0;
+        _panX = 0;
+        _panY = 0;
+        _isPanning = false;
+    }
+
+    private void OnPointerDown(Microsoft.AspNetCore.Components.Web.PointerEventArgs e)
+    {
+        _isPanning = true;
+        _pointerStartX = e.ClientX;
+        _pointerStartY = e.ClientY;
+        _panStartX = _panX;
+        _panStartY = _panY;
+    }
+
+    private void OnPointerMove(Microsoft.AspNetCore.Components.Web.PointerEventArgs e)
+    {
+        if (!_isPanning) return;
+        _panX = _panStartX + (e.ClientX - _pointerStartX);
+        _panY = _panStartY + (e.ClientY - _pointerStartY);
+    }
+
+    private void OnPointerUp(Microsoft.AspNetCore.Components.Web.PointerEventArgs e)
+    {
+        _isPanning = false;
+    }
+}

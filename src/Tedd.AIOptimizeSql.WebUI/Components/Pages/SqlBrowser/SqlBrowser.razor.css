@@ -1,0 +1,94 @@
+.sb-root {
+    display: flex;
+    flex-direction: row;
+    gap: 12px;
+    height: calc(100vh - 96px);
+    min-height: 480px;
+}
+
+.sb-left {
+    flex: 0 0 320px;
+    max-width: 320px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-height: 0;
+}
+
+.sb-left-header {
+    flex: 0 0 auto;
+}
+
+.sb-tree-wrap {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: auto;
+    border: 1px solid var(--mud-palette-lines-default);
+    border-radius: var(--mud-default-borderradius);
+}
+
+.sb-right {
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+    gap: 8px;
+}
+
+.sb-toolbar {
+    flex: 0 0 auto;
+    flex-wrap: wrap;
+}
+
+.sb-editor-wrap {
+    flex: 1 1 50%;
+    min-height: 120px;
+    border: 1px solid var(--mud-palette-lines-default);
+    border-radius: var(--mud-default-borderradius);
+    overflow: hidden;
+}
+
+::deep .sb-editor-inner.monaco-editor-container {
+    height: 100%;
+    width: 100%;
+}
+
+.sb-results-wrap {
+    flex: 1 1 50%;
+    min-height: 120px;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+}
+
+.sb-results-tabs {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+::deep .sb-results-tabs .mud-tabs-panels {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: auto;
+}
+
+.sb-status-bar {
+    flex: 0 0 auto;
+    border-top: 1px solid var(--mud-palette-lines-default);
+    padding: 4px 8px;
+    font-size: 0.75rem;
+    opacity: 0.85;
+}
+
+.sb-messages-pre {
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-family: "Cascadia Code", Consolas, monospace;
+    font-size: 0.8rem;
+    background: var(--mud-palette-background-gray);
+    padding: 12px;
+    border-radius: 6px;
+}

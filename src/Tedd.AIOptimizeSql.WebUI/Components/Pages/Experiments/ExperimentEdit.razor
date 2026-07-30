@@ -8,6 +8,7 @@
 @using Microsoft.EntityFrameworkCore
 @using Tedd.AIOptimizeSql.Database
 @using Tedd.AIOptimizeSql.Database.Models
+@using Tedd.AIOptimizeSql.Database.Models.Enums
 
 <PageTitle>@(_isNew ? "New" : "Edit") Experiment</PageTitle>
 
@@ -115,6 +116,59 @@
                                 @TabActions(showResearchIterationsLink: false)
                             </MudStack>
                         </MudTabPanel>
+
+                        <MudTabPanel Text="Isolation &amp; verification">
+                            <MudStack Spacing="0" Class="pt-4">
+                                <MudText Typo="Typo.subtitle2" Class="mb-2">Where it runs</MudText>
+                                <MudSelect T="ExperimentIsolationMode" @bind-Value="_model.IsolationMode" Label="Isolation mode"
+                                           Variant="Variant.Outlined" Class="mb-4"
+                                           HelperText="None runs against the database as-is. SandboxSchema copies the touched objects into a separate schema. CloneDatabase runs against a separate database on the same server.">
+                                    <MudSelectItem Value="ExperimentIsolationMode.None">None (run in place)</MudSelectItem>
+                                    <MudSelectItem Value="ExperimentIsolationMode.SandboxSchema">Sandbox schema</MudSelectItem>
+                                    <MudSelectItem Value="ExperimentIsolationMode.CloneDatabase">Clone database</MudSelectItem>
+                                </MudSelect>
+
+                                @if (_model.IsolationMode != ExperimentIsolationMode.None)
+                                {
+                                    <MudTextField @bind-Value="_model.SandboxSchemaName" Label="Sandbox schema name"
+                                                  Variant="Variant.Outlined" Class="mb-4" MaxLength="128"
+                                                  HelperText="Used when isolation mode is Sandbox schema." />
+
+                                    <MudTextField @bind-Value="_model.SandboxDatabaseName" Label="Sandbox database name"
+                                                  Variant="Variant.Outlined" Class="mb-4" MaxLength="128"
+                                                  HelperText="Used when isolation mode is Clone database." />
+
+                                    <SqlMonacoField EditorId="@_editorIdSandboxSetup"
+                                                    Label="Sandbox setup SQL"
+                                                    HelperText="Runs once, before schema discovery and the baseline benchmark."
+                                                    @bind-Value="_model.SandboxSetupSql" />
+
+                                    <SqlMonacoField EditorId="@_editorIdSandboxTeardown"
+                                                    Label="Sandbox teardown SQL"
+                                                    HelperText="Runs when the iteration finishes, including after a failure."
+                                                    @bind-Value="_model.SandboxTeardownSql" />
+                                }
+
+                                <MudText Typo="Typo.subtitle2" Class="mb-2 mt-4">Proving the result is identical</MudText>
+                                <MudSelect T="OutputVerificationMode" @bind-Value="_model.OutputVerificationMode" Label="Output verification"
+                                           Variant="Variant.Outlined" Class="mb-4"
+                                           HelperText="Fingerprints the benchmark query's output so a hypothesis can be proven to return the same rows, not just measured as faster.">
+                                    <MudSelectItem Value="OutputVerificationMode.None">None (measure speed only)</MudSelectItem>
+                                    <MudSelectItem Value="OutputVerificationMode.UnorderedHash">Unordered hash (ignores row order)</MudSelectItem>
+                                    <MudSelectItem Value="OutputVerificationMode.OrderedHash">Ordered hash (row order must match)</MudSelectItem>
+                                </MudSelect>
+
+                                @if (_model.OutputVerificationMode != OutputVerificationMode.None)
+                                {
+                                    <SqlMonacoField EditorId="@_editorIdOutputVerification"
+                                                    Label="Output verification SQL"
+                                                    HelperText="Must return exactly one row with one column, used as the fingerprint."
+                                                    @bind-Value="_model.OutputVerificationSql" />
+                                }
+
+                                @TabActions(showResearchIterationsLink: false)
+                            </MudStack>
+                        </MudTabPanel>
                     </MudTabs>
                 </MudForm>
             </MudCardContent>
@@ -144,6 +198,11 @@
     private string _editorIdHypothesisPost = "";
     private string _editorIdExperimentPre = "";
     private string _editorIdExperimentPost = "";
+    private string _editorIdSandboxSetup = "";
+    private string _editorIdSandboxTeardown = "";
+    private string _editorIdOutputVerification = "";
+
+    private const int LastTabIndex = 2;
 
     private bool CanSave =>
         _formValid && !string.IsNullOrWhiteSpace(_model?.BenchmarkSql);
@@ -158,6 +217,13 @@
     private string _baselineBenchmarkSql = "";
     private DatabaseConnectionId? _baselineDbConnId;
     private AIConnectionId? _baselineAiConnId;
+    private ExperimentIsolationMode _baselineIsolationMode;
+    private string _baselineSandboxSchemaName = "";
+    private string _baselineSandboxDatabaseName = "";
+    private string _baselineSandboxSetupSql = "";
+    private string _baselineSandboxTeardownSql = "";
+    private OutputVerificationMode _baselineOutputVerificationMode;
+    private string _baselineOutputVerificationSql = "";
 
     private bool IsModified =>
         !_loading && _model != null &&
@@ -170,7 +236,14 @@
          (_model.ExperimentPostRunSql ?? "") != _baselineExperimentPostRunSql ||
          (_model.BenchmarkSql ?? "") != _baselineBenchmarkSql ||
          _selectedDbConnId != _baselineDbConnId ||
-         _selectedAiConnId != _baselineAiConnId);
+         _selectedAiConnId != _baselineAiConnId ||
+         _model.IsolationMode != _baselineIsolationMode ||
+         (_model.SandboxSchemaName ?? "") != _baselineSandboxSchemaName ||
+         (_model.SandboxDatabaseName ?? "") != _baselineSandboxDatabaseName ||
+         (_model.SandboxSetupSql ?? "") != _baselineSandboxSetupSql ||
+         (_model.SandboxTeardownSql ?? "") != _baselineSandboxTeardownSql ||
+         _model.OutputVerificationMode != _baselineOutputVerificationMode ||
+         (_model.OutputVerificationSql ?? "") != _baselineOutputVerificationSql);
 
     private void CaptureBaseline()
     {
@@ -185,6 +258,13 @@
         _baselineBenchmarkSql = _model.BenchmarkSql ?? "";
         _baselineDbConnId = _selectedDbConnId;
         _baselineAiConnId = _selectedAiConnId;
+        _baselineIsolationMode = _model.IsolationMode;
+        _baselineSandboxSchemaName = _model.SandboxSchemaName ?? "";
+        _baselineSandboxDatabaseName = _model.SandboxDatabaseName ?? "";
+        _baselineSandboxSetupSql = _model.SandboxSetupSql ?? "";
+        _baselineSandboxTeardownSql = _model.SandboxTeardownSql ?? "";
+        _baselineOutputVerificationMode = _model.OutputVerificationMode;
+        _baselineOutputVerificationSql = _model.OutputVerificationSql ?? "";
     }
 
     private RenderFragment TabActions(bool showResearchIterationsLink) => __builder =>
@@ -201,13 +281,13 @@
             <MudButton Variant="Variant.Outlined"
                        StartIcon="@Icons.Material.Filled.NavigateBefore"
                        Disabled="@(_activeTabIndex == 0)"
-                       OnClick="@(() => _activeTabIndex = 0)">
+                       OnClick="@(() => _activeTabIndex = Math.Max(0, _activeTabIndex - 1))">
                 Previous
             </MudButton>
             <MudButton Variant="Variant.Outlined"
                        EndIcon="@Icons.Material.Filled.NavigateNext"
-                       Disabled="@(_activeTabIndex == 1)"
-                       OnClick="@(() => _activeTabIndex = 1)">
+                       Disabled="@(_activeTabIndex == LastTabIndex)"
+                       OnClick="@(() => _activeTabIndex = Math.Min(LastTabIndex, _activeTabIndex + 1))">
                 Next
             </MudButton>
             <MudButton Variant="Variant.Text" OnClick="DiscardAsync" Disabled="@_discardBusy">
@@ -263,6 +343,9 @@
             _editorIdHypothesisPost = $"experiment-edit-hypothesis-post-{key}";
             _editorIdExperimentPre = $"experiment-edit-experiment-pre-{key}";
             _editorIdExperimentPost = $"experiment-edit-experiment-post-{key}";
+            _editorIdSandboxSetup = $"experiment-edit-sandbox-setup-{key}";
+            _editorIdSandboxTeardown = $"experiment-edit-sandbox-teardown-{key}";
+            _editorIdOutputVerification = $"experiment-edit-output-verification-{key}";
 
             _loading = false;
             CaptureBaseline();
@@ -356,6 +439,13 @@
                 .SetProperty(p => p.BenchmarkSql, _model.BenchmarkSql)
                 .SetProperty(p => p.DatabaseConnectionId, _selectedDbConnId)
                 .SetProperty(p => p.AIConnectionId, _selectedAiConnId)
+                .SetProperty(p => p.IsolationMode, _model.IsolationMode)
+                .SetProperty(p => p.SandboxSchemaName, _model.SandboxSchemaName)
+                .SetProperty(p => p.SandboxDatabaseName, _model.SandboxDatabaseName)
+                .SetProperty(p => p.SandboxSetupSql, _model.SandboxSetupSql)
+                .SetProperty(p => p.SandboxTeardownSql, _model.SandboxTeardownSql)
+                .SetProperty(p => p.OutputVerificationMode, _model.OutputVerificationMode)
+                .SetProperty(p => p.OutputVerificationSql, _model.OutputVerificationSql)
                 .SetProperty(p => p.ModifiedAt, now));
             if (n != 1)
             {

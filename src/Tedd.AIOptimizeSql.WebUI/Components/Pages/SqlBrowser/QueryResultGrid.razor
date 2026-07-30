@@ -1,0 +1,83 @@
+@using Tedd.AIOptimizeSql.OptimizeEngine.Models.SqlBrowser
+
+<div class="qrg-root">
+    @if (ResultSet.Truncated)
+    {
+        <MudAlert Severity="Severity.Warning" Dense="true" Class="mb-2">
+            Result truncated — showing the first @ResultSet.Rows.Count row@(ResultSet.Rows.Count == 1 ? "" : "s"). More rows exist on the server.
+        </MudAlert>
+    }
+
+    @if (ResultSet.Columns.Count == 0)
+    {
+        <MudText Typo="Typo.body2" Class="pa-2">No columns returned.</MudText>
+    }
+    else
+    {
+        <div class="qrg-scroll">
+            <MudSimpleTable Dense="true" Hover="true" FixedHeader="true" Class="qrg-table"
+                             Style="border:1px solid var(--mud-palette-lines-default);">
+                <thead>
+                <tr>
+                    @foreach (var col in ResultSet.Columns)
+                    {
+                        <th>
+                            @col.Name
+                            <span class="qrg-col-type">@col.ClrTypeName</span>
+                        </th>
+                    }
+                </tr>
+                </thead>
+                <tbody>
+                @foreach (var row in ResultSet.Rows)
+                {
+                    <tr>
+                        @for (var i = 0; i < ResultSet.Columns.Count; i++)
+                        {
+                            var value = i < row.Count ? row[i] : null;
+                            <td>
+                                @if (value is null)
+                                {
+                                    <span class="qrg-null">NULL</span>
+                                }
+                                else
+                                {
+                                    @value
+                                }
+                            </td>
+                        }
+                    </tr>
+                }
+                </tbody>
+            </MudSimpleTable>
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public AdHocResultSet ResultSet { get; set; } = default!;
+}
+
+<style>
+    .qrg-scroll {
+        max-height: 100%;
+        overflow: auto;
+    }
+
+    .qrg-table th {
+        white-space: nowrap;
+    }
+
+    .qrg-col-type {
+        display: block;
+        font-weight: 400;
+        font-size: 0.7rem;
+        opacity: 0.6;
+    }
+
+    .qrg-null {
+        opacity: 0.6;
+        font-style: italic;
+    }
+</style>
+

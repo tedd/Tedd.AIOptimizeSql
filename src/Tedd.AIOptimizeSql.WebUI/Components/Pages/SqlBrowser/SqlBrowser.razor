@@ -1,0 +1,604 @@
+@page "/sql-browser"
+@page "/sql-browser/{ConnectionId:int}"
+@implements IDisposable
+@rendermode InteractiveServer
+@using System.Text
+@using Microsoft.EntityFrameworkCore
+@using BlazorMonaco.Editor
+@using Tedd.AIOptimizeSql.Database
+@using Tedd.AIOptimizeSql.Database.Models
+@using Tedd.AIOptimizeSql.OptimizeEngine.Models.SqlBrowser
+@using Tedd.AIOptimizeSql.OptimizeEngine.Services.SqlBrowser
+@inject IDbContextFactory<AIOptimizeDbContext> DbContextFactory
+@inject ISqlCatalogService CatalogService
+@inject IAdHocQueryService AdHocQueryService
+@inject IObjectDependencyService DependencyService
+@inject IDialogService DialogService
+@inject ISnackbar Snackbar
+@inject NavigationManager Navigation
+
+<PageTitle>SQL Browser</PageTitle>
+
+<div class="sb-root">
+    <div class="sb-left">
+        <div class="sb-left-header">
+            <MudSelect T="DatabaseConnectionId?" Value="_selectedConnectionId" ValueChanged="OnConnectionChangedAsync"
+                       Label="Connection" Dense="true" Variant="Variant.Outlined" Class="mb-2">
+                @foreach (var conn in _connections)
+                {
+                    <MudSelectItem Value="@((DatabaseConnectionId?)conn.Id)">@conn.Name</MudSelectItem>
+                }
+            </MudSelect>
+
+            @if (_catalogLoading)
+            {
+                <MudProgressLinear Indeterminate="true" Color="Color.Primary" Class="mb-2" />
+            }
+            @if (!string.IsNullOrWhiteSpace(_catalogError))
+            {
+                <MudAlert Severity="Severity.Error" Dense="true" Class="mb-2">@_catalogError</MudAlert>
+            }
+            @if (IsAnalyzeOnly)
+            {
+                <MudChip T="string" Size="Size.Small" Color="Color.Warning" Icon="@Icons.Material.Filled.Lock" Class="mb-2">
+                    Analyze only — read-only statements
+                </MudChip>
+            }
+
+            <MudTextField T="string" @bind-Value="_searchText" Placeholder="Search objects (schema.name)..."
+                          Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Search"
+                          Clearable="true" Immediate="true" Variant="Variant.Outlined" Class="mb-2" />
+        </div>
+        <div class="sb-tree-wrap">
+            <ObjectBrowserTree Catalog="_catalog" SearchText="_searchText"
+                                OnObjectDoubleClick="OnObjectDoubleClickAsync"
+                                OnScriptAction="OnScriptActionAsync"
+                                OnShowDependencies="OnShowDependenciesAsync" />
+        </div>
+    </div>
+
+    <div class="sb-right">
+        <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center" Class="sb-toolbar">
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.PlayArrow"
+                       Disabled="@(_running || _selectedConnection is null)" OnClick="@(() => ExecuteAsync(false))">
+                Execute
+            </MudButton>
+            <MudButton Variant="Variant.Outlined" Color="Color.Primary" StartIcon="@Icons.Material.Filled.PlayCircleOutline"
+                       Disabled="@(_running || _selectedConnection is null)" OnClick="@(() => ExecuteAsync(true))">
+                Execute selection
+            </MudButton>
+            <MudButton Variant="Variant.Outlined" Color="Color.Error" StartIcon="@Icons.Material.Filled.Stop"
+                       Disabled="@(!_running)" OnClick="CancelExecution">
+                Cancel
+            </MudButton>
+            <MudSwitch T="bool" @bind-Value="_includeActualPlan" Label="Include actual plan" Color="Color.Primary" />
+            <MudSpacer />
+            @if (string.IsNullOrEmpty(CreateExperimentDisabledReason))
+            {
+                <MudButton Variant="Variant.Outlined" Color="Color.Secondary" StartIcon="@Icons.Material.Filled.Science"
+                           OnClick="OpenCreateExperimentAsync">
+                    Create experiment
+                </MudButton>
+            }
+            else
+            {
+                <MudTooltip Text="@CreateExperimentDisabledReason">
+                    <MudButton Variant="Variant.Outlined" Color="Color.Secondary" StartIcon="@Icons.Material.Filled.Science"
+                               Disabled="true">
+                        Create experiment
+                    </MudButton>
+                </MudTooltip>
+            }
+            <MudButton Variant="Variant.Text" StartIcon="@Icons.Material.Filled.Clear" OnClick="ClearEditor">
+                Clear
+            </MudButton>
+        </MudStack>
+
+        <div class="sb-editor-wrap" @onkeydown="OnEditorKeyDown" @onkeydown:preventDefault="true">
+            <StandaloneCodeEditor @ref="_editor"
+                                  Id="sql-browser-editor"
+                                  CssClass="sb-editor-inner"
+                                  ConstructionOptions="BuildEditorOptions"
+                                  OnDidChangeModelContent="OnEditorContentChangedAsync" />
+        </div>
+
+        <div class="sb-results-wrap">
+            <MudTabs ActivePanelIndex="_activeResultTab" ActivePanelIndexChanged="OnActiveTabChangedAsync"
+                     Rounded="true" Border="true" Class="sb-results-tabs">
+                <MudTabPanel Text="Results" Icon="@Icons.Material.Filled.TableChart">
+                    <div class="pt-2">
+                        @if (_lastResult is null)
+                        {
+                            <MudText Typo="Typo.body2" Class="pa-2">No query has been run yet.</MudText>
+                        }
+                        else if (_lastResult.ResultSets.Count == 0)
+                        {
+                            <MudText Typo="Typo.body2" Class="pa-2">
+                                @(_lastResult.Success ? "Query completed." : "Query failed.")
+                                Rows affected: @_lastResult.RowsAffected. Elapsed: @_lastResult.ElapsedMilliseconds ms.
+                            </MudText>
+                        }
+                        else
+                        {
+                            @for (var i = 0; i < _lastResult.ResultSets.Count; i++)
+                            {
+                                var idx = i;
+                                var rs = _lastResult.ResultSets[idx];
+                                <div class="mb-4">
+                                    @if (_lastResult.ResultSets.Count > 1)
+                                    {
+                                        <MudText Typo="Typo.subtitle2" Class="mb-1">Result @(idx + 1)</MudText>
+                                    }
+                                    <QueryResultGrid ResultSet="rs" />
+                                </div>
+                            }
+                        }
+                    </div>
+                </MudTabPanel>
+
+                <MudTabPanel Text="Messages" Icon="@Icons.Material.Filled.Article">
+                    <div class="pt-2">
+                        @if (_lastResult is null)
+                        {
+                            <MudText Typo="Typo.body2" Class="pa-2">No messages.</MudText>
+                        }
+                        else
+                        {
+                            @if (!_lastResult.Success && !string.IsNullOrWhiteSpace(_lastResult.ErrorMessage))
+                            {
+                                <MudAlert Severity="Severity.Error" Class="mb-2">
+                                    @_lastResult.ErrorMessage
+                                    @if (_lastResult.ErrorLineNumber is not null)
+                                    {
+                                        <span> (line @_lastResult.ErrorLineNumber)</span>
+                                    }
+                                </MudAlert>
+                            }
+                            @if (_lastResult.BlockedByReadOnlyGuard)
+                            {
+                                <MudAlert Severity="Severity.Warning" Class="mb-2">
+                                    Blocked by the read-only guard for this analyze-only connection.
+                                </MudAlert>
+                            }
+                            <pre class="sb-messages-pre">@string.Join("\n", _lastResult.Messages)</pre>
+                            <MudText Typo="Typo.caption" Class="mt-2 d-block">
+                                Elapsed: @_lastResult.ElapsedMilliseconds ms, rows affected: @_lastResult.RowsAffected
+                            </MudText>
+                        }
+                    </div>
+                </MudTabPanel>
+
+                <MudTabPanel Text="Dependencies" Icon="@Icons.Material.Filled.AccountTree">
+                    <div class="pt-2">
+                        <DependencyGraphView Graph="_graph" Loading="_graphLoading"
+                                              OnNodeSelected="OnGraphNodeSelectedAsync"
+                                              OnNodeScriptRequested="OnGraphNodeScriptRequestedAsync" />
+                    </div>
+                </MudTabPanel>
+            </MudTabs>
+        </div>
+
+        <div class="sb-status-bar">
+            <MudStack Row="true" Spacing="4" AlignItems="AlignItems.Center" Wrap="Wrap.Wrap">
+                <span>Server: <strong>@(_catalog?.ServerName ?? "—")</strong></span>
+                <span>Database: <strong>@(_catalog?.DatabaseName ?? "—")</strong></span>
+                <span>State: <strong>@ConnectionStateText</strong></span>
+                @if (_lastResult is not null)
+                {
+                    <span>Last run: <strong>@_lastResult.ElapsedMilliseconds ms</strong></span>
+                    <span>Rows affected: <strong>@_lastResult.RowsAffected</strong></span>
+                    <span>Messages: <strong>@_lastResult.Messages.Count</strong></span>
+                }
+            </MudStack>
+        </div>
+    </div>
+</div>
+
+@code {
+    [Parameter] public int? ConnectionId { get; set; }
+
+    private readonly CancellationTokenSource _pageCts = new();
+    private CancellationTokenSource? _runCts;
+
+    private List<DatabaseConnection> _connections = new();
+    private DatabaseConnectionId? _selectedConnectionId;
+    private DatabaseConnection? _selectedConnection;
+
+    private CatalogSnapshot? _catalog;
+    private bool _catalogLoading;
+    private string? _catalogError;
+    private string _searchText = "";
+
+    private StandaloneCodeEditor? _editor;
+    private string _editorText = "";
+    private bool _includeActualPlan;
+    private bool _running;
+
+    private AdHocQueryResult? _lastResult;
+    private int _activeResultTab;
+
+    private ObjectDependencyGraph? _graph;
+    private bool _graphLoading;
+
+    private bool IsAnalyzeOnly => _selectedConnection?.AnalyzeOnly ?? false;
+
+    private string ConnectionStateText =>
+        _selectedConnection is null ? "Not connected" :
+        _catalogLoading ? "Connecting…" :
+        !string.IsNullOrWhiteSpace(_catalogError) ? "Connection failed" :
+        _catalog is not null ? "Connected" : "Not connected";
+
+    private string CreateExperimentDisabledReason =>
+        _selectedConnectionId is null ? "Select a connection first" :
+        string.IsNullOrWhiteSpace(_editorText) ? "Write a query first" :
+        "";
+
+    public void Dispose()
+    {
+        _runCts?.Cancel();
+        _runCts?.Dispose();
+        _pageCts.Cancel();
+        _pageCts.Dispose();
+    }
+
+    protected override Task OnInitializedAsync() =>
+        PageLoadCancellation.RunPageLoadAsync(async ct =>
+        {
+            await using var db = await DbContextFactory.CreateDbContextAsync(ct);
+            _connections = await db.DatabaseConnections.OrderBy(c => c.Name).ToListAsync(ct);
+
+            if (ConnectionId.HasValue)
+            {
+                var id = (DatabaseConnectionId)(object)ConnectionId.Value;
+                if (_connections.Any(c => c.Id == id))
+                {
+                    await LoadConnectionAsync(id, ct);
+                }
+            }
+        }, _pageCts.Token);
+
+    private StandaloneEditorConstructionOptions BuildEditorOptions(StandaloneCodeEditor _) =>
+        new()
+        {
+            AutomaticLayout = true,
+            Language = "sql",
+            Theme = "vs-dark",
+            Value = "",
+            Minimap = new EditorMinimapOptions { Enabled = false },
+            ScrollBeyondLastLine = false,
+            WordWrap = "on",
+            FontSize = 13,
+            TabSize = 4,
+            InsertSpaces = true,
+        };
+
+    private async Task OnConnectionChangedAsync(DatabaseConnectionId? id)
+    {
+        await LoadConnectionAsync(id, _pageCts.Token);
+    }
+
+    private async Task LoadConnectionAsync(DatabaseConnectionId? id, CancellationToken ct)
+    {
+        _selectedConnectionId = id;
+        _selectedConnection = _connections.FirstOrDefault(c => c.Id == id);
+        _catalog = null;
+        _catalogError = null;
+        _lastResult = null;
+        _graph = null;
+
+        if (_selectedConnection is null)
+        {
+            return;
+        }
+
+        _catalogLoading = true;
+        await InvokeAsync(StateHasChanged);
+        try
+        {
+            var connectionString = _selectedConnection.ConnectionString;
+            var test = await AdHocQueryService.TestConnectionAsync(connectionString, ct);
+            if (!test.Ok)
+            {
+                _catalogError = test.Error ?? "Could not connect.";
+                return;
+            }
+
+            _catalog = await CatalogService.GetCatalogAsync(connectionString, ct);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception ex)
+        {
+            _catalogError = ex.Message;
+        }
+        finally
+        {
+            _catalogLoading = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private async Task OnEditorContentChangedAsync()
+    {
+        if (_editor is null)
+        {
+            return;
+        }
+
+        _editorText = await _editor.GetValue(false, "\n") ?? "";
+    }
+
+    private async Task OnEditorKeyDown(Microsoft.AspNetCore.Components.Web.KeyboardEventArgs e)
+    {
+        if (e.Key == "F5" || (e.CtrlKey && e.Key == "Enter"))
+        {
+            await ExecuteAsync(selectionOnly: false);
+        }
+    }
+
+    private async Task OnObjectDoubleClickAsync(CatalogObject obj)
+    {
+        await InsertAtCaretAsync(obj.QuotedFullName);
+    }
+
+    private async Task InsertAtCaretAsync(string text)
+    {
+        if (_editor is null)
+        {
+            return;
+        }
+
+        var pos = await _editor.GetPosition();
+        if (pos is null)
+        {
+            await _editor.SetValue(text);
+            _editorText = text;
+            return;
+        }
+
+        var range = new BlazorMonaco.Range
+        {
+            StartLineNumber = pos.LineNumber,
+            StartColumn = pos.Column,
+            EndLineNumber = pos.LineNumber,
+            EndColumn = pos.Column,
+        };
+        var edit = new IdentifiedSingleEditOperation { Range = range, Text = text };
+        await _editor.ExecuteEdits("sql-browser-insert", new List<IdentifiedSingleEditOperation> { edit }, (List<BlazorMonaco.Selection>?)null);
+        await _editor.Focus();
+        _editorText = await _editor.GetValue(false, "\n") ?? "";
+    }
+
+    private async Task OnScriptActionAsync((CatalogObject Obj, CatalogScriptAction Action) e)
+    {
+        if (_selectedConnection is null || _editor is null)
+        {
+            return;
+        }
+
+        try
+        {
+            var script = await CatalogService.BuildScriptAsync(_selectedConnection.ConnectionString, e.Obj, e.Action, _pageCts.Token);
+            await _editor.SetValue(script);
+            _editorText = script;
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Could not build script: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private async Task OnShowDependenciesAsync(CatalogObject obj)
+    {
+        if (_selectedConnection is null)
+        {
+            return;
+        }
+
+        _activeResultTab = 2;
+        _graphLoading = true;
+        await InvokeAsync(StateHasChanged);
+        try
+        {
+            _graph = await DependencyService.GetGraphForObjectAsync(
+                _selectedConnection.ConnectionString, obj.Schema, obj.Name, ct: _pageCts.Token);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Could not load dependencies: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _graphLoading = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private async Task OnActiveTabChangedAsync(int index)
+    {
+        _activeResultTab = index;
+
+        if (index == 2 && _graph is null && _selectedConnection is not null && _editor is not null)
+        {
+            var sql = await _editor.GetValue(false, "\n") ?? "";
+            if (!string.IsNullOrWhiteSpace(sql))
+            {
+                _graphLoading = true;
+                await InvokeAsync(StateHasChanged);
+                try
+                {
+                    _graph = await DependencyService.GetGraphForSqlAsync(_selectedConnection.ConnectionString, sql, ct: _pageCts.Token);
+                }
+                catch (Exception ex)
+                {
+                    Snackbar.Add($"Could not load dependencies: {ex.Message}", Severity.Error);
+                }
+                finally
+                {
+                    _graphLoading = false;
+                    await InvokeAsync(StateHasChanged);
+                }
+            }
+        }
+    }
+
+    private void OnGraphNodeSelectedAsync(DependencyNode node)
+    {
+        Snackbar.Add($"Selected {node.Schema}.{node.Name}", Severity.Info);
+    }
+
+    private async Task OnGraphNodeScriptRequestedAsync(DependencyNode node)
+    {
+        await InsertAtCaretAsync($"[{node.Schema}].[{node.Name}]");
+    }
+
+    private async Task ExecuteAsync(bool selectionOnly)
+    {
+        if (_selectedConnection is null || _editor is null || _running)
+        {
+            return;
+        }
+
+        var fullText = await _editor.GetValue(false, "\n") ?? "";
+        var sql = fullText;
+
+        if (selectionOnly)
+        {
+            var selection = await _editor.GetSelection();
+            if (selection is not null &&
+                !(selection.StartLineNumber == selection.EndLineNumber && selection.StartColumn == selection.EndColumn))
+            {
+                sql = ExtractSelection(fullText, selection);
+            }
+        }
+
+        if (string.IsNullOrWhiteSpace(sql))
+        {
+            Snackbar.Add("Nothing to execute.", Severity.Warning);
+            return;
+        }
+
+        _runCts?.Cancel();
+        _runCts?.Dispose();
+        _runCts = CancellationTokenSource.CreateLinkedTokenSource(_pageCts.Token);
+        _running = true;
+        _lastResult = null;
+        await InvokeAsync(StateHasChanged);
+
+        try
+        {
+            var request = new AdHocQueryRequest
+            {
+                Sql = sql,
+                ReadOnlyOnly = IsAnalyzeOnly,
+                IncludeActualPlan = _includeActualPlan,
+                MaxRows = 1000,
+            };
+            var result = await AdHocQueryService.ExecuteAsync(_selectedConnection.ConnectionString, request, _runCts.Token);
+            _lastResult = result;
+            _activeResultTab = result.Success && !result.BlockedByReadOnlyGuard ? 0 : 1;
+        }
+        catch (OperationCanceledException)
+        {
+            Snackbar.Add("Query cancelled.", Severity.Info);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Execution failed: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _running = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private void CancelExecution()
+    {
+        _runCts?.Cancel();
+    }
+
+    private static string ExtractSelection(string fullText, BlazorMonaco.Selection selection)
+    {
+        var lines = fullText.Replace("\r\n", "\n").Split('\n');
+        var startLine = selection.StartLineNumber - 1;
+        var endLine = selection.EndLineNumber - 1;
+        if (startLine < 0 || endLine >= lines.Length || startLine > endLine)
+        {
+            return fullText;
+        }
+
+        if (startLine == endLine)
+        {
+            var line = lines[startLine];
+            var startCol = Math.Clamp(selection.StartColumn - 1, 0, line.Length);
+            var endCol = Math.Clamp(selection.EndColumn - 1, 0, line.Length);
+            return endCol > startCol ? line.Substring(startCol, endCol - startCol) : "";
+        }
+
+        var sb = new StringBuilder();
+        for (var i = startLine; i <= endLine; i++)
+        {
+            var line = lines[i];
+            if (i == startLine)
+            {
+                var startCol = Math.Clamp(selection.StartColumn - 1, 0, line.Length);
+                sb.AppendLine(line[startCol..]);
+            }
+            else if (i == endLine)
+            {
+                var endCol = Math.Clamp(selection.EndColumn - 1, 0, line.Length);
+                sb.Append(line[..endCol]);
+            }
+            else
+            {
+                sb.AppendLine(line);
+            }
+        }
+
+        return sb.ToString();
+    }
+
+    private async Task ClearEditor()
+    {
+        if (_editor is null)
+        {
+            return;
+        }
+
+        await _editor.SetValue("");
+        _editorText = "";
+        _lastResult = null;
+    }
+
+    private async Task OpenCreateExperimentAsync()
+    {
+        if (_selectedConnectionId is null || _editor is null)
+        {
+            return;
+        }
+
+        var sql = await _editor.GetValue(false, "\n") ?? "";
+        if (string.IsNullOrWhiteSpace(sql))
+        {
+            Snackbar.Add("Write a query first.", Severity.Warning);
+            return;
+        }
+
+        var parameters = new DialogParameters<Tedd.AIOptimizeSql.WebUI.Components.Pages.SqlBrowser.Wizard.CreateExperimentWizard>
+        {
+            { x => x.ConnectionId, _selectedConnectionId!.Value },
+            { x => x.Sql, sql },
+        };
+        var dialog = await DialogService.ShowAsync<Tedd.AIOptimizeSql.WebUI.Components.Pages.SqlBrowser.Wizard.CreateExperimentWizard>(
+            "Create experiment", parameters, new DialogOptions { MaxWidth = MaxWidth.Large, FullWidth = true, CloseButton = true });
+        var result = await dialog.Result;
+
+        if (result is not null && !result.Canceled && result.Data is int newExperimentId)
+        {
+            Snackbar.Add("Experiment created.", Severity.Success);
+            Navigation.NavigateTo($"/experiments/{newExperimentId}/edit");
+        }
+    }
+}

@@ -1,0 +1,225 @@
+.dep-graph-root {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    width: 100%;
+    min-width: 0;
+}
+
+.dep-graph-loading,
+.dep-graph-empty {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 240px;
+    padding: 2rem;
+    text-align: center;
+}
+
+.dep-graph-warnings {
+    max-width: 100%;
+}
+
+.dep-graph-warning-list {
+    margin: 0;
+    padding-left: 1.1rem;
+}
+
+.dep-graph-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    min-width: 0;
+}
+
+.dep-graph-headers {
+    display: flex;
+    flex: 1 1 auto;
+    min-width: 0;
+    gap: 4px;
+}
+
+.dep-graph-header-cell {
+    flex-grow: 1;
+    flex-basis: 0;
+    min-width: 0;
+    text-align: center;
+    font-size: 0.8rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    color: var(--mud-palette-text-secondary);
+    text-transform: uppercase;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.dep-graph-header-root {
+    color: var(--mud-palette-primary);
+}
+
+.dep-graph-zoom-controls {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    flex: 0 0 auto;
+}
+
+.dep-graph-zoom-label {
+    min-width: 2.8em;
+    text-align: center;
+    color: var(--mud-palette-text-secondary);
+}
+
+.dep-graph-canvas-wrapper {
+    width: 100%;
+    max-width: 100%;
+    height: 60vh;
+    min-height: 320px;
+    overflow: auto;
+    border: 1px solid var(--mud-palette-lines-default);
+    border-radius: 6px;
+    background: var(--mud-palette-background);
+}
+
+.dep-graph-svg {
+    display: block;
+    touch-action: none;
+    user-select: none;
+}
+
+/* Edges */
+.dep-edge {
+    fill: none;
+    stroke: var(--mud-palette-lines-default);
+    stroke-width: 1.6;
+    transition: stroke 0.1s ease, stroke-width 0.1s ease, opacity 0.1s ease;
+}
+
+.dep-edge-dashed {
+    stroke-dasharray: 5 4;
+}
+
+.dep-edge-highlighted {
+    stroke: var(--mud-palette-primary);
+    stroke-width: 2.6;
+}
+
+.dep-arrow-head {
+    fill: var(--mud-palette-lines-default);
+}
+
+/* Nodes */
+.dep-node-box {
+    stroke: var(--mud-palette-lines-default);
+    stroke-width: 1.5;
+    fill-opacity: 0.85;
+}
+
+.dep-node-root {
+    stroke: var(--mud-palette-text-primary);
+    stroke-width: 3;
+}
+
+.dep-node-hovered .dep-node-box {
+    fill-opacity: 1;
+    filter: brightness(1.08);
+}
+
+.dep-node-caption {
+    font-size: 9px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    fill: rgba(255, 255, 255, 0.85);
+    pointer-events: none;
+}
+
+.dep-node-label {
+    font-size: 12px;
+    font-weight: 500;
+    fill: #ffffff;
+    pointer-events: none;
+}
+
+.dep-node-warning-badge {
+    fill: #ffb300;
+    stroke: var(--mud-palette-background);
+    stroke-width: 1;
+}
+
+.dep-node-warning-glyph {
+    font-size: 10px;
+    font-weight: 800;
+    fill: #212121;
+    pointer-events: none;
+}
+
+.dep-node-script-btn {
+    font-size: 11px;
+    font-family: 'Consolas', 'Courier New', monospace;
+    fill: rgba(255, 255, 255, 0.75);
+    cursor: pointer;
+}
+
+.dep-node-script-btn:hover {
+    fill: #ffffff;
+    font-weight: 700;
+}
+
+/* Category colors — fixed accent hex values for categorical legend, chosen for contrast in both themes */
+.kind-table { fill: #2e7d32; }
+.kind-view { fill: #1565c0; }
+.kind-procedure { fill: #6a1b9a; }
+.kind-function { fill: #ef6c00; }
+.kind-trigger { fill: #c62828; }
+.kind-other { fill: #546e7a; }
+
+/* Legend */
+.dep-graph-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 18px;
+    padding: 6px 2px;
+    font-size: 0.78rem;
+    color: var(--mud-palette-text-secondary);
+}
+
+.dep-graph-legend-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    white-space: nowrap;
+}
+
+.dep-legend-swatch {
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    border-radius: 3px;
+}
+
+.dep-legend-line {
+    display: inline-block;
+    width: 22px;
+    height: 0;
+    border-top: 2px solid var(--mud-palette-text-secondary);
+}
+
+.dep-legend-line-dashed {
+    border-top-style: dashed;
+}
+
+.dep-legend-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: #ffb300;
+    color: #212121;
+    font-size: 10px;
+    font-weight: 800;
+}

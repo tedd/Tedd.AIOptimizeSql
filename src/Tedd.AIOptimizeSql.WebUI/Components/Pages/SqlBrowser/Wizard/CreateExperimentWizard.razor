@@ -1,0 +1,838 @@
+@implements IDisposable
+@inject IDbContextFactory<Tedd.AIOptimizeSql.Database.AIOptimizeDbContext> DbContextFactory
+@inject IExperimentBlueprintService BlueprintService
+@inject IAIOptimizeDataAccess DataAccess
+@inject IDialogService DialogService
+@inject ISnackbar Snackbar
+@using Microsoft.EntityFrameworkCore
+@using Tedd.AIOptimizeSql.Database
+@using Tedd.AIOptimizeSql.OptimizeEngine.Models.SqlBrowser
+@using Tedd.AIOptimizeSql.OptimizeEngine.Services.SqlBrowser
+@using Tedd.AIOptimizeSql.WebUI.Components.Pages.SqlBrowser
+
+<MudDialog>
+    <DialogContent>
+        <div class="wizard-content">
+            @if (_loading)
+            {
+                <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+            }
+            else
+            {
+                <MudStepper ActiveIndex="_activeIndex" ActiveIndexChanged="OnActiveIndexChanged" NonLinear="true" ShowResetButton="false">
+                    <MudStep Title="What are we making faster?">
+                        <MudText Typo="Typo.body2" Class="mb-3">
+                            We'll benchmark this query, let AI propose changes, apply/measure/revert each one automatically,
+                            and keep only the changes that are <strong>both</strong> faster <strong>and</strong> return exactly the same rows.
+                        </MudText>
+
+                        <SqlMonacoField EditorId="wizard-benchmark-sql" Label="Query being optimized" Value="@Sql" ReadOnly="true" />
+
+                        <MudTextField @bind-Value="_blueprint.Name" Label="Experiment name" Variant="Variant.Outlined"
+                                      Required="true" RequiredError="Give this experiment a name" Class="mb-4" />
+
+                        <MudTextField @bind-Value="_goal" Label="What does &quot;faster&quot; mean here?" Variant="Variant.Outlined"
+                                      Lines="2" Placeholder="e.g. fewer logical reads, sub-100ms under load, no table scans"
+                                      HelperText="Optional, but it helps the AI focus on what actually matters to you." Class="mb-4" />
+
+                        @if (_analyzeError is not null)
+                        {
+                            <MudAlert Severity="Severity.Error" Class="mb-3">@_analyzeError</MudAlert>
+                        }
+
+                        <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="AnalyzeAsync"
+                                   Disabled="@(_analyzing || string.IsNullOrWhiteSpace(_blueprint.Name))"
+                                   StartIcon="@Icons.Material.Filled.TravelExplore">
+                            @(_analyzing ? "Analyzing..." : _graph is null ? "Analyze" : "Re-analyze")
+                        </MudButton>
+                        @if (_analyzing)
+                        {
+                            <MudProgressLinear Indeterminate="true" Class="mt-2" />
+                        }
+                    </MudStep>
+
+                    <MudStep Title="What it touches">
+                        <MudText Typo="Typo.body2" Class="mb-3">
+                            Ticked tables get integrity checksums before and after each hypothesis; in the sandbox modes
+                            (next steps), they also get copied.
+                        </MudText>
+
+                        @if (_blueprint.Warnings.Count > 0)
+                        {
+                            <MudAlert Severity="Severity.Warning" Class="mb-3">
+                                <ul class="wizard-list">
+                                    @foreach (var w in _blueprint.Warnings)
+                                    {
+                                        <li>@w</li>
+                                    }
+                                </ul>
+                            </MudAlert>
+                        }
+
+                        <DependencyGraphView Graph="_graph" Loading="_graphLoading"
+                                             OnNodeSelected="OnNodeSelected" OnNodeScriptRequested="OnNodeScriptRequested" />
+
+                        <MudTable Items="_blueprint.BaseTables" Dense="true" Hover="true" Class="mt-4">
+                            <HeaderContent>
+                                <MudTh>Include</MudTh>
+                                <MudTh>Schema</MudTh>
+                                <MudTh>Table</MudTh>
+                                <MudTh>Rows</MudTh>
+                                <MudTh>Reason</MudTh>
+                            </HeaderContent>
+                            <RowTemplate>
+                                <MudTd DataLabel="Include"><MudCheckBox T="bool" @bind-Value="context.Include" /></MudTd>
+                                <MudTd DataLabel="Schema">@context.Schema</MudTd>
+                                <MudTd DataLabel="Table">@context.Table</MudTd>
+                                <MudTd DataLabel="Rows">@(context.RowCount?.ToString("N0") ?? "—")</MudTd>
+                                <MudTd DataLabel="Reason">@context.Reason</MudTd>
+                            </RowTemplate>
+                            <NoRecordsContent>
+                                <MudText Typo="Typo.body2">No base tables discovered yet — run Analyze on step 1.</MudText>
+                            </NoRecordsContent>
+                        </MudTable>
+                    </MudStep>
+
+                    <MudStep Title="Proving the result is identical">
+                        <MudText Typo="Typo.body2" Class="mb-3">
+                            A "faster" query that returns different rows isn't an optimization — it's a bug. Pick how we prove
+                            every hypothesis still returns exactly what the original query returned.
+                        </MudText>
+
+                        <MudRadioGroup T="OutputVerificationMode" Value="_blueprint.OutputVerificationMode" ValueChanged="OnVerificationModeChanged">
+                            <MudPaper Class="pa-3 mb-2 wizard-option" Outlined="true">
+                                <MudRadio T="OutputVerificationMode" Value="OutputVerificationMode.None">
+                                    <strong>None</strong> — only speed is measured.
+                                </MudRadio>
+                                @if (_blueprint.OutputVerificationMode == OutputVerificationMode.None)
+                                {
+                                    <MudAlert Severity="Severity.Warning" Dense="true" Class="mt-2">
+                                        Not recommended — without an output check, a "faster" result could just be a wrong one.
+                                    </MudAlert>
+                                }
+                            </MudPaper>
+                            <MudPaper Class="pa-3 mb-2 wizard-option" Outlined="true">
+                                <MudRadio T="OutputVerificationMode" Value="OutputVerificationMode.UnorderedHash">
+                                    <strong>Unordered hash</strong> (default) — each row is hashed and the hashes are combined
+                                    order-independently. Detects changed, added, removed, or duplicated rows, but tolerates a
+                                    different row order. The right choice for a query without a meaningful ORDER BY.
+                                </MudRadio>
+                            </MudPaper>
+                            <MudPaper Class="pa-3 mb-2 wizard-option" Outlined="true">
+                                <MudRadio T="OutputVerificationMode" Value="OutputVerificationMode.OrderedHash">
+                                    <strong>Ordered hash</strong> — pick this if your query has an ORDER BY that callers rely on;
+                                    a different row order counts as a mismatch.
+                                </MudRadio>
+                            </MudPaper>
+                        </MudRadioGroup>
+
+                        @if (_blueprint.OutputVerificationMode != OutputVerificationMode.None)
+                        {
+                            @if (_confirmRegenerate)
+                            {
+                                <MudAlert Severity="Severity.Info" Class="my-2">
+                                    Regenerating will discard your edits — regenerate anyway?
+                                    <MudButton Size="Size.Small" Class="ml-2" OnClick="ConfirmRegenerate">Yes</MudButton>
+                                    <MudButton Size="Size.Small" OnClick="@(() => _confirmRegenerate = false)">No</MudButton>
+                                </MudAlert>
+                            }
+                            <SqlMonacoField EditorId="wizard-output-verification-sql" Label="Output verification SQL"
+                                            Value="_blueprint.OutputVerificationSql" ValueChanged="OnVerificationSqlChanged"
+                                            HelperText="Returns one scalar fingerprint of the query's output." />
+                            <MudStack Row="true" Spacing="2" Class="mb-3">
+                                <MudButton Variant="Variant.Outlined" OnClick="RequestRegenerate">Regenerate from template</MudButton>
+                                <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="TestVerificationAsync"
+                                           Disabled="@(_verificationTesting || string.IsNullOrWhiteSpace(_blueprint.OutputVerificationSql))">
+                                    @(_verificationTesting ? "Testing..." : "Test this check")
+                                </MudButton>
+                            </MudStack>
+
+                            @if (_verificationTested)
+                            {
+                                <MudAlert Severity="@(_verificationDeterministic ? Severity.Success : Severity.Error)" Class="mt-2">
+                                    @if (_verificationDeterministic)
+                                    {
+                                        <span>Deterministic — ran twice, same fingerprint both times: <code>@_verificationFirstHash</code></span>
+                                    }
+                                    else if (_verificationError is not null)
+                                    {
+                                        <span>Could not run the check: @_verificationError</span>
+                                    }
+                                    else
+                                    {
+                                        <span>
+                                            Not deterministic — first run: <code>@_verificationFirstHash</code>, second run:
+                                            <code>@_verificationSecondHash</code>. A check that disagrees with itself can never
+                                            prove an optimization safe.
+                                        </span>
+                                    }
+                                </MudAlert>
+                            }
+                        }
+                    </MudStep>
+
+                    <MudStep Title="Where it runs">
+                        @if (_dbConnection?.AnalyzeOnly == true)
+                        {
+                            <MudAlert Severity="Severity.Warning" Class="mb-3">
+                                This connection is analyze-only: nothing can apply, benchmark, or revert here. You can still
+                                prepare this experiment, but it cannot actually run until it's attached to a non-analyze-only
+                                connection.
+                            </MudAlert>
+                        }
+
+                        <MudRadioGroup T="ExperimentIsolationMode" Value="_blueprint.IsolationMode" ValueChanged="OnIsolationModeChanged">
+                            <MudPaper Class="pa-3 mb-2 wizard-option" Outlined="true">
+                                <MudRadio T="ExperimentIsolationMode" Value="ExperimentIsolationMode.None">
+                                    <strong>None</strong> — hypotheses are applied to, benchmarked against, and reverted from the
+                                    target database as-is. Nothing is provisioned or torn down.
+                                </MudRadio>
+                            </MudPaper>
+                            <MudPaper Class="pa-3 mb-2 wizard-option" Outlined="true">
+                                <MudTooltip Text="Not available on an analyze-only connection." Disabled="@(_dbConnection?.AnalyzeOnly != true)">
+                                    <MudRadio T="ExperimentIsolationMode" Value="ExperimentIsolationMode.SandboxSchema"
+                                              Disabled="@(_dbConnection?.AnalyzeOnly == true)">
+                                        <strong>Sandbox schema</strong> — copy the objects the benchmark touches into a dedicated
+                                        schema in the same database (tables with indexes/constraints and data, views/procedures
+                                        rewritten to point at the copies), run there, then drop the schema.
+                                    </MudRadio>
+                                </MudTooltip>
+                            </MudPaper>
+                            <MudPaper Class="pa-3 mb-2 wizard-option" Outlined="true">
+                                <MudTooltip Text="Not available on an analyze-only connection." Disabled="@(_dbConnection?.AnalyzeOnly != true)">
+                                    <MudRadio T="ExperimentIsolationMode" Value="ExperimentIsolationMode.CloneDatabase"
+                                              Disabled="@(_dbConnection?.AnalyzeOnly == true)">
+                                        <strong>Clone database</strong> — provision a separate database on the same server,
+                                        populate it from the source database, run the whole experiment there, then drop it.
+                                    </MudRadio>
+                                </MudTooltip>
+                            </MudPaper>
+                        </MudRadioGroup>
+
+                        @if (_blueprint.IsolationMode != ExperimentIsolationMode.None)
+                        {
+                            <MudAlert Severity="Severity.Info" Class="my-2">
+                                A sandbox copy is thinner than the original — indexes, constraints, compression, and columnstore
+                                must be recreated for measurements to mean anything. That's exactly what the AI step below fills
+                                in; if the scripts are empty here, that's expected until then.
+                            </MudAlert>
+
+                            @if (_blueprint.IsolationMode == ExperimentIsolationMode.SandboxSchema)
+                            {
+                                <MudTextField @bind-Value="_blueprint.SandboxSchemaName" Label="Sandbox schema name"
+                                              Variant="Variant.Outlined" Class="mb-3" />
+                            }
+                            else
+                            {
+                                <MudTextField @bind-Value="_blueprint.SandboxDatabaseName" Label="Sandbox database name"
+                                              Variant="Variant.Outlined" Class="mb-3" />
+                            }
+
+                            <SqlMonacoField EditorId="wizard-sandbox-setup-sql" Label="Sandbox setup SQL"
+                                            @bind-Value="_blueprint.SandboxSetupSql" />
+                            <SqlMonacoField EditorId="wizard-sandbox-teardown-sql" Label="Sandbox teardown SQL"
+                                            @bind-Value="_blueprint.SandboxTeardownSql" />
+
+                            <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="ValidateSandboxAsync"
+                                       Disabled="@(_validatingSandbox || _dbConnection?.AnalyzeOnly == true)">
+                                @(_validatingSandbox ? "Validating..." : "Validate")
+                            </MudButton>
+
+                            @if (_sandboxValidateLog is not null)
+                            {
+                                <MudAlert Severity="@(_sandboxValidateOk == true ? Severity.Success : Severity.Error)" Class="mt-3">
+                                    <pre class="wizard-log">@_sandboxValidateLog</pre>
+                                    @if (_sandboxValidateError is not null)
+                                    {
+                                        <div>@_sandboxValidateError</div>
+                                    }
+                                </MudAlert>
+                            }
+                        }
+                    </MudStep>
+
+                    <MudStep Title="Let the AI finish the setup">
+                        <MudText Typo="Typo.body2" Class="mb-3">
+                            The AI fills in naming, description, instructions, the measurement plan, and — if you picked a
+                            sandbox mode — the setup/teardown scripts. You can skip this and use the deterministic defaults
+                            instead.
+                        </MudText>
+
+                        <MudSelect T="AIConnectionId?" @bind-Value="_selectedAiConnectionId" Label="AI connection"
+                                   Variant="Variant.Outlined" Class="mb-4" Clearable="true">
+                            @foreach (var conn in _aiConnections)
+                            {
+                                <MudSelectItem Value="@((AIConnectionId?)conn.Id)">@conn.Name (@conn.Provider / @conn.Model)</MudSelectItem>
+                            }
+                        </MudSelect>
+
+                        <MudStack Row="true" Spacing="2" Class="mb-3">
+                            <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="RunAiAsync"
+                                       Disabled="@(_aiRunning || _selectedAiConnectionId is null)">
+                                @(_aiRunning ? "Working..." : "Ask AI to complete this experiment")
+                            </MudButton>
+                            <MudButton Variant="Variant.Outlined" OnClick="SkipAiAsync" Disabled="_aiRunning">
+                                Skip AI, use the deterministic setup
+                            </MudButton>
+                        </MudStack>
+
+                        @if (_aiRunning)
+                        {
+                            <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+                                <MudProgressCircular Indeterminate="true" Size="Size.Small" />
+                                <MudText Typo="Typo.body2">@_aiProgress</MudText>
+                            </MudStack>
+                        }
+                        @if (_aiCompleted)
+                        {
+                            <MudAlert Severity="Severity.Success" Class="mt-3">
+                                AI finished. Revisit earlier steps to see the updated values — everything is still editable.
+                            </MudAlert>
+                        }
+                    </MudStep>
+
+                    <MudStep Title="Review and create">
+                        @{
+                            var blocking = BlockingWarnings();
+                        }
+                        @if (blocking.Count > 0)
+                        {
+                            <MudAlert Severity="Severity.Warning" Class="mb-3">
+                                <MudText Typo="Typo.subtitle2">Before you create this experiment:</MudText>
+                                <ul class="wizard-list">
+                                    @foreach (var w in blocking)
+                                    {
+                                        <li>@w</li>
+                                    }
+                                </ul>
+                            </MudAlert>
+                        }
+                        @if (_blueprint.Warnings.Count > 0)
+                        {
+                            <MudAlert Severity="Severity.Info" Class="mb-3">
+                                <ul class="wizard-list">
+                                    @foreach (var w in _blueprint.Warnings)
+                                    {
+                                        <li>@w</li>
+                                    }
+                                </ul>
+                            </MudAlert>
+                        }
+
+                        <MudText Typo="Typo.subtitle1" Class="mb-2">Overview</MudText>
+                        <MudSimpleTable Dense="true" Class="mb-4">
+                            <tbody>
+                                <tr><td>Name</td><td>@_blueprint.Name</td></tr>
+                                <tr><td>Description</td><td>@(_blueprint.Description ?? "—")</td></tr>
+                                <tr><td>Instructions</td><td>@(_blueprint.Instructions ?? "—")</td></tr>
+                                <tr><td>Measurement plan</td><td>@(_blueprint.MeasurementPlan ?? "—")</td></tr>
+                                <tr><td>Isolation mode</td><td>@_blueprint.IsolationMode</td></tr>
+                                <tr><td>Sandbox schema</td><td>@(_blueprint.SandboxSchemaName ?? "—")</td></tr>
+                                <tr><td>Sandbox database</td><td>@(_blueprint.SandboxDatabaseName ?? "—")</td></tr>
+                                <tr><td>Output verification</td><td>@_blueprint.OutputVerificationMode</td></tr>
+                                <tr>
+                                    <td>Base tables</td>
+                                    <td>@string.Join(", ", _blueprint.BaseTables.Where(t => t.Include).Select(t => $"{t.Schema}.{t.Table}"))</td>
+                                </tr>
+                                <tr><td>AI connection</td><td>@(_aiConnections.FirstOrDefault(c => c.Id == _selectedAiConnectionId)?.Name ?? "None")</td></tr>
+                            </tbody>
+                        </MudSimpleTable>
+
+                        <MudText Typo="Typo.subtitle1">Benchmark SQL</MudText>
+                        <SqlMonacoField EditorId="wizard-review-benchmark-sql" Value="_blueprint.BenchmarkSql" ReadOnly="true" />
+
+                        @if (!string.IsNullOrWhiteSpace(_blueprint.ExperimentPreRunSql))
+                        {
+                            <MudText Typo="Typo.subtitle2" Class="mt-2">Experiment pre-run SQL</MudText>
+                            <SqlMonacoField EditorId="wizard-review-exp-pre" Value="_blueprint.ExperimentPreRunSql" ReadOnly="true" />
+                        }
+                        @if (!string.IsNullOrWhiteSpace(_blueprint.ExperimentPostRunSql))
+                        {
+                            <MudText Typo="Typo.subtitle2" Class="mt-2">Experiment post-run SQL</MudText>
+                            <SqlMonacoField EditorId="wizard-review-exp-post" Value="_blueprint.ExperimentPostRunSql" ReadOnly="true" />
+                        }
+                        @if (!string.IsNullOrWhiteSpace(_blueprint.HypothesisPreRunSql))
+                        {
+                            <MudText Typo="Typo.subtitle2" Class="mt-2">Hypothesis pre-run SQL</MudText>
+                            <SqlMonacoField EditorId="wizard-review-hyp-pre" Value="_blueprint.HypothesisPreRunSql" ReadOnly="true" />
+                        }
+                        @if (!string.IsNullOrWhiteSpace(_blueprint.HypothesisPostRunSql))
+                        {
+                            <MudText Typo="Typo.subtitle2" Class="mt-2">Hypothesis post-run SQL</MudText>
+                            <SqlMonacoField EditorId="wizard-review-hyp-post" Value="_blueprint.HypothesisPostRunSql" ReadOnly="true" />
+                        }
+                        @if (_blueprint.IsolationMode != ExperimentIsolationMode.None)
+                        {
+                            <MudText Typo="Typo.subtitle2" Class="mt-2">Sandbox setup SQL</MudText>
+                            <SqlMonacoField EditorId="wizard-review-sandbox-setup" Value="_blueprint.SandboxSetupSql" ReadOnly="true" />
+                            <MudText Typo="Typo.subtitle2" Class="mt-2">Sandbox teardown SQL</MudText>
+                            <SqlMonacoField EditorId="wizard-review-sandbox-teardown" Value="_blueprint.SandboxTeardownSql" ReadOnly="true" />
+                        }
+                        @if (_blueprint.OutputVerificationMode != OutputVerificationMode.None)
+                        {
+                            <MudText Typo="Typo.subtitle2" Class="mt-2">Output verification SQL</MudText>
+                            <SqlMonacoField EditorId="wizard-review-output-verification" Value="_blueprint.OutputVerificationSql" ReadOnly="true" />
+                        }
+
+                        <MudCheckBox T="bool" @bind-Value="_queueFirstIteration" Label="Queue a first research iteration now"
+                                     Disabled="@(_dbConnection?.AnalyzeOnly == true)" Class="mt-3" />
+                        @if (_dbConnection?.AnalyzeOnly == true)
+                        {
+                            <MudText Typo="Typo.caption" Color="Color.Warning" Class="d-block">
+                                This connection is analyze-only, so no iteration can run yet.
+                            </MudText>
+                        }
+                    </MudStep>
+                </MudStepper>
+            }
+        </div>
+    </DialogContent>
+    <DialogActions>
+        <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.NavigateBefore"
+                   Disabled="@(_activeIndex == 0)" OnClick="GoBack">
+            Back
+        </MudButton>
+        <MudSpacer />
+        <MudButton Variant="Variant.Text" OnClick="CancelAsync">Cancel</MudButton>
+        @if (_activeIndex < 5)
+        {
+            <MudTooltip Text="@BlockReason(_activeIndex)" Disabled="@string.IsNullOrEmpty(BlockReason(_activeIndex))">
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" EndIcon="@Icons.Material.Filled.NavigateNext"
+                           Disabled="@(!CanAdvanceFromStep(_activeIndex))" OnClick="GoNext">
+                    Next
+                </MudButton>
+            </MudTooltip>
+        }
+        else
+        {
+            <MudButton Variant="Variant.Filled" Color="Color.Success" StartIcon="@Icons.Material.Filled.Check"
+                       Disabled="@_creating" OnClick="CreateExperimentAsync">
+                @(_creating ? "Creating..." : "Create experiment")
+            </MudButton>
+        }
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = default!;
+    [Parameter] public DatabaseConnectionId ConnectionId { get; set; }
+    [Parameter] public string Sql { get; set; } = "";
+
+    private readonly CancellationTokenSource _cts = new();
+    private AIOptimizeDbContext? _db;
+    private bool _loading = true;
+    private bool _hasProgress;
+    private int _activeIndex;
+
+    private ExperimentBlueprint _blueprint = new();
+    private string _goal = "";
+    private DatabaseConnection? _dbConnection;
+    private List<AIConnection> _aiConnections = new();
+    private AIConnectionId? _selectedAiConnectionId;
+
+    private ObjectDependencyGraph? _graph;
+    private bool _graphLoading;
+    private string _schemaContextMarkdown = "";
+    private bool _analyzing;
+    private string? _analyzeError;
+
+    private bool _outputSqlManuallyEdited;
+    private bool _confirmRegenerate;
+    private bool _verificationTesting;
+    private bool _verificationTested;
+    private bool _verificationDeterministic;
+    private string? _verificationFirstHash;
+    private string? _verificationSecondHash;
+    private string? _verificationError;
+
+    private bool _validatingSandbox;
+    private bool? _sandboxValidateOk;
+    private string? _sandboxValidateLog;
+    private string? _sandboxValidateError;
+
+    private bool _aiRunning;
+    private bool _aiCompleted;
+    private string _aiProgress = "";
+
+    private bool _queueFirstIteration = true;
+    private bool _creating;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _db = await DbContextFactory.CreateDbContextAsync(_cts.Token);
+        _dbConnection = await _db.DatabaseConnections.AsNoTracking()
+            .FirstOrDefaultAsync(c => c.Id == ConnectionId, _cts.Token);
+        _aiConnections = await _db.AIConnections.AsNoTracking().OrderBy(c => c.Name).ToListAsync(_cts.Token);
+
+        _blueprint = new ExperimentBlueprint
+        {
+            Name = $"Optimize query - {DateTime.Now:MMM d, HH:mm}",
+            BenchmarkSql = Sql,
+        };
+
+        if (_dbConnection?.AnalyzeOnly == true)
+            _queueFirstIteration = false;
+
+        _loading = false;
+    }
+
+    public void Dispose()
+    {
+        _cts.Cancel();
+        _cts.Dispose();
+        _db?.Dispose();
+        _db = null;
+    }
+
+    // ----- navigation -----
+
+    private void OnActiveIndexChanged(int idx) => _activeIndex = idx;
+
+    private void GoBack()
+    {
+        if (_activeIndex > 0) _activeIndex--;
+    }
+
+    private void GoNext()
+    {
+        if (_activeIndex < 5 && CanAdvanceFromStep(_activeIndex)) _activeIndex++;
+    }
+
+    private string BlockReason(int step) => step switch
+    {
+        0 => _graph is null ? "Run Analyze first so we know what this query touches." : "",
+        2 => (_blueprint.OutputVerificationMode != OutputVerificationMode.None && !(_verificationTested && _verificationDeterministic))
+            ? "Test the output-verification check first — it must return the same fingerprint twice before we can trust it."
+            : "",
+        _ => ""
+    };
+
+    private bool CanAdvanceFromStep(int step) => string.IsNullOrEmpty(BlockReason(step));
+
+    private async Task CancelAsync()
+    {
+        if (!_hasProgress)
+        {
+            MudDialog.Cancel();
+            return;
+        }
+
+        var confirm = await DialogService.ShowMessageBoxAsync(
+            "Discard experiment setup?",
+            "You've made progress in this wizard. Cancel and discard it?",
+            yesText: "Discard", cancelText: "Keep editing");
+
+        if (confirm == true)
+            MudDialog.Cancel();
+    }
+
+    // ----- step 1: analyze -----
+
+    private async Task AnalyzeAsync()
+    {
+        if (_dbConnection is null)
+        {
+            _analyzeError = "Database connection not found.";
+            return;
+        }
+
+        _analyzing = true;
+        _graphLoading = true;
+        _analyzeError = null;
+        await InvokeAsync(StateHasChanged);
+
+        try
+        {
+            var (blueprint, schemaMarkdown, graph) =
+                await BlueprintService.AnalyzeQueryAsync(_dbConnection.ConnectionString, Sql, _cts.Token);
+
+            // Preserve anything the user already decided in other steps (Analyze/Re-analyze is
+            // reachable from any step thanks to non-linear navigation).
+            blueprint.Name = _blueprint.Name;
+            blueprint.Description = _blueprint.Description;
+            blueprint.Instructions = _blueprint.Instructions;
+            blueprint.IsolationMode = _blueprint.IsolationMode;
+            blueprint.SandboxSchemaName = _blueprint.SandboxSchemaName;
+            blueprint.SandboxDatabaseName = _blueprint.SandboxDatabaseName;
+            blueprint.SandboxSetupSql = _blueprint.SandboxSetupSql;
+            blueprint.SandboxTeardownSql = _blueprint.SandboxTeardownSql;
+            blueprint.OutputVerificationMode = _blueprint.OutputVerificationMode;
+            blueprint.MeasurementPlan = _blueprint.MeasurementPlan;
+            if (_outputSqlManuallyEdited)
+                blueprint.OutputVerificationSql = _blueprint.OutputVerificationSql;
+            else if (blueprint.OutputVerificationMode != OutputVerificationMode.None)
+                blueprint.OutputVerificationSql = BlueprintService.BuildOutputVerificationSql(blueprint.BenchmarkSql, blueprint.OutputVerificationMode);
+
+            _blueprint = blueprint;
+            _schemaContextMarkdown = schemaMarkdown;
+            _graph = graph;
+            _hasProgress = true;
+            _verificationTested = false;
+        }
+        catch (Exception ex)
+        {
+            _analyzeError = $"Analyze failed: {ex.Message}";
+        }
+        finally
+        {
+            _analyzing = false;
+            _graphLoading = false;
+        }
+    }
+
+    private Task OnNodeSelected(DependencyNode node)
+    {
+        Snackbar.Add($"{node.Schema}.{node.Name}" + (node.Note is null ? "" : $" — {node.Note}"), Severity.Info);
+        return Task.CompletedTask;
+    }
+
+    private Task OnNodeScriptRequested(DependencyNode node)
+    {
+        Snackbar.Add($"Scripting {node.Schema}.{node.Name} isn't available from the wizard yet.", Severity.Info);
+        return Task.CompletedTask;
+    }
+
+    // ----- step 3: output verification -----
+
+    private void OnVerificationModeChanged(OutputVerificationMode mode)
+    {
+        _blueprint.OutputVerificationMode = mode;
+        _verificationTested = false;
+        _verificationDeterministic = false;
+        _hasProgress = true;
+
+        if (mode == OutputVerificationMode.None)
+        {
+            _blueprint.OutputVerificationSql = null;
+            _confirmRegenerate = false;
+            return;
+        }
+
+        if (_outputSqlManuallyEdited)
+        {
+            _confirmRegenerate = true;
+        }
+        else
+        {
+            _blueprint.OutputVerificationSql = BlueprintService.BuildOutputVerificationSql(_blueprint.BenchmarkSql, mode);
+        }
+    }
+
+    private void RequestRegenerate()
+    {
+        if (_outputSqlManuallyEdited)
+        {
+            _confirmRegenerate = true;
+        }
+        else
+        {
+            _blueprint.OutputVerificationSql = BlueprintService.BuildOutputVerificationSql(_blueprint.BenchmarkSql, _blueprint.OutputVerificationMode);
+            _verificationTested = false;
+        }
+    }
+
+    private void ConfirmRegenerate()
+    {
+        _blueprint.OutputVerificationSql = BlueprintService.BuildOutputVerificationSql(_blueprint.BenchmarkSql, _blueprint.OutputVerificationMode);
+        _outputSqlManuallyEdited = false;
+        _confirmRegenerate = false;
+        _verificationTested = false;
+    }
+
+    private void OnVerificationSqlChanged(string? value)
+    {
+        _blueprint.OutputVerificationSql = value;
+        _outputSqlManuallyEdited = true;
+        _verificationTested = false;
+        _hasProgress = true;
+    }
+
+    private async Task TestVerificationAsync()
+    {
+        if (_dbConnection is null || string.IsNullOrWhiteSpace(_blueprint.OutputVerificationSql))
+            return;
+
+        _verificationTesting = true;
+        await InvokeAsync(StateHasChanged);
+        try
+        {
+            var result = await BlueprintService.TestOutputVerificationAsync(
+                _dbConnection.ConnectionString, _blueprint.OutputVerificationSql!, _cts.Token);
+
+            _verificationTested = true;
+            _verificationDeterministic = result.Deterministic;
+            _verificationFirstHash = result.FirstHash;
+            _verificationSecondHash = result.SecondHash;
+            _verificationError = result.Error;
+            _hasProgress = true;
+        }
+        finally
+        {
+            _verificationTesting = false;
+        }
+    }
+
+    // ----- step 4: isolation -----
+
+    private void OnIsolationModeChanged(ExperimentIsolationMode mode)
+    {
+        _blueprint.IsolationMode = mode;
+        _hasProgress = true;
+        _sandboxValidateLog = null;
+        _sandboxValidateError = null;
+        _sandboxValidateOk = null;
+
+        if (mode == ExperimentIsolationMode.SandboxSchema && string.IsNullOrWhiteSpace(_blueprint.SandboxSchemaName))
+            _blueprint.SandboxSchemaName = $"aiopt_sandbox_{Guid.NewGuid().ToString("N")[..8]}";
+        else if (mode == ExperimentIsolationMode.CloneDatabase && string.IsNullOrWhiteSpace(_blueprint.SandboxDatabaseName))
+            _blueprint.SandboxDatabaseName = $"{_dbConnection?.Name ?? "db"}_Sandbox_{Guid.NewGuid().ToString("N")[..8]}";
+    }
+
+    private async Task ValidateSandboxAsync()
+    {
+        if (_dbConnection is null)
+            return;
+
+        _validatingSandbox = true;
+        await InvokeAsync(StateHasChanged);
+        try
+        {
+            var result = await BlueprintService.ValidateSandboxAsync(
+                _dbConnection.ConnectionString, _blueprint.IsolationMode,
+                _blueprint.SandboxSetupSql, _blueprint.SandboxTeardownSql, _blueprint.SandboxDatabaseName, _cts.Token);
+
+            _sandboxValidateOk = result.Ok;
+            _sandboxValidateLog = result.Log;
+            _sandboxValidateError = result.Error;
+            _hasProgress = true;
+        }
+        finally
+        {
+            _validatingSandbox = false;
+        }
+    }
+
+    // ----- step 5: AI -----
+
+    private async Task RunAiAsync()
+    {
+        if (_dbConnection is null || _selectedAiConnectionId is null)
+            return;
+
+        var aiConn = _aiConnections.FirstOrDefault(c => c.Id == _selectedAiConnectionId);
+        if (aiConn is null)
+            return;
+
+        _aiRunning = true;
+        _aiCompleted = false;
+        _aiProgress = "Starting...";
+        await InvokeAsync(StateHasChanged);
+
+        var progress = new Progress<string>(msg =>
+        {
+            _aiProgress = msg;
+            _ = InvokeAsync(StateHasChanged);
+        });
+
+        try
+        {
+            var request = new ExperimentBlueprintRequest
+            {
+                BenchmarkSql = _blueprint.BenchmarkSql,
+                SchemaContextMarkdown = _schemaContextMarkdown,
+                Goal = _goal,
+                IsolationMode = _blueprint.IsolationMode,
+                OutputVerificationMode = _blueprint.OutputVerificationMode,
+                BaseTables = _blueprint.BaseTables.Where(t => t.Include).ToList(),
+                DatabaseName = _dbConnection.Name,
+            };
+
+            _blueprint = await BlueprintService.CompleteWithAiAsync(
+                aiConn, _dbConnection.ConnectionString, request, _blueprint, progress, _cts.Token);
+            _aiCompleted = true;
+            _hasProgress = true;
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"AI completion failed: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _aiRunning = false;
+        }
+    }
+
+    private void SkipAiAsync() => _activeIndex = 5;
+
+    // ----- step 6: review and create -----
+
+    private List<string> BlockingWarnings()
+    {
+        var list = new List<string>();
+
+        if (_blueprint.OutputVerificationMode != OutputVerificationMode.None && !(_verificationTested && _verificationDeterministic))
+            list.Add("Output verification has not been proven deterministic — go back and test it.");
+
+        if (_blueprint.IsolationMode != ExperimentIsolationMode.None && _selectedAiConnectionId is null &&
+            (string.IsNullOrWhiteSpace(_blueprint.SandboxSetupSql) || _blueprint.SandboxSetupSql.Contains("TODO", StringComparison.OrdinalIgnoreCase)))
+        {
+            list.Add("No AI connection was used and the sandbox setup script still looks like scaffolding — it likely won't work as-is.");
+        }
+
+        return list;
+    }
+
+    private async Task CreateExperimentAsync()
+    {
+        if (_db is null)
+            return;
+
+        _creating = true;
+        await InvokeAsync(StateHasChanged);
+        try
+        {
+            var experiment = new Experiment
+            {
+                Name = _blueprint.Name,
+                Description = _blueprint.Description,
+                Instructions = _blueprint.Instructions,
+                BenchmarkSql = _blueprint.BenchmarkSql,
+                ExperimentPreRunSql = _blueprint.ExperimentPreRunSql,
+                ExperimentPostRunSql = _blueprint.ExperimentPostRunSql,
+                HypothesisPreRunSql = _blueprint.HypothesisPreRunSql,
+                HypothesisPostRunSql = _blueprint.HypothesisPostRunSql,
+                IsolationMode = _blueprint.IsolationMode,
+                SandboxSchemaName = _blueprint.SandboxSchemaName,
+                SandboxDatabaseName = _blueprint.SandboxDatabaseName,
+                SandboxSetupSql = _blueprint.SandboxSetupSql,
+                SandboxTeardownSql = _blueprint.SandboxTeardownSql,
+                OutputVerificationMode = _blueprint.OutputVerificationMode,
+                OutputVerificationSql = _blueprint.OutputVerificationSql,
+                DatabaseConnectionId = ConnectionId,
+                AIConnectionId = _selectedAiConnectionId,
+                CreatedAt = DateTime.UtcNow,
+                ModifiedAt = DateTime.UtcNow,
+            };
+
+            _db.Experiments.Add(experiment);
+            await _db.SaveChangesAsync(_cts.Token);
+
+            if (_queueFirstIteration && _dbConnection?.AnalyzeOnly != true)
+            {
+                var iterationId = await DataAccess.CreateResearchIterationAsync(experiment.Id, hints: null, maxNumberOfHypotheses: 10, _cts.Token);
+                await DataAccess.SetResearchIterationStateAsync(iterationId, ResearchIterationState.Queued, _cts.Token);
+            }
+
+            Snackbar.Add($"Experiment \"{experiment.Name}\" created.", Severity.Success);
+            MudDialog.Close(DialogResult.Ok((int)(object)experiment.Id));
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Could not create experiment: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _creating = false;
+        }
+    }
+}

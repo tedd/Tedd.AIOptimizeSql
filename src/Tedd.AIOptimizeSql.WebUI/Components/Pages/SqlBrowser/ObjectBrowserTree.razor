@@ -1,0 +1,214 @@
+@using Tedd.AIOptimizeSql.OptimizeEngine.Models.SqlBrowser
+
+<div class="obt-root">
+    @if (Catalog is null)
+    {
+        <MudText Typo="Typo.body2" Class="pa-2">No catalog loaded.</MudText>
+    }
+    else
+    {
+        <MudTreeView T="CatalogObject" Hover="true" Dense="true" Class="obt-tree">
+            @foreach (var folder in Folders)
+            {
+                var groups = SchemaGroups(folder.Category).ToList();
+                if (groups.Count == 0)
+                {
+                    continue;
+                }
+                var totalCount = groups.Sum(g => g.Objects.Count);
+                var autoExpand = !string.IsNullOrWhiteSpace(SearchText);
+
+                <MudTreeViewItem T="CatalogObject" Value="@((CatalogObject?)null)" CanExpand="true"
+                                  Text="@folder.Label" EndText="@totalCount.ToString()" Icon="@folder.Icon"
+                                  Expanded="@autoExpand">
+                    <ChildContent>
+                        @foreach (var group in groups)
+                        {
+                            <MudTreeViewItem T="CatalogObject" Value="@((CatalogObject?)null)" CanExpand="true"
+                                              Text="@group.Schema" Icon="@Icons.Material.Filled.Folder"
+                                              Expanded="@autoExpand">
+                                <ChildContent>
+                                    @foreach (var obj in group.Objects)
+                                    {
+                                        <div @oncontextmenu="@(e => OnRowContextMenu(e, obj))" @oncontextmenu:preventDefault="true">
+                                            <MudTreeViewItem T="CatalogObject" Value="obj" CanExpand="false"
+                                                              Text="@obj.Name"
+                                                              EndText="@(obj.RowCount.HasValue ? obj.RowCount.Value.ToString("N0") : null)"
+                                                              Icon="@ObjectIcon(obj.Category)"
+                                                              OnDoubleClick="@(() => OnObjectDoubleClick.InvokeAsync(obj))" />
+                                        </div>
+                                    }
+                                </ChildContent>
+                            </MudTreeViewItem>
+                        }
+                    </ChildContent>
+                </MudTreeViewItem>
+            }
+        </MudTreeView>
+    }
+
+    @if (_menuOpen && _menuTarget is not null)
+    {
+        <div class="obt-context-overlay" @onclick="CloseMenu"></div>
+        <MudPaper Class="obt-context-menu" Style="@($"left:{_menuX}px; top:{_menuY}px;")" Elevation="8">
+            <MudList T="string" Dense="true">
+                @foreach (var entry in GetMenuEntries(_menuTarget))
+                {
+                    <MudListItem T="string" Icon="@entry.Icon" OnClick="@(() => entry.Handler())">@entry.Label</MudListItem>
+                }
+            </MudList>
+        </MudPaper>
+    }
+</div>
+
+<style>
+    .obt-root {
+        position: relative;
+        height: 100%;
+        overflow: auto;
+    }
+
+    .obt-context-overlay {
+        position: fixed;
+        inset: 0;
+        z-index: 2000;
+    }
+
+    .obt-context-menu {
+        position: fixed;
+        z-index: 2001;
+        min-width: 220px;
+        max-width: 320px;
+    }
+</style>
+
+@code {
+    [Parameter] public CatalogSnapshot? Catalog { get; set; }
+    [Parameter] public string SearchText { get; set; } = "";
+    [Parameter] public EventCallback<CatalogObject> OnObjectDoubleClick { get; set; }
+    [Parameter] public EventCallback<(CatalogObject Obj, CatalogScriptAction Action)> OnScriptAction { get; set; }
+    [Parameter] public EventCallback<CatalogObject> OnShowDependencies { get; set; }
+
+    private bool _menuOpen;
+    private double _menuX;
+    private double _menuY;
+    private CatalogObject? _menuTarget;
+
+    private sealed record CategoryFolder(CatalogObjectCategory Category, string Label, string Icon);
+
+    private sealed record MenuEntry(string Label, string Icon, Func<Task> Handler);
+
+    private static readonly CategoryFolder[] Folders =
+    [
+        new(CatalogObjectCategory.Table, "Tables", Icons.Material.Filled.TableChart),
+        new(CatalogObjectCategory.View, "Views", Icons.Material.Filled.Visibility),
+        new(CatalogObjectCategory.StoredProcedure, "Stored Procedures", Icons.Material.Filled.Code),
+        new(CatalogObjectCategory.Function, "Functions", Icons.Material.Filled.Functions),
+        new(CatalogObjectCategory.Synonym, "Synonyms", Icons.Material.Filled.Link),
+        new(CatalogObjectCategory.Sequence, "Sequences", Icons.Material.Filled.FormatListNumbered),
+        new(CatalogObjectCategory.TableType, "Table Types", Icons.Material.Filled.ViewList),
+        new(CatalogObjectCategory.Trigger, "Triggers", Icons.Material.Filled.FlashOn),
+    ];
+
+    private static string ObjectIcon(CatalogObjectCategory category) => category switch
+    {
+        CatalogObjectCategory.Table => Icons.Material.Filled.TableChart,
+        CatalogObjectCategory.View => Icons.Material.Filled.Visibility,
+        CatalogObjectCategory.StoredProcedure => Icons.Material.Filled.Code,
+        CatalogObjectCategory.Function => Icons.Material.Filled.Functions,
+        CatalogObjectCategory.Synonym => Icons.Material.Filled.Link,
+        CatalogObjectCategory.Sequence => Icons.Material.Filled.FormatListNumbered,
+        CatalogObjectCategory.TableType => Icons.Material.Filled.ViewList,
+        CatalogObjectCategory.Trigger => Icons.Material.Filled.FlashOn,
+        _ => Icons.Material.Filled.Description,
+    };
+
+    private bool Matches(CatalogObject obj) =>
+        string.IsNullOrWhiteSpace(SearchText) ||
+        $"{obj.Schema}.{obj.Name}".Contains(SearchText, StringComparison.OrdinalIgnoreCase);
+
+    private IEnumerable<CatalogSchemaGroup> SchemaGroups(CatalogObjectCategory category)
+    {
+        if (Catalog is null)
+        {
+            yield break;
+        }
+
+        foreach (var group in Catalog.GroupBySchema(category))
+        {
+            var filtered = group.Objects.Where(Matches).ToList();
+            if (filtered.Count > 0)
+            {
+                yield return group with { Objects = filtered };
+            }
+        }
+    }
+
+    private void OnRowContextMenu(Microsoft.AspNetCore.Components.Web.MouseEventArgs e, CatalogObject obj)
+    {
+        _menuTarget = obj;
+        _menuX = e.ClientX;
+        _menuY = e.ClientY;
+        _menuOpen = true;
+    }
+
+    private void CloseMenu()
+    {
+        _menuOpen = false;
+        _menuTarget = null;
+    }
+
+    private List<MenuEntry> GetMenuEntries(CatalogObject obj)
+    {
+        var list = new List<MenuEntry>();
+
+        void Script(string label, CatalogScriptAction action) =>
+            list.Add(new MenuEntry(label, Icons.Material.Filled.Description, () => RaiseScriptAction(obj, action)));
+
+        switch (obj.Category)
+        {
+            case CatalogObjectCategory.Table:
+                Script("Select Top 1000", CatalogScriptAction.SelectTop1000);
+                Script("Select Count", CatalogScriptAction.SelectCount);
+                Script("Script CREATE TABLE", CatalogScriptAction.ScriptCreateTable);
+                break;
+            case CatalogObjectCategory.View:
+                Script("Select Top 1000", CatalogScriptAction.SelectTop1000);
+                Script("Select Count", CatalogScriptAction.SelectCount);
+                Script("Script definition", CatalogScriptAction.ScriptDefinition);
+                Script("Script ALTER", CatalogScriptAction.ScriptAlter);
+                break;
+            case CatalogObjectCategory.StoredProcedure:
+            case CatalogObjectCategory.Function:
+                Script("Execute (template)", CatalogScriptAction.ExecuteTemplate);
+                Script("Script definition", CatalogScriptAction.ScriptDefinition);
+                Script("Script ALTER", CatalogScriptAction.ScriptAlter);
+                break;
+            default:
+                Script("Script definition", CatalogScriptAction.ScriptDefinition);
+                break;
+        }
+
+        list.Add(new MenuEntry("Show dependencies", Icons.Material.Filled.AccountTree, () => RaiseShowDependencies(obj)));
+        list.Add(new MenuEntry("Insert name", Icons.Material.Filled.ContentPaste, () => RaiseInsert(obj)));
+        return list;
+    }
+
+    private async Task RaiseScriptAction(CatalogObject obj, CatalogScriptAction action)
+    {
+        CloseMenu();
+        await OnScriptAction.InvokeAsync((obj, action));
+    }
+
+    private async Task RaiseShowDependencies(CatalogObject obj)
+    {
+        CloseMenu();
+        await OnShowDependencies.InvokeAsync(obj);
+    }
+
+    private async Task RaiseInsert(CatalogObject obj)
+    {
+        CloseMenu();
+        await OnObjectDoubleClick.InvokeAsync(obj);
+    }
+}

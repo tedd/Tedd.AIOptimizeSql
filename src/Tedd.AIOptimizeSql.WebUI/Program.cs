@@ -60,6 +60,10 @@ public class Program
         builder.Services.AddScoped<IAIOptimizeDataAccess, AIOptimizeDataAccess>();
         builder.Services.Configure<UiPollingOptions>(builder.Configuration.GetSection(UiPollingOptions.SectionName));
 
+        // The SQL browser and Create Experiment wizard are interactive UI features that must
+        // work even when the background engine runs out-of-process (OptimizeEngine:RunInProcess=false).
+        Tedd.AIOptimizeSql.OptimizeEngine.Startup.ConfigureSqlBrowserServices(builder);
+
         // Combined mode: host the optimize engine inside the web process so a single
         // executable (or a single App Service) runs the whole application. Set
         // OptimizeEngine:RunInProcess=false to deploy the Worker separately instead.
