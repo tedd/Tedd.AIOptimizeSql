@@ -4,16 +4,29 @@ using Tedd.AIOptimizeSql.OptimizeEngine.Utils;
 namespace Tedd.AIOptimizeSql.OptimizeEngine.Services.SqlBrowser;
 
 /// <summary>
-/// Builds the T-SQL that fingerprints a benchmark query's output without knowing its column
-/// list: the rows are materialised into a temp table and each row is hashed through
-/// <c>FOR XML RAW</c>, so every column participates automatically. Deterministic, no AI.
+/// Builds the T-SQL that fingerprints a benchmark's output without knowing its column list.
+/// Deterministic, no AI. Two strategies, chosen automatically:
+/// <list type="bullet">
+/// <item>
+/// <b>Query-result fingerprint</b> — when the benchmark is a single SELECT, its rows are
+/// materialised into a temp table and each row is hashed through <c>FOR XML RAW</c>, so every
+/// column participates without being named.
+/// </item>
+/// <item>
+/// <b>Table-state fingerprint</b> — when the benchmark is not a single SELECT (a stored
+/// procedure call, or anything with side effects), there is no result set to hash. Instead the
+/// CURRENT CONTENTS of every table the caller says the benchmark touches are hashed the same
+/// way, one table at a time, and combined into one value. Run once before the benchmark for a
+/// baseline and once after for each hypothesis, this proves an optimized procedure leaves the
+/// same data behind as the original — the only meaningful notion of "same output" a
+/// procedure with no result set can have. Callers supply the touched tables from schema/
+/// dependency discovery (<see cref="Models.SqlBrowser.BlueprintTable"/> or
+/// <see cref="Models.BaseTableInfo"/>) — this builder does no discovery of its own.
+/// </item>
+/// </list>
+/// If neither applies (no affected tables were supplied either), a placeholder script tells the
+/// user to supply their own — see <see cref="CanFingerprint"/>.
 /// </summary>
-/// <remarks>
-/// The strategy only works when the benchmark is one read-only SELECT (optionally with a CTE
-/// list in front), because the query has to survive being wrapped in a derived table. Anything
-/// else gets a placeholder script whose leading comment tells the user to supply their own
-/// fingerprint query — see <see cref="CanFingerprint"/>.
-/// </remarks>
 public static class OutputVerificationSqlBuilder
 {
     /// <summary>
@@ -34,24 +47,45 @@ public static class OutputVerificationSqlBuilder
     /// <see cref="OutputVerificationMode.None"/>. The script always returns exactly one row
     /// with one column named <c>OutputHash</c>, so callers can use <c>ExecuteScalar</c>.
     /// </summary>
-    public static string? Build(string benchmarkSql, OutputVerificationMode mode)
+    /// <param name="affectedTables">
+    /// Tables the benchmark is known to touch (from schema/dependency discovery). Used only as
+    /// a fallback when <paramref name="benchmarkSql"/> is not a single SELECT — a query-result
+    /// fingerprint is always preferred when it applies, since it is more precise than table
+    /// state (e.g. a filtered SELECT that returns none of a table's changed rows would not
+    /// notice them; the table-state fingerprint always would).
+    /// </param>
+    public static string? Build(
+        string benchmarkSql,
+        OutputVerificationMode mode,
+        IReadOnlyList<(string Schema, string Table)>? affectedTables = null)
     {
         if (mode == OutputVerificationMode.None)
             return null;
 
         var analysis = Analyze(benchmarkSql);
-        if (!analysis.Ok)
-            return BuildManualPlaceholder(analysis.Reason!);
+        if (analysis.Ok)
+        {
+            return mode == OutputVerificationMode.OrderedHash
+                ? BuildOrdered(analysis.Prefix, analysis.Inner)
+                : BuildUnordered(analysis.Prefix, analysis.Inner);
+        }
 
-        return mode == OutputVerificationMode.OrderedHash
-            ? BuildOrdered(analysis.Prefix, analysis.Inner)
-            : BuildUnordered(analysis.Prefix, analysis.Inner);
+        var tables = (affectedTables ?? [])
+            .Where(t => !string.IsNullOrWhiteSpace(t.Schema) && !string.IsNullOrWhiteSpace(t.Table))
+            .Distinct()
+            .ToList();
+
+        return tables.Count > 0
+            ? BuildTableState(tables)
+            : BuildManualPlaceholder(analysis.Reason!);
     }
 
     /// <summary>
-    /// Whether <paramref name="benchmarkSql"/> can be fingerprinted automatically. When false,
-    /// <paramref name="reason"/> explains why as a sentence fragment usable in a warning
-    /// ("it contains GO batch separators").
+    /// Whether <paramref name="benchmarkSql"/> can be fingerprinted automatically as a
+    /// query-result. When false, <paramref name="reason"/> explains why as a sentence fragment
+    /// usable in a warning ("it contains GO batch separators") — this does NOT account for the
+    /// table-state fallback <see cref="Build"/> uses when affected tables are supplied, since
+    /// whether that fallback is available depends on discovery data this method does not see.
     /// </summary>
     public static bool CanFingerprint(string benchmarkSql, out string? reason)
     {
@@ -371,6 +405,82 @@ public static class OutputVerificationSqlBuilder
 
         SELECT @OutputHash AS [OutputHash];
         """;
+
+    /// <summary>
+    /// Fingerprints the current contents of every table in <paramref name="tables"/> and combines
+    /// them into one scalar. There is no meaningful "order" across a set of whole tables the way
+    /// there is across a query's result rows, so this always uses the commutative per-table
+    /// combination regardless of <see cref="OutputVerificationMode"/> -- OrderedHash only affects
+    /// the query-result strategy.
+    /// </summary>
+    private static string BuildTableState(IReadOnlyList<(string Schema, string Table)> tables)
+    {
+        var branches = tables
+            .OrderBy(t => t.Schema, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(t => t.Table, StringComparer.OrdinalIgnoreCase)
+            .Select(t => TableStateBranch(t.Schema, t.Table));
+
+        var union = string.Join(Environment.NewLine + "    UNION ALL" + Environment.NewLine, branches);
+
+        return $"""
+        -- Table-state fingerprint: the benchmark is not a single SELECT -- most likely a stored
+        -- procedure with side effects and no result set of its own to hash -- so instead this
+        -- fingerprints the CURRENT CONTENTS of every table the benchmark is known to touch. Run
+        -- once before the benchmark for a baseline and once after for each hypothesis, exactly
+        -- like the query-result fingerprint; a match here means an optimized procedure left the
+        -- same data behind as the original, which is the only "same output" a side-effecting
+        -- procedure can have. If the benchmark performs its writes through OTHER tables than the
+        -- ones listed below (dynamic SQL, a nested call the dependency graph could not follow),
+        -- add them by hand -- this fingerprint only ever proves what it actually reads.
+        SET NOCOUNT ON;
+
+        DECLARE @OutputHash nvarchar(128);
+        DECLARE @PerTable nvarchar(max);
+
+        SELECT @PerTable = STRING_AGG(CONVERT(nvarchar(max), [t].[Fingerprint]), N'|')
+                           WITHIN GROUP (ORDER BY [t].[TableKey])
+        FROM
+        (
+        {union}
+        ) AS [t];
+
+        SET @OutputHash = CONVERT(nvarchar(64), HASHBYTES('SHA2_256', ISNULL(@PerTable, N'')), 2);
+
+        SELECT @OutputHash AS [OutputHash];
+        """;
+    }
+
+    /// <summary>
+    /// One UNION ALL branch of <see cref="BuildTableState"/>: the row-hash + commutative
+    /// aggregate technique from <see cref="BuildUnordered"/>, applied directly to a real table
+    /// instead of a materialised query result, tagged with the table's own key so the outer
+    /// STRING_AGG has a stable order to combine branches in.
+    /// </summary>
+    private static string TableStateBranch(string schema, string table)
+    {
+        var quoted = SqlIdentifier.QuoteQualified(schema, table);
+        var tableKey = SingleLine($"{schema}.{table}").Replace("'", "''");
+
+        return $"""
+            SELECT
+                N'{tableKey}' AS [TableKey],
+                CONCAT(
+                    N'{tableKey}:rows=', COUNT_BIG(*),
+                    N';sum=', CONVERT(nvarchar(48), ISNULL(SUM(CONVERT(decimal(38, 0), [h].[RowHash])), 0)),
+                    N';agg=', CONVERT(nvarchar(16), ISNULL(CHECKSUM_AGG([h].[RowFold]), 0))) AS [Fingerprint]
+            FROM
+            (
+                SELECT
+                    CONVERT(bigint, SUBSTRING([d].[RowDigest], 1, 8)) AS [RowHash],
+                    CONVERT(int, SUBSTRING([d].[RowDigest], 9, 4)) AS [RowFold]
+                FROM
+                (
+                    SELECT HASHBYTES('SHA2_256', ISNULL((SELECT [r].* FOR XML RAW, BINARY BASE64), N'')) AS [RowDigest]
+                    FROM {quoted} AS [r]
+                ) AS [d]
+            ) AS [h]
+        """;
+    }
 
     /// <summary>
     /// Emitted when the benchmark cannot be wrapped safely. It parses and returns the required

@@ -76,20 +76,28 @@ public sealed partial class ExperimentBlueprintService(
             warnings.Add($"Dependency graph could not be built: {ex.Message}");
         }
 
+        var baseTables = BuildBaseTables(discovery, rootRefs);
+        var affectedTables = baseTables.Select(t => (t.Schema, t.Table)).ToList();
+
         if (!OutputVerificationSqlBuilder.CanFingerprint(benchmarkSql, out var fingerprintLimitation))
         {
-            warnings.Add(
-                $"No output fingerprint could be generated automatically because {fingerprintLimitation}. " +
-                "Supply an output verification script by hand, or run without output verification.");
+            warnings.Add(affectedTables.Count > 0
+                ? $"The benchmark's own result set could not be fingerprinted because {fingerprintLimitation}. " +
+                  $"Falling back to a table-state fingerprint over the {affectedTables.Count} table(s) it touches -- " +
+                  "review it before relying on it, especially if the benchmark writes through tables the dependency graph could not follow."
+                : $"No output fingerprint could be generated automatically because {fingerprintLimitation}, " +
+                  "and no affected tables were discovered to fall back to. " +
+                  "Supply an output verification script by hand, or run without output verification.");
         }
 
         var blueprint = new ExperimentBlueprint
         {
             Name = BuildDefaultName(discovery, rootRefs),
             BenchmarkSql = benchmarkSql,
-            BaseTables = BuildBaseTables(discovery, rootRefs),
+            BaseTables = baseTables,
             OutputVerificationMode = OutputVerificationMode.UnorderedHash,
-            OutputVerificationSql = OutputVerificationSqlBuilder.Build(benchmarkSql, OutputVerificationMode.UnorderedHash),
+            OutputVerificationSql = OutputVerificationSqlBuilder.Build(
+                benchmarkSql, OutputVerificationMode.UnorderedHash, affectedTables),
             Warnings = Dedupe(warnings)
         };
 
@@ -241,16 +249,22 @@ public sealed partial class ExperimentBlueprintService(
         blueprint.SandboxSetupSql = setupSql;
         blueprint.SandboxTeardownSql = teardownSql;
 
-        var deterministicVerificationSql =
-            OutputVerificationSqlBuilder.Build(request.BenchmarkSql, request.OutputVerificationMode);
+        var affectedIncludedTables = request.BaseTables.Where(t => t.Include).Select(t => (t.Schema, t.Table)).ToList();
+        var deterministicVerificationSql = OutputVerificationSqlBuilder.Build(
+            request.BenchmarkSql, request.OutputVerificationMode, affectedIncludedTables);
 
         string? fingerprintLimitation = null;
+        var usingTableStateFallback = false;
         if (request.OutputVerificationMode != OutputVerificationMode.None &&
             !OutputVerificationSqlBuilder.CanFingerprint(request.BenchmarkSql, out fingerprintLimitation))
         {
-            warnings.Add(
-                $"No output fingerprint could be generated automatically because {fingerprintLimitation}. " +
-                "Review the output verification script before creating the experiment.");
+            usingTableStateFallback = affectedIncludedTables.Count > 0;
+            warnings.Add(usingTableStateFallback
+                ? $"The benchmark's own result set could not be fingerprinted because {fingerprintLimitation}. " +
+                  $"Falling back to a table-state fingerprint over the {affectedIncludedTables.Count} affected table(s) -- " +
+                  "review it before relying on it."
+                : $"No output fingerprint could be generated automatically because {fingerprintLimitation}, " +
+                  "and no affected tables were available to fall back to. Review the output verification script before creating the experiment.");
         }
 
         blueprint.OutputVerificationSql = deterministicVerificationSql;
@@ -265,7 +279,7 @@ public sealed partial class ExperimentBlueprintService(
             var agent = agentFactory.Create(aiConnection, AgentInstructions, new List<AITool>());
             var prompt = BuildPrompt(
                 request, blueprint, databaseName, setupSql, teardownSql,
-                deterministicVerificationSql, fingerprintLimitation);
+                deterministicVerificationSql, fingerprintLimitation, usingTableStateFallback);
 
             var sw = Stopwatch.StartNew();
             var response = await agent.RunAsync(prompt, cancellationToken: ct);
@@ -383,8 +397,9 @@ public sealed partial class ExperimentBlueprintService(
     #region Output verification
 
     /// <inheritdoc />
-    public string? BuildOutputVerificationSql(string benchmarkSql, OutputVerificationMode mode) =>
-        OutputVerificationSqlBuilder.Build(benchmarkSql, mode);
+    public string? BuildOutputVerificationSql(
+        string benchmarkSql, OutputVerificationMode mode, IReadOnlyList<(string Schema, string Table)>? affectedTables = null) =>
+        OutputVerificationSqlBuilder.Build(benchmarkSql, mode, affectedTables);
 
     /// <inheritdoc />
     public async Task<(bool Deterministic, string? FirstHash, string? SecondHash, string? Error)>
@@ -615,7 +630,8 @@ public sealed partial class ExperimentBlueprintService(
         string? sandboxSetupSql,
         string? sandboxTeardownSql,
         string? outputVerificationSql,
-        string? fingerprintLimitation)
+        string? fingerprintLimitation,
+        bool usingTableStateFallback)
     {
         var sb = new StringBuilder();
 
@@ -719,12 +735,50 @@ public sealed partial class ExperimentBlueprintService(
             sb.AppendLine(outputVerificationSql ?? "(none generated)");
             sb.AppendLine("```");
         }
+        else if (usingTableStateFallback)
+        {
+            sb.AppendLine($"The benchmark is not a single SELECT ({fingerprintLimitation}), most likely because it is a");
+            sb.AppendLine("stored procedure with side effects and no result set of its own -- there is nothing to hash");
+            sb.AppendLine("by row. The script below fingerprints TABLE STATE instead: it hashes the current contents");
+            sb.AppendLine("of every table in \"Base tables the experiment depends on\" above and combines them into one");
+            sb.AppendLine("value. Run once before the benchmark and once after each hypothesis, a match proves the");
+            sb.AppendLine("optimized procedure left the same data behind as the original -- the only meaningful \"same");
+            sb.AppendLine("output\" a procedure with no return rows can have. Review it:");
+            sb.AppendLine("  - If the procedure writes through tables NOT listed above (dynamic SQL, a nested call the");
+            sb.AppendLine("    dependency graph could not follow), rewrite the script to include them, or say so in warnings.");
+            sb.AppendLine("  - If a hypothesis benchmark would run the procedure MORE THAN ONCE (warm-up + timed");
+            sb.AppendLine("    iterations) and the procedure is not naturally idempotent -- e.g. it INSERTs new rows");
+            sb.AppendLine("    every call rather than upserting -- repeated runs will pollute the tables between");
+            sb.AppendLine("    iterations and the fingerprint will never repeat. When that risk exists and the isolation");
+            sb.AppendLine("    mode is SandboxSchema or CloneDatabase, use the sandbox to neutralise it: propose (in the");
+            sb.AppendLine("    sandbox setup script) a shadow variant of the procedure -- and, if it is cleaner, a whole");
+            sb.AppendLine("    parallel set of procedures and staging tables -- that redirects every write to sandboxed");
+            sb.AppendLine("    copies, optionally truncating/resetting those staging tables between runs, so the same");
+            sb.AppendLine("    benchmark can execute repeatedly without accumulating state or ever touching the real");
+            sb.AppendLine("    tables. Explain that redirection in warnings so the user can review the substitute");
+            sb.AppendLine("    procedure(s) before trusting them. When isolation mode is None, this risk cannot be");
+            sb.AppendLine("    engineered away -- say so plainly in warnings instead of inventing a workaround.");
+            sb.AppendLine();
+            sb.AppendLine("```sql");
+            sb.AppendLine(outputVerificationSql ?? "(none generated)");
+            sb.AppendLine("```");
+        }
         else
         {
-            sb.AppendLine($"No script could be generated automatically because {fingerprintLimitation}.");
-            sb.AppendLine("Write one: materialise the benchmark's rows, hash every column of every row, combine the");
-            sb.AppendLine($"row hashes ({(request.OutputVerificationMode == OutputVerificationMode.OrderedHash ? "order-sensitively" : "order-insensitively")}),");
-            sb.AppendLine("and return exactly one row with one column named OutputHash.");
+            sb.AppendLine($"No script could be generated automatically because {fingerprintLimitation}, and no base");
+            sb.AppendLine("tables were resolved to fall back to (see \"Base tables the experiment depends on\" above --");
+            sb.AppendLine("it is empty). Two ways to fix this, in order of preference:");
+            sb.AppendLine("  1. If the benchmark writes to tables the dependency graph could not resolve (dynamic SQL,");
+            sb.AppendLine("     a linked server, a synonym it could not follow), name those tables explicitly and write");
+            sb.AppendLine("     a table-state fingerprint over them: hash each table's rows with");
+            sb.AppendLine("     HASHBYTES('SHA2_256', (SELECT [t].* FOR XML RAW, BINARY BASE64)) per row, combine the");
+            sb.AppendLine("     row hashes commutatively (SUM/CHECKSUM_AGG), then combine the per-table results.");
+            sb.AppendLine("  2. If the benchmark genuinely returns a result set that just could not be wrapped");
+            sb.AppendLine("     mechanically, materialise its rows, hash every column of every row, combine the row");
+            sb.AppendLine($"     hashes ({(request.OutputVerificationMode == OutputVerificationMode.OrderedHash ? "order-sensitively" : "order-insensitively")}).");
+            sb.AppendLine("Either way the script must return exactly one row with one column named OutputHash. If");
+            sb.AppendLine("neither applies, return null and explain why in warnings -- do not guess at a fingerprint");
+            sb.AppendLine("you cannot justify.");
         }
         sb.AppendLine();
 

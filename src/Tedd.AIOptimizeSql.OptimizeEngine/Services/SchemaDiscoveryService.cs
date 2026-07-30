@@ -468,16 +468,24 @@ public sealed partial class SchemaDiscoveryService(ILogger<SchemaDiscoveryServic
               AND tr.is_disabled = 0
             """;
 
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = sql;
-        cmd.CommandTimeout = CommandTimeout;
-        AddParam(cmd, "@schema", tableSchema);
-        AddParam(cmd, "@table", tableName);
-
         var triggers = new List<(string Schema, string Name)>();
-        using var reader = await cmd.ExecuteReaderAsync(ct);
-        while (await reader.ReadAsync(ct))
-            triggers.Add((reader.GetString(0), reader.GetString(1)));
+
+        // The reader must be closed before DiscoverObjectGraphAsync below opens its own --
+        // without MultipleActiveResultSets in the connection string (not the default, and not
+        // required anywhere else in this codebase), a second reader on the same connection
+        // while this one is still open throws "There is already an open DataReader...". This
+        // used to hit every benchmark that reached a table with an active trigger.
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = sql;
+            cmd.CommandTimeout = CommandTimeout;
+            AddParam(cmd, "@schema", tableSchema);
+            AddParam(cmd, "@table", tableName);
+
+            using var reader = await cmd.ExecuteReaderAsync(ct);
+            while (await reader.ReadAsync(ct))
+                triggers.Add((reader.GetString(0), reader.GetString(1)));
+        }
 
         foreach (var (trigSchema, trigName) in triggers)
         {

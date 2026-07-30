@@ -36,12 +36,19 @@ public interface IExperimentBlueprintService
         CancellationToken ct = default);
 
     /// <summary>
-    /// Builds the output-fingerprint script for <paramref name="benchmarkSql"/> deterministically:
-    /// materialize the query's rows into a temp table, hash each row, aggregate per
-    /// <paramref name="mode"/>, and return one scalar. Returns null for
-    /// <see cref="OutputVerificationMode.None"/>.
+    /// Builds the output-fingerprint script for <paramref name="benchmarkSql"/> deterministically.
+    /// When the benchmark is a single SELECT, its rows are materialized into a temp table, each
+    /// row is hashed, and the hashes are aggregated per <paramref name="mode"/>. Otherwise — a
+    /// stored procedure call or anything else with side effects and no result set of its own —
+    /// <paramref name="affectedTables"/> (from <see cref="ExperimentBlueprint.BaseTables"/>) is
+    /// hashed instead: the CURRENT CONTENTS of every table listed, combined into one value, so a
+    /// procedure with no return rows can still be proven to leave the same data behind. Returns
+    /// null for <see cref="OutputVerificationMode.None"/>.
     /// </summary>
-    string? BuildOutputVerificationSql(string benchmarkSql, OutputVerificationMode mode);
+    string? BuildOutputVerificationSql(
+        string benchmarkSql,
+        OutputVerificationMode mode,
+        IReadOnlyList<(string Schema, string Table)>? affectedTables = null);
 
     /// <summary>
     /// Runs the verification script twice against the unmodified database and reports whether

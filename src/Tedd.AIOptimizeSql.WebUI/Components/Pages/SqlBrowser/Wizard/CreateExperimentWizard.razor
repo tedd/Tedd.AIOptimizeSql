@@ -28,7 +28,7 @@
 
                         <SqlMonacoField EditorId="wizard-benchmark-sql" Label="Query being optimized" Value="@Sql" ReadOnly="true" />
 
-                        <MudTextField @bind-Value="_blueprint.Name" Label="Experiment name" Variant="Variant.Outlined"
+                        <MudTextField T="string" Value="@_blueprint.Name" ValueChanged="OnNameChanged" Label="Experiment name" Variant="Variant.Outlined"
                                       Required="true" RequiredError="Give this experiment a name" Class="mb-4" />
 
                         <MudTextField @bind-Value="_goal" Label="What does &quot;faster&quot; mean here?" Variant="Variant.Outlined"
@@ -426,6 +426,15 @@
 
     private ExperimentBlueprint _blueprint = new();
     private string _goal = "";
+
+    /// <summary>
+    /// Tables ticked in step 2, fed to <c>BuildOutputVerificationSql</c> so a benchmark with no
+    /// result set of its own (a stored procedure with side effects) still gets a working
+    /// fingerprint -- one over the tables it touches, instead of a placeholder telling the user
+    /// to write it by hand.
+    /// </summary>
+    private static IReadOnlyList<(string Schema, string Table)> AffectedTables(ExperimentBlueprint blueprint) =>
+        blueprint.BaseTables.Where(t => t.Include).Select(t => (t.Schema, t.Table)).ToList();
     private DatabaseConnection? _dbConnection;
     private List<AIConnection> _aiConnections = new();
     private AIConnectionId? _selectedAiConnectionId;
@@ -437,6 +446,7 @@
     private string? _analyzeError;
 
     private bool _outputSqlManuallyEdited;
+    private bool _nameManuallyEdited;
     private bool _confirmRegenerate;
     private bool _verificationTesting;
     private bool _verificationTested;
@@ -528,6 +538,13 @@
 
     // ----- step 1: analyze -----
 
+    private void OnNameChanged(string? value)
+    {
+        _blueprint.Name = value ?? "";
+        _nameManuallyEdited = true;
+        _hasProgress = true;
+    }
+
     private async Task AnalyzeAsync()
     {
         if (_dbConnection is null)
@@ -547,8 +564,12 @@
                 await BlueprintService.AnalyzeQueryAsync(_dbConnection.ConnectionString, Sql, _cts.Token);
 
             // Preserve anything the user already decided in other steps (Analyze/Re-analyze is
-            // reachable from any step thanks to non-linear navigation).
-            blueprint.Name = _blueprint.Name;
+            // reachable from any step thanks to non-linear navigation). Name is the exception:
+            // until the user actually types one, keep adopting the freshly analyzed default --
+            // otherwise the very first Analyze would "preserve" the generic placeholder set in
+            // OnInitializedAsync instead of the real name computed from the query.
+            if (_nameManuallyEdited)
+                blueprint.Name = _blueprint.Name;
             blueprint.Description = _blueprint.Description;
             blueprint.Instructions = _blueprint.Instructions;
             blueprint.IsolationMode = _blueprint.IsolationMode;
@@ -561,7 +582,8 @@
             if (_outputSqlManuallyEdited)
                 blueprint.OutputVerificationSql = _blueprint.OutputVerificationSql;
             else if (blueprint.OutputVerificationMode != OutputVerificationMode.None)
-                blueprint.OutputVerificationSql = BlueprintService.BuildOutputVerificationSql(blueprint.BenchmarkSql, blueprint.OutputVerificationMode);
+                blueprint.OutputVerificationSql = BlueprintService.BuildOutputVerificationSql(
+                    blueprint.BenchmarkSql, blueprint.OutputVerificationMode, AffectedTables(blueprint));
 
             _blueprint = blueprint;
             _schemaContextMarkdown = schemaMarkdown;
@@ -614,7 +636,8 @@
         }
         else
         {
-            _blueprint.OutputVerificationSql = BlueprintService.BuildOutputVerificationSql(_blueprint.BenchmarkSql, mode);
+            _blueprint.OutputVerificationSql = BlueprintService.BuildOutputVerificationSql(
+                _blueprint.BenchmarkSql, mode, AffectedTables(_blueprint));
         }
     }
 
@@ -626,14 +649,16 @@
         }
         else
         {
-            _blueprint.OutputVerificationSql = BlueprintService.BuildOutputVerificationSql(_blueprint.BenchmarkSql, _blueprint.OutputVerificationMode);
+            _blueprint.OutputVerificationSql = BlueprintService.BuildOutputVerificationSql(
+                _blueprint.BenchmarkSql, _blueprint.OutputVerificationMode, AffectedTables(_blueprint));
             _verificationTested = false;
         }
     }
 
     private void ConfirmRegenerate()
     {
-        _blueprint.OutputVerificationSql = BlueprintService.BuildOutputVerificationSql(_blueprint.BenchmarkSql, _blueprint.OutputVerificationMode);
+        _blueprint.OutputVerificationSql = BlueprintService.BuildOutputVerificationSql(
+            _blueprint.BenchmarkSql, _blueprint.OutputVerificationMode, AffectedTables(_blueprint));
         _outputSqlManuallyEdited = false;
         _confirmRegenerate = false;
         _verificationTested = false;
