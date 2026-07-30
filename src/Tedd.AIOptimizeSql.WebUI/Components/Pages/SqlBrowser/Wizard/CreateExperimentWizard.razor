@@ -137,7 +137,7 @@
                                 </MudAlert>
                             }
                             <SqlMonacoField EditorId="wizard-output-verification-sql" Label="Output verification SQL"
-                                            Value="_blueprint.OutputVerificationSql" ValueChanged="OnVerificationSqlChanged"
+                                            Value="@_blueprint.OutputVerificationSql" ValueChanged="OnVerificationSqlChanged"
                                             HelperText="Returns one scalar fingerprint of the query's output." />
                             <MudStack Row="true" Spacing="2" Class="mb-3">
                                 <MudButton Variant="Variant.Outlined" OnClick="RequestRegenerate">Regenerate from template</MudButton>
@@ -339,39 +339,39 @@
                         </MudSimpleTable>
 
                         <MudText Typo="Typo.subtitle1">Benchmark SQL</MudText>
-                        <SqlMonacoField EditorId="wizard-review-benchmark-sql" Value="_blueprint.BenchmarkSql" ReadOnly="true" />
+                        <SqlMonacoField EditorId="wizard-review-benchmark-sql" Value="@_blueprint.BenchmarkSql" ReadOnly="true" />
 
                         @if (!string.IsNullOrWhiteSpace(_blueprint.ExperimentPreRunSql))
                         {
                             <MudText Typo="Typo.subtitle2" Class="mt-2">Experiment pre-run SQL</MudText>
-                            <SqlMonacoField EditorId="wizard-review-exp-pre" Value="_blueprint.ExperimentPreRunSql" ReadOnly="true" />
+                            <SqlMonacoField EditorId="wizard-review-exp-pre" Value="@_blueprint.ExperimentPreRunSql" ReadOnly="true" />
                         }
                         @if (!string.IsNullOrWhiteSpace(_blueprint.ExperimentPostRunSql))
                         {
                             <MudText Typo="Typo.subtitle2" Class="mt-2">Experiment post-run SQL</MudText>
-                            <SqlMonacoField EditorId="wizard-review-exp-post" Value="_blueprint.ExperimentPostRunSql" ReadOnly="true" />
+                            <SqlMonacoField EditorId="wizard-review-exp-post" Value="@_blueprint.ExperimentPostRunSql" ReadOnly="true" />
                         }
                         @if (!string.IsNullOrWhiteSpace(_blueprint.HypothesisPreRunSql))
                         {
                             <MudText Typo="Typo.subtitle2" Class="mt-2">Hypothesis pre-run SQL</MudText>
-                            <SqlMonacoField EditorId="wizard-review-hyp-pre" Value="_blueprint.HypothesisPreRunSql" ReadOnly="true" />
+                            <SqlMonacoField EditorId="wizard-review-hyp-pre" Value="@_blueprint.HypothesisPreRunSql" ReadOnly="true" />
                         }
                         @if (!string.IsNullOrWhiteSpace(_blueprint.HypothesisPostRunSql))
                         {
                             <MudText Typo="Typo.subtitle2" Class="mt-2">Hypothesis post-run SQL</MudText>
-                            <SqlMonacoField EditorId="wizard-review-hyp-post" Value="_blueprint.HypothesisPostRunSql" ReadOnly="true" />
+                            <SqlMonacoField EditorId="wizard-review-hyp-post" Value="@_blueprint.HypothesisPostRunSql" ReadOnly="true" />
                         }
                         @if (_blueprint.IsolationMode != ExperimentIsolationMode.None)
                         {
                             <MudText Typo="Typo.subtitle2" Class="mt-2">Sandbox setup SQL</MudText>
-                            <SqlMonacoField EditorId="wizard-review-sandbox-setup" Value="_blueprint.SandboxSetupSql" ReadOnly="true" />
+                            <SqlMonacoField EditorId="wizard-review-sandbox-setup" Value="@_blueprint.SandboxSetupSql" ReadOnly="true" />
                             <MudText Typo="Typo.subtitle2" Class="mt-2">Sandbox teardown SQL</MudText>
-                            <SqlMonacoField EditorId="wizard-review-sandbox-teardown" Value="_blueprint.SandboxTeardownSql" ReadOnly="true" />
+                            <SqlMonacoField EditorId="wizard-review-sandbox-teardown" Value="@_blueprint.SandboxTeardownSql" ReadOnly="true" />
                         }
                         @if (_blueprint.OutputVerificationMode != OutputVerificationMode.None)
                         {
                             <MudText Typo="Typo.subtitle2" Class="mt-2">Output verification SQL</MudText>
-                            <SqlMonacoField EditorId="wizard-review-output-verification" Value="_blueprint.OutputVerificationSql" ReadOnly="true" />
+                            <SqlMonacoField EditorId="wizard-review-output-verification" Value="@_blueprint.OutputVerificationSql" ReadOnly="true" />
                         }
 
                         <MudCheckBox T="bool" @bind-Value="_queueFirstIteration" Label="Queue a first research iteration now"

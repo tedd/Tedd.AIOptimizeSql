@@ -86,10 +86,11 @@ public sealed partial class SqlCatalogService(ILogger<SqlCatalogService> logger)
         DbConnection conn, CancellationToken ct)
     {
         // @@SERVERNAME is NULL on an instance that was renamed without sp_dropserver/sp_addserver;
-        // SERVERPROPERTY always answers.
+        // SERVERPROPERTY always answers, but it returns sql_variant, which ISNULL cannot
+        // implicitly convert against @@SERVERNAME's nvarchar -- convert it explicitly first.
         const string sql = """
             SELECT
-                CAST(ISNULL(@@SERVERNAME, SERVERPROPERTY('ServerName')) AS nvarchar(256)) AS server_name,
+                ISNULL(@@SERVERNAME, CONVERT(nvarchar(256), SERVERPROPERTY('ServerName'))) AS server_name,
                 DB_NAME() AS database_name
             """;
 
