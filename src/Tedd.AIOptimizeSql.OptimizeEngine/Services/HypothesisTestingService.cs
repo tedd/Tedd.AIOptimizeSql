@@ -12,6 +12,7 @@ using Tedd.AIOptimizeSql.Database;
 using Tedd.AIOptimizeSql.Database.Models;
 using Tedd.AIOptimizeSql.Database.Models.Enums;
 using Tedd.AIOptimizeSql.OptimizeEngine.Models;
+using Tedd.AIOptimizeSql.OptimizeEngine.Services.SqlBrowser;
 using Tedd.AIOptimizeSql.OptimizeEngine.Utils;
 
 namespace Tedd.AIOptimizeSql.OptimizeEngine.Services;
@@ -75,7 +76,8 @@ public sealed class HypothesisTestingService(
             $"(+{config.PostClearStabilizationMs} ms), then executes the benchmark SQL below with SET STATISTICS TIME/IO/XML ON.",
             experiment.BenchmarkSql));
 
-        await using var conn = await executor.OpenConnectionAsync(dbConnection.ConnectionString, ct);
+        var connectionString = ExperimentSandboxCoordinator.ResolveConnectionString(experiment);
+        await using var conn = await executor.OpenConnectionAsync(connectionString, ct);
 
         // Run ExperimentPreRunSql if configured
         if (!string.IsNullOrWhiteSpace(experiment.ExperimentPreRunSql))
@@ -142,6 +144,31 @@ public sealed class HypothesisTestingService(
             .ExecuteUpdateAsync(s => s
                 .SetProperty(r => r.BaselineBenchmarkRunId, aggregated.Id)
                 .SetProperty(r => r.ModifiedAt, linkNow), ct);
+
+        // Baseline output fingerprint: every hypothesis is compared against this. A failure
+        // here is a warning, not fatal -- the hash stays null and comparisons downstream
+        // simply report "not verified" instead of blocking the iteration.
+        if (experiment.OutputVerificationMode != OutputVerificationMode.None
+            && !string.IsNullOrWhiteSpace(experiment.OutputVerificationSql))
+        {
+            try
+            {
+                await Status("computing baseline output fingerprint…");
+                var baselineHash = executor.ExecuteScalar(conn, experiment.OutputVerificationSql);
+                var hashNow = DateTime.UtcNow;
+                await db.ResearchIterations
+                    .Where(r => r.Id == iteration.Id)
+                    .ExecuteUpdateAsync(s => s
+                        .SetProperty(r => r.BaselineOutputHash, baselineHash)
+                        .SetProperty(r => r.ModifiedAt, hashNow), ct);
+                await Log($"Baseline output fingerprint: {baselineHash}");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Baseline output fingerprint failed for iteration {Id}", iteration.Id);
+                await Log($"Baseline output fingerprint failed: {ex.Message}. Output verification will report 'not verified' for every hypothesis.");
+            }
+        }
 
         _logger.LogInformation("Baseline benchmark complete: CPU={Cpu}ms, Elapsed={Elapsed}ms over {Iters} iterations",
             aggregated.TotalServerCpuTimeMs, aggregated.TotalServerElapsedTimeMs, settings.Value.BenchmarkIterations);
@@ -211,7 +238,8 @@ public sealed class HypothesisTestingService(
         };
         var executor = DatabaseExecutorFactory.Create(config, msg => _logger.LogDebug("{SqlLog}", msg));
 
-        await using var conn = await executor.OpenConnectionAsync(dbConnection.ConnectionString, ct);
+        var connectionString = ExperimentSandboxCoordinator.ResolveConnectionString(experiment);
+        await using var conn = await executor.OpenConnectionAsync(connectionString, ct);
 
         var currentOptimizeSql = hypothesis.OptimizeSql;
         var currentRevertSql = hypothesis.RevertSql ?? "";
@@ -352,6 +380,43 @@ public sealed class HypothesisTestingService(
             await ModifiedAtStamping.TouchResearchIterationForHypothesisAsync(db, hypothesisId, ct);
         }
 
+        // 5.5. Output fingerprint, taken with the optimization still applied (before revert)
+        // and compared against the iteration's baseline. A mismatch means the optimization
+        // changed what the query returns -- it must not be reported as a usable improvement,
+        // regardless of how much faster it measured.
+        string? outputHash = null;
+        bool? outputMatchesBaseline = null;
+        if (experiment.OutputVerificationMode != OutputVerificationMode.None
+            && !string.IsNullOrWhiteSpace(experiment.OutputVerificationSql))
+        {
+            await Status("verifying output against baseline…");
+            try
+            {
+                outputHash = executor.ExecuteScalar(conn, experiment.OutputVerificationSql);
+                if (iteration.BaselineOutputHash is not null)
+                {
+                    outputMatchesBaseline = string.Equals(outputHash, iteration.BaselineOutputHash, StringComparison.Ordinal);
+                    appendLog?.Invoke(hypothesisId,
+                        outputMatchesBaseline.Value
+                            ? $"Output fingerprint matches baseline ({outputHash})."
+                            : $"Output fingerprint DOES NOT match baseline (baseline={iteration.BaselineOutputHash}, this hypothesis={outputHash}). " +
+                              "This optimization changes the query's result and cannot be treated as a valid speed-up.",
+                        "TestingService");
+                }
+                else
+                {
+                    appendLog?.Invoke(hypothesisId,
+                        $"Output fingerprint computed ({outputHash}) but no baseline fingerprint is available to compare against -- not verified.",
+                        "TestingService");
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Output fingerprint failed for hypothesis {Id}", hypothesisId);
+                appendLog?.Invoke(hypothesisId, $"Output fingerprint failed: {ex.Message} -- not verified.", "TestingService");
+            }
+        }
+
         // 6. REVERT with retry loop
         await UpdateHypothesisStatusAsync(hypothesisId, HypothesisState.Reverting, ct);
         var revertSucceeded = false;
@@ -440,11 +505,20 @@ public sealed class HypothesisTestingService(
             : 0f;
 
         await CompleteHypothesisAsync(hypothesisId, currentOptimizeSql, currentRevertSql,
-            optimizeRetries, revertRetries, improvementPct, ct);
+            optimizeRetries, revertRetries, improvementPct, outputHash, outputMatchesBaseline, ct);
 
-        appendLog?.Invoke(hypothesisId,
-            $"Hypothesis testing complete. Improvement: {improvementPct:+0.##;-0.##;0}%",
-            "TestingService");
+        if (outputMatchesBaseline == false)
+        {
+            appendLog?.Invoke(hypothesisId,
+                $"Hypothesis testing complete but marked FAILED: output changed (improvement would have been {improvementPct:+0.##;-0.##;0}%, but the result is not the same as the baseline).",
+                "TestingService");
+        }
+        else
+        {
+            appendLog?.Invoke(hypothesisId,
+                $"Hypothesis testing complete. Improvement: {improvementPct:+0.##;-0.##;0}%",
+                "TestingService");
+        }
 
         // 10. HypothesisPostRunSql
         RunPostHypothesisSql(executor, conn, experiment, appendLog, hypothesisId);
@@ -656,22 +730,36 @@ public sealed class HypothesisTestingService(
         await ModifiedAtStamping.TouchResearchIterationForHypothesisAsync(db, id, ct);
     }
 
+    /// <summary>
+    /// Marks a hypothesis complete. When output verification found a mismatch, the status is
+    /// <see cref="HypothesisState.Failed"/> instead of <see cref="HypothesisState.Completed"/>
+    /// so it cannot be selected as <c>bestPrior</c> for later hypotheses to build on -- the
+    /// measured numbers are still recorded so the user can see what was tried.
+    /// </summary>
     private async Task CompleteHypothesisAsync(
         HypothesisId id, string optimizeSql, string revertSql,
-        int optimizeRetries, int revertRetries, float improvementPct, CancellationToken ct)
+        int optimizeRetries, int revertRetries, float improvementPct,
+        string? outputHash, bool? outputMatchesBaseline, CancellationToken ct)
     {
+        var mismatched = outputMatchesBaseline == false;
+
         using var scope = scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AIOptimizeDbContext>();
         var now = DateTime.UtcNow;
         await db.Hypotheses
             .Where(h => h.Id == id)
             .ExecuteUpdateAsync(s => s
-                .SetProperty(h => h.Status, HypothesisState.Completed)
+                .SetProperty(h => h.Status, mismatched ? HypothesisState.Failed : HypothesisState.Completed)
+                .SetProperty(h => h.ErrorMessage, mismatched
+                    ? $"Output changed: this optimization does not return the same rows as the baseline (fingerprint mismatch). Measured improvement was {improvementPct:+0.##;-0.##;0}%, but the result is not usable."
+                    : null)
                 .SetProperty(h => h.OptimizeSql, optimizeSql)
                 .SetProperty(h => h.RevertSql, revertSql)
                 .SetProperty(h => h.OptimizeRetryCount, optimizeRetries)
                 .SetProperty(h => h.RevertRetryCount, revertRetries)
                 .SetProperty(h => h.ImpovementPercentage, improvementPct)
+                .SetProperty(h => h.OutputHash, outputHash)
+                .SetProperty(h => h.OutputMatchesBaseline, outputMatchesBaseline)
                 .SetProperty(h => h.ModifiedAt, now), ct);
         await ModifiedAtStamping.TouchResearchIterationForHypothesisAsync(db, id, ct);
     }

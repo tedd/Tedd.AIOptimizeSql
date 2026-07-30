@@ -26,6 +26,7 @@ public static class Startup
         builder.Services.TryAddSingleton<IAdHocQueryService, AdHocQueryService>();
         builder.Services.TryAddSingleton<IObjectDependencyService, ObjectDependencyService>();
         builder.Services.TryAddSingleton<IExperimentBlueprintService, ExperimentBlueprintService>();
+        builder.Services.TryAddSingleton<ExperimentSandboxCoordinator>();
 
         // Also registered by ConfigureServices when the engine runs in-process; TryAdd keeps
         // a single instance either way.
@@ -40,6 +41,7 @@ public static class Startup
 
         builder.Services.TryAddSingleton<AiAgentFactory>();
         builder.Services.TryAddSingleton<ISchemaDiscoveryService, SchemaDiscoveryService>();
+        builder.Services.TryAddSingleton<ExperimentSandboxCoordinator>();
         builder.Services.AddSingleton<ResearchIterationLogger>();
         builder.Services.AddSingleton<HypothesisTestingService>();
         builder.Services.AddSingleton<IAiHypothesisService, AiHypothesisService>();

@@ -10,6 +10,7 @@ using Tedd.AIOptimizeSql.Database;
 using Tedd.AIOptimizeSql.Database.Models;
 using Tedd.AIOptimizeSql.Database.Models.Enums;
 using Tedd.AIOptimizeSql.OptimizeEngine.Models;
+using Tedd.AIOptimizeSql.OptimizeEngine.Services.SqlBrowser;
 using Tedd.AIOptimizeSql.OptimizeEngine.Utils;
 
 namespace Tedd.AIOptimizeSql.OptimizeEngine.Services;
@@ -20,6 +21,7 @@ public sealed class AiHypothesisService(
     HypothesisTestingService hypothesisTestingService,
     AgentTaskLoopRunner taskLoopRunner,
     ResearchIterationLogger iterationLogger,
+    ExperimentSandboxCoordinator sandboxCoordinator,
     IServiceScopeFactory scopeFactory,
     IOptions<OptimizeEngineSettings> settings,
     ILoggerFactory loggerFactory) : IAiHypothesisService
@@ -41,6 +43,17 @@ public sealed class AiHypothesisService(
             _logger.LogWarning("Research iteration {IterationId} not found, aborting", iterationId);
             return;
         }
+
+        // Provision the sandbox (if any) before anything else touches the database, so
+        // schema discovery and the baseline benchmark see the same target the hypotheses
+        // will actually run against.
+        await sandboxCoordinator.ProvisionAsync(
+            iteration,
+            msg => iterationLogger.AppendAsync(iterationId, msg, "Sandbox", CancellationToken.None).GetAwaiter().GetResult(),
+            cancellationToken);
+        if (iteration.Experiment?.IsolationMode is not null and not Database.Models.Enums.ExperimentIsolationMode.None)
+            iteration = await LoadIterationAsync(iterationId, cancellationToken)
+                ?? throw new InvalidOperationException($"Research iteration {iterationId} disappeared during sandbox provisioning.");
 
         // Run deterministic schema discovery if not already done
         if (string.IsNullOrWhiteSpace(iteration.SchemaDiscoveryMarkdown))
@@ -317,7 +330,8 @@ public sealed class AiHypothesisService(
             new BenchmarkConfig { DatabaseType = "MSSQL" },
             msg => _logger.LogDebug("{SqlLog}", msg));
 
-        await using var conn = await executor.OpenConnectionAsync(dbConnection.ConnectionString, cancellationToken);
+        var connectionString = ExperimentSandboxCoordinator.ResolveConnectionString(experiment);
+        await using var conn = await executor.OpenConnectionAsync(connectionString, cancellationToken);
         using var toolWrapper = new SqlToolWrapper(
             executor, conn, settings.Value.MaxToolResponseBytes,
             loggerFactory.CreateLogger<SqlToolWrapper>(), readOnly: analyzeOnly);
@@ -550,7 +564,8 @@ public sealed class AiHypothesisService(
                 new BenchmarkConfig { DatabaseType = "MSSQL" },
                 msg => _logger.LogDebug("{SqlLog}", msg));
 
-            await using var conn = await executor.OpenConnectionAsync(dbConnection.ConnectionString, ct);
+            var connectionString = ExperimentSandboxCoordinator.ResolveConnectionString(experiment);
+            await using var conn = await executor.OpenConnectionAsync(connectionString, ct);
             using var toolWrapper = new SqlToolWrapper(
                 executor, conn, settings.Value.MaxToolResponseBytes,
                 loggerFactory.CreateLogger<SqlToolWrapper>(), readOnly: analyzeOnly);
@@ -670,7 +685,8 @@ public sealed class AiHypothesisService(
             new BenchmarkConfig { DatabaseType = "MSSQL" },
             msg => _logger.LogDebug("{SqlLog}", msg));
 
-        await using var conn = await executor.OpenConnectionAsync(dbConnection.ConnectionString, ct);
+        var connectionString = ExperimentSandboxCoordinator.ResolveConnectionString(experiment);
+        await using var conn = await executor.OpenConnectionAsync(connectionString, ct);
         var discoveryResult = await schemaDiscoveryService.DiscoverSqlContextAsync(
             experiment.BenchmarkSql, conn, ct);
 
