@@ -53,6 +53,20 @@ public record ResearchIteration
     public string? RegisteredBaseTables { get; set; }
 
     /// <summary>
+    /// Fingerprint of the benchmark query's output taken before any optimization, using
+    /// <c>Experiment.OutputVerificationSql</c>. Null when output verification is off or the
+    /// baseline capture failed (the failure is recorded in the iteration log).
+    /// </summary>
+    [MaxLength(256)]
+    public string? BaselineOutputHash { get; set; }
+
+    /// <summary>
+    /// True once the sandbox for this iteration has been provisioned, so teardown knows
+    /// there is something to remove and a resumed iteration does not provision twice.
+    /// </summary>
+    public bool SandboxProvisioned { get; set; }
+
+    /// <summary>
     /// The baseline benchmark run (before any optimization) shared by all hypotheses in this iteration.
     /// </summary>
     public BenchmarkRunId? BaselineBenchmarkRunId { get; set; }

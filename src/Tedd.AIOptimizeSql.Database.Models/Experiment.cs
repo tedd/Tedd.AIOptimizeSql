@@ -1,5 +1,7 @@
 ﻿using System.ComponentModel.DataAnnotations;
 
+using Tedd.AIOptimizeSql.Database.Models.Enums;
+
 namespace Tedd.AIOptimizeSql.Database.Models;
 
 public enum ExperimentId { }
@@ -54,6 +56,53 @@ public record Experiment
     public string? BenchmarkSql { get; set; }
 
     /// <summary>
+    /// How much isolation this experiment gets. <see cref="ExperimentIsolationMode.None"/>
+    /// runs against the target database as-is; the other modes provision a sandbox before
+    /// the first hypothesis and tear it down when the iteration finishes.
+    /// </summary>
+    public ExperimentIsolationMode IsolationMode { get; set; } = ExperimentIsolationMode.None;
+
+    /// <summary>
+    /// Schema the sandbox copies live in when <see cref="IsolationMode"/> is
+    /// <see cref="ExperimentIsolationMode.SandboxSchema"/> (e.g. <c>aiopt_sandbox</c>).
+    /// </summary>
+    [MaxLength(128)]
+    public string? SandboxSchemaName { get; set; }
+
+    /// <summary>
+    /// Database provisioned on the same server when <see cref="IsolationMode"/> is
+    /// <see cref="ExperimentIsolationMode.CloneDatabase"/>. The engine swaps the connection
+    /// string's initial catalog to this name for the whole experiment.
+    /// </summary>
+    [MaxLength(128)]
+    public string? SandboxDatabaseName { get; set; }
+
+    /// <summary>
+    /// Script that builds the sandbox (schemas, tables, indexes, constraints, data copies,
+    /// rewritten modules). Runs once, before schema discovery and the baseline benchmark.
+    /// Ignored when <see cref="IsolationMode"/> is <see cref="ExperimentIsolationMode.None"/>.
+    /// </summary>
+    public string? SandboxSetupSql { get; set; }
+
+    /// <summary>
+    /// Script that removes everything <see cref="SandboxSetupSql"/> created. Runs when the
+    /// iteration finishes, including after a failure.
+    /// </summary>
+    public string? SandboxTeardownSql { get; set; }
+
+    /// <summary>
+    /// How the benchmark query's output is proven unchanged by each optimization.
+    /// </summary>
+    public OutputVerificationMode OutputVerificationMode { get; set; } = OutputVerificationMode.None;
+
+    /// <summary>
+    /// Script that returns a single scalar fingerprint of <see cref="BenchmarkSql"/>'s output.
+    /// Executed once for the baseline and once per hypothesis (after its benchmark, before
+    /// revert); a differing value means the optimization changed the result.
+    /// </summary>
+    public string? OutputVerificationSql { get; set; }
+
+    /// <summary>
     /// Which AI connection to use.
     /// </summary>
     public AIConnectionId? AIConnectionId { get; set; }
@@ -69,4 +118,4 @@ public record Experiment
     /// Last modified UTC
     /// </summary>
     public DateTime ModifiedAt { get; set; } = DateTime.UtcNow;
-}
+}

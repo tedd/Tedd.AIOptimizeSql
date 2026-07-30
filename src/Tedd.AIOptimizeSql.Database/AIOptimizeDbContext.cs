@@ -52,6 +52,8 @@ public class AIOptimizeDbContext : DbContext
         builder.Properties<FindingSeverity>().HaveConversion<string>().HaveMaxLength(16);
         builder.Properties<FindingCategory>().HaveConversion<string>().HaveMaxLength(32);
         builder.Properties<AgentTaskStatus>().HaveConversion<string>().HaveMaxLength(16);
+        builder.Properties<ExperimentIsolationMode>().HaveConversion<string>().HaveMaxLength(32);
+        builder.Properties<OutputVerificationMode>().HaveConversion<string>().HaveMaxLength(32);
     }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -73,6 +75,13 @@ public class AIOptimizeDbContext : DbContext
         modelBuilder.Entity<Experiment>(entity =>
         {
             entity.Property(e => e.Id).ValueGeneratedOnAdd();
+
+            if (isSqlServer)
+            {
+                entity.Property(e => e.SandboxSetupSql).HasColumnType("nvarchar(max)");
+                entity.Property(e => e.SandboxTeardownSql).HasColumnType("nvarchar(max)");
+                entity.Property(e => e.OutputVerificationSql).HasColumnType("nvarchar(max)");
+            }
 
             entity.HasOne(p => p.DatabaseConnection)
                 .WithMany()

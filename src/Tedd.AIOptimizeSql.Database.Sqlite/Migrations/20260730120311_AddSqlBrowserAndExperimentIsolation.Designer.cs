@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Tedd.AIOptimizeSql.Database;
 
@@ -10,9 +11,11 @@ using Tedd.AIOptimizeSql.Database;
 namespace Tedd.AIOptimizeSql.Database.Sqlite.Migrations
 {
     [DbContext(typeof(AIOptimizeDbContext))]
-    partial class AIOptimizeDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260730120311_AddSqlBrowserAndExperimentIsolation")]
+    partial class AddSqlBrowserAndExperimentIsolation
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "10.0.9");

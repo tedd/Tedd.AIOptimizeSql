@@ -46,6 +46,20 @@ public record Hypothesis
 
     public string? ErrorMessage { get; set; }
 
+    /// <summary>
+    /// Fingerprint of the benchmark query's output with this optimization applied, captured
+    /// after the benchmark and before the revert. Null when output verification is off.
+    /// </summary>
+    [MaxLength(256)]
+    public string? OutputHash { get; set; }
+
+    /// <summary>
+    /// Whether <see cref="OutputHash"/> matched the iteration's baseline. Null when output
+    /// verification is off or the fingerprint could not be captured. False means the
+    /// optimization changed the query's result and must not be trusted as a speed-up.
+    /// </summary>
+    public bool? OutputMatchesBaseline { get; set; }
+
     public int OptimizeRetryCount { get; set; }
     public int RevertRetryCount { get; set; }
 
@@ -62,4 +76,4 @@ public record Hypothesis
     public DateTime ModifiedAt { get; set; } = DateTime.UtcNow;
 
     public List<HypothesisLog> Logs { get; set; } = new();
-}
+}

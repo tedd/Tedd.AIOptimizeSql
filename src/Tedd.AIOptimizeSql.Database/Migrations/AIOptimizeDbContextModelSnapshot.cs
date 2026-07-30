@@ -418,6 +418,11 @@ namespace Tedd.AIOptimizeSql.Database.Migrations
                     b.Property<string>("Instructions")
                         .HasColumnType("nvarchar(max)");
 
+                    b.Property<string>("IsolationMode")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("nvarchar(32)");
+
                     b.Property<DateTime>("ModifiedAt")
                         .HasColumnType("datetime2");
 
@@ -425,6 +430,28 @@ namespace Tedd.AIOptimizeSql.Database.Migrations
                         .IsRequired()
                         .HasMaxLength(1024)
                         .HasColumnType("nvarchar(1024)");
+
+                    b.Property<string>("OutputVerificationMode")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("nvarchar(32)");
+
+                    b.Property<string>("OutputVerificationSql")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("SandboxDatabaseName")
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<string>("SandboxSchemaName")
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<string>("SandboxSetupSql")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("SandboxTeardownSql")
+                        .HasColumnType("nvarchar(max)");
 
                     b.HasKey("Id");
 
@@ -472,6 +499,13 @@ namespace Tedd.AIOptimizeSql.Database.Migrations
 
                     b.Property<string>("OptimizeSql")
                         .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("OutputHash")
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.Property<bool?>("OutputMatchesBaseline")
+                        .HasColumnType("bit");
 
                     b.Property<int>("ResearchIterationId")
                         .HasColumnType("int");
@@ -556,6 +590,10 @@ namespace Tedd.AIOptimizeSql.Database.Migrations
                     b.Property<int?>("BaselineBenchmarkRunId")
                         .HasColumnType("int");
 
+                    b.Property<string>("BaselineOutputHash")
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("datetime2");
 
@@ -579,6 +617,9 @@ namespace Tedd.AIOptimizeSql.Database.Migrations
 
                     b.Property<string>("RegisteredBaseTables")
                         .HasColumnType("nvarchar(max)");
+
+                    b.Property<bool>("SandboxProvisioned")
+                        .HasColumnType("bit");
 
                     b.Property<string>("SchemaDiscoveryMarkdown")
                         .HasColumnType("nvarchar(max)");
