@@ -184,6 +184,75 @@ public sealed class AIOptimizeDataAccess(IDbContextFactory<AIOptimizeDbContext> 
     public async Task BeginResearchIterationRunAsync(ResearchIterationId id, CancellationToken cancellationToken = default)
     {
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
+        await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
+        try
+        {
+            await RemoveRunQueueEntriesForIterationAsync(db, id, cancellationToken);
+            await ApplyRunStartAsync(db, id, cancellationToken);
+            await tx.CommitAsync(cancellationToken);
+        }
+        catch
+        {
+            await tx.RollbackAsync(cancellationToken);
+            throw;
+        }
+    }
+
+    public async Task<ResearchIterationId?> TryClaimQueuedResearchIterationAsync(CancellationToken cancellationToken = default)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
+
+        var head = await db.RunQueue
+            .AsNoTracking()
+            .OrderBy(q => q.CreatedAt)
+            .ThenBy(q => q.Id)
+            .Select(q => new { q.Id, q.ResearchIterationId })
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (head is null)
+            return null;
+
+        // Removing the queue row and marking the iteration Running must succeed or fail
+        // together. A delete that commits on its own would drop the work item while the
+        // iteration stays Queued forever, with nothing left to retry it.
+        await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
+        var claimed = false;
+        try
+        {
+            claimed = await DeleteRunQueueRowAsync(db, head.Id, cancellationToken);
+            if (!claimed)
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return null;
+            }
+
+            await ApplyRunStartAsync(db, head.ResearchIterationId, cancellationToken);
+            await tx.CommitAsync(cancellationToken);
+            return head.ResearchIterationId;
+        }
+        catch (Exception ex)
+        {
+            await tx.RollbackAsync(cancellationToken);
+            if (!claimed || ex is OperationCanceledException)
+                throw;
+
+            // The queue row is back after the rollback, so the iteration will be retried.
+            // Surface which iteration failed so the caller can report it on the iteration.
+            throw new ResearchIterationClaimException(head.ResearchIterationId, ex);
+        }
+    }
+
+    /// <summary>
+    /// Copies the AI snapshot from the parent experiment and moves the iteration into
+    /// <see cref="ResearchIterationState.Running"/>. Runs inside the caller's transaction and
+    /// does not touch the run queue.
+    /// </summary>
+    private static async Task ApplyRunStartAsync(
+        AIOptimizeDbContext db,
+        ResearchIterationId id,
+        CancellationToken cancellationToken)
+    {
+        var now = DateTime.UtcNow;
 
         if (db.Database.IsRelational())
         {
@@ -194,68 +263,91 @@ public sealed class AIOptimizeDataAccess(IDbContextFactory<AIOptimizeDbContext> 
                 .FirstOrDefaultAsync(b => b.Id == id, cancellationToken)
                 ?? throw new InvalidOperationException($"Research iteration {id} was not found.");
 
-            var experiment = row.Experiment!;
+            var experiment = row.Experiment
+                ?? throw new InvalidOperationException($"Research iteration {id} has no parent experiment.");
             AIConnectionId? aiConnId = experiment.AIConnectionId;
             AiProvider? aiProv = experiment.AIConnection?.Provider;
             string? aiModel = experiment.AIConnection?.Model;
 
-            var now = DateTime.UtcNow;
-            await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
-            try
-            {
-                await RemoveRunQueueEntriesForIterationAsync(db, id, cancellationToken);
-
-                await db.ResearchIterations
-                    .Where(b => b.Id == id)
-                    .ExecuteUpdateAsync(
-                        s => s
-                            .SetProperty(b => b.AIConnectionId, aiConnId)
-                            .SetProperty(b => b.AiProviderUsed, aiProv)
-                            .SetProperty(b => b.AiModelUsed, aiModel)
-                            .SetProperty(b => b.State, ResearchIterationState.Running)
-                            .SetProperty(b => b.StartedAt, now)
-                            .SetProperty(b => b.EndedAt, (DateTime?)null)
-                            .SetProperty(b => b.LastMessage, "Run started")
-                            .SetProperty(b => b.ModifiedAt, now),
-                        cancellationToken);
-
-                await tx.CommitAsync(cancellationToken);
-            }
-            catch
-            {
-                await tx.RollbackAsync(cancellationToken);
-                throw;
-            }
+            var n = await db.ResearchIterations
+                .Where(b => b.Id == id)
+                .ExecuteUpdateAsync(
+                    s => s
+                        .SetProperty(b => b.AIConnectionId, aiConnId)
+                        .SetProperty(b => b.AiProviderUsed, aiProv)
+                        .SetProperty(b => b.AiModelUsed, aiModel)
+                        .SetProperty(b => b.State, ResearchIterationState.Running)
+                        .SetProperty(b => b.StartedAt, now)
+                        .SetProperty(b => b.EndedAt, (DateTime?)null)
+                        .SetProperty(b => b.LastMessage, "Run started")
+                        .SetProperty(b => b.ModifiedAt, now),
+                    cancellationToken);
+            if (n != 1)
+                throw new InvalidOperationException($"Research iteration {id} was not found.");
 
             return;
         }
 
-        await using (var tx = await db.Database.BeginTransactionAsync(cancellationToken))
+        var iteration = await db.ResearchIterations.AsTracking()
+            .Include(b => b.Experiment!)
+            .ThenInclude(e => e!.AIConnection)
+            .FirstOrDefaultAsync(b => b.Id == id, cancellationToken)
+            ?? throw new InvalidOperationException($"Research iteration {id} was not found.");
+
+        ApplyAiSnapshotFromExperiment(iteration, iteration.Experiment
+            ?? throw new InvalidOperationException($"Research iteration {id} has no parent experiment."));
+        iteration.State = ResearchIterationState.Running;
+        iteration.StartedAt = now;
+        iteration.EndedAt = null;
+        iteration.LastMessage = "Run started";
+        iteration.ModifiedAt = now;
+
+        await db.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task FailQueuedResearchIterationAsync(
+        ResearchIterationId id,
+        string message,
+        CancellationToken cancellationToken = default)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
+        var now = DateTime.UtcNow;
+
+        await using var tx = await db.Database.BeginTransactionAsync(cancellationToken);
+        try
         {
-            try
+            await RemoveRunQueueEntriesForIterationAsync(db, id, cancellationToken);
+
+            if (db.Database.IsRelational())
+            {
+                await db.ResearchIterations
+                    .Where(b => b.Id == id)
+                    .ExecuteUpdateAsync(s => s
+                        .SetProperty(b => b.State, ResearchIterationState.Stopped)
+                        .SetProperty(b => b.EndedAt, now)
+                        .SetProperty(b => b.LastMessage, message)
+                        .SetProperty(b => b.ModifiedAt, now), cancellationToken);
+            }
+            else
             {
                 var iteration = await db.ResearchIterations.AsTracking()
-                    .Include(b => b.Experiment!)
-                    .ThenInclude(e => e!.AIConnection)
-                    .FirstOrDefaultAsync(b => b.Id == id, cancellationToken)
-                    ?? throw new InvalidOperationException($"Research iteration {id} was not found.");
-
-                await RemoveRunQueueEntriesForIterationAsync(db, id, cancellationToken);
-
-                ApplyAiSnapshotFromExperiment(iteration, iteration.Experiment!);
-                iteration.State = ResearchIterationState.Running;
-                iteration.StartedAt = DateTime.UtcNow;
-                iteration.EndedAt = null;
-                iteration.LastMessage = "Run started";
-
-                await db.SaveChangesAsync(cancellationToken);
-                await tx.CommitAsync(cancellationToken);
+                    .FirstOrDefaultAsync(b => b.Id == id, cancellationToken);
+                if (iteration is not null)
+                {
+                    iteration.State = ResearchIterationState.Stopped;
+                    iteration.EndedAt = now;
+                    iteration.LastMessage = message;
+                    iteration.ModifiedAt = now;
+                    await db.SaveChangesAsync(cancellationToken);
+                }
             }
-            catch
-            {
-                await tx.RollbackAsync(cancellationToken);
-                throw;
-            }
+
+            await tx.CommitAsync(cancellationToken);
+        }
+        catch
+        {
+            await tx.RollbackAsync(cancellationToken);
+            throw;
         }
     }
 
@@ -472,6 +564,23 @@ public sealed class AIOptimizeDataAccess(IDbContextFactory<AIOptimizeDbContext> 
 
     private static Task RemoveRunQueueEntriesForIterationAsync(AIOptimizeDbContext db, ResearchIterationId iterationId, CancellationToken cancellationToken) =>
         DeleteRunQueueRowsForIterationAsync(db, iterationId, cancellationToken);
+
+    /// <summary>
+    /// Deletes a single queue row by key. Returns false when another worker already took it.
+    /// </summary>
+    private static async Task<bool> DeleteRunQueueRowAsync(AIOptimizeDbContext db, RunQueueId id, CancellationToken cancellationToken)
+    {
+        if (db.Database.IsRelational())
+            return await db.RunQueue.Where(q => q.Id == id).ExecuteDeleteAsync(cancellationToken) > 0;
+
+        var row = await db.RunQueue.AsTracking().FirstOrDefaultAsync(q => q.Id == id, cancellationToken);
+        if (row is null)
+            return false;
+
+        db.RunQueue.Remove(row);
+        await db.SaveChangesAsync(cancellationToken);
+        return true;
+    }
 
     private static async Task DeleteRunQueueRowsForIterationAsync(AIOptimizeDbContext db, ResearchIterationId iterationId, CancellationToken cancellationToken)
     {

@@ -44,27 +44,55 @@ public sealed class QueueMonitorService(
         419, // physical connection broken
     ];
 
+    /// <summary>
+    /// How many times in a row the same iteration may fail to start before it is taken out of
+    /// the queue and marked stopped, so one broken item cannot block the queue head forever.
+    /// </summary>
+    private const int MaxClaimAttemptsPerIteration = 3;
+
+    private ResearchIterationId? _lastFailedIterationId;
+    private int _claimFailureCount;
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         logger.LogInformation("QueueMonitorService started, polling every {Interval}s",
             settings.Value.QueuePollIntervalSeconds);
 
         var transientFailureCount = 0;
+        var migrationsPendingLogged = false;
 
         while (!stoppingToken.IsCancellationRequested)
         {
             try
             {
-                var iterationId = await TryDequeueAsync(stoppingToken);
-                if (iterationId is not null)
+                // Running against a schema older than this build makes every iteration fail in
+                // a way that looks like "queued runs never start", so say so plainly instead.
+                var pending = await GetPendingMigrationsAsync(stoppingToken);
+                if (pending.Count > 0)
                 {
-                    logger.LogInformation("Dequeued research iteration {IterationId}, starting processing", iterationId);
+                    if (!migrationsPendingLogged)
+                    {
+                        migrationsPendingLogged = true;
+                        logger.LogError(
+                            "Database schema is out of date: {Count} migration(s) pending ({Migrations}). " +
+                            "The run queue is paused until they are applied (Database > Migration in the web UI).",
+                            pending.Count, string.Join(", ", pending));
+                    }
+                }
+                else
+                {
+                    if (migrationsPendingLogged)
+                    {
+                        migrationsPendingLogged = false;
+                        logger.LogInformation("Database schema is up to date; resuming run queue polling");
+                    }
 
-                    using var scope = scopeFactory.CreateScope();
-                    var dataAccess = scope.ServiceProvider.GetRequiredService<IAIOptimizeDataAccess>();
-                    await dataAccess.BeginResearchIterationRunAsync(iterationId.Value, stoppingToken);
-
-                    await iterationEngine.ProcessIterationAsync(iterationId.Value, stoppingToken);
+                    var iterationId = await ClaimNextIterationAsync(stoppingToken);
+                    if (iterationId is not null)
+                    {
+                        logger.LogInformation("Dequeued research iteration {IterationId}, starting processing", iterationId);
+                        await iterationEngine.ProcessIterationAsync(iterationId.Value, stoppingToken);
+                    }
                 }
 
                 transientFailureCount = 0;
@@ -157,31 +185,71 @@ public sealed class QueueMonitorService(
     }
 
     /// <summary>
-    /// Attempts to atomically remove one item from the <see cref="RunQueue"/>.
-    /// Returns the <see cref="ResearchIterationId"/> if successful, or null if the
-    /// queue is empty or another worker claimed the item (race condition).
+    /// Takes the head of the <see cref="RunQueue"/> and marks it running in one transaction.
+    /// A failure leaves the queue row in place so the item is retried; after
+    /// <see cref="MaxClaimAttemptsPerIteration"/> consecutive failures the iteration is
+    /// stopped with the error recorded on it, so it cannot block the queue head.
     /// </summary>
-    private async Task<ResearchIterationId?> TryDequeueAsync(CancellationToken ct)
+    private async Task<ResearchIterationId?> ClaimNextIterationAsync(CancellationToken ct)
+    {
+        using var scope = scopeFactory.CreateScope();
+        var dataAccess = scope.ServiceProvider.GetRequiredService<IAIOptimizeDataAccess>();
+
+        try
+        {
+            var iterationId = await dataAccess.TryClaimQueuedResearchIterationAsync(ct);
+            _lastFailedIterationId = null;
+            _claimFailureCount = 0;
+            return iterationId;
+        }
+        catch (ResearchIterationClaimException ex)
+        {
+            _claimFailureCount = _lastFailedIterationId == ex.IterationId ? _claimFailureCount + 1 : 1;
+            _lastFailedIterationId = ex.IterationId;
+
+            var reason = ex.InnerException?.Message ?? ex.Message;
+
+            if (_claimFailureCount < MaxClaimAttemptsPerIteration)
+            {
+                logger.LogWarning(ex,
+                    "Could not start queued research iteration {IterationId} (attempt {Attempt} of {Max}); it stays queued and will be retried",
+                    ex.IterationId, _claimFailureCount, MaxClaimAttemptsPerIteration);
+                return null;
+            }
+
+            logger.LogError(ex,
+                "Giving up on queued research iteration {IterationId} after {Attempts} attempts; marking it stopped",
+                ex.IterationId, _claimFailureCount);
+
+            _lastFailedIterationId = null;
+            _claimFailureCount = 0;
+
+            try
+            {
+                await dataAccess.FailQueuedResearchIterationAsync(
+                    ex.IterationId, $"Could not start run: {reason}", ct);
+            }
+            catch (Exception failEx) when (failEx is not OperationCanceledException)
+            {
+                logger.LogError(failEx,
+                    "Failed to record the start failure on research iteration {IterationId}", ex.IterationId);
+            }
+
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Pending migrations mean the running code expects columns the database does not have,
+    /// which makes every run fail on its first query. Empty on providers without migrations.
+    /// </summary>
+    private async Task<IReadOnlyList<string>> GetPendingMigrationsAsync(CancellationToken ct)
     {
         using var scope = scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AIOptimizeDbContext>();
+        if (!db.Database.IsRelational())
+            return [];
 
-        var head = await db.RunQueue
-            .AsNoTracking()
-            .OrderBy(q => q.CreatedAt)
-            .Select(q => new { q.Id, q.ResearchIterationId })
-            .FirstOrDefaultAsync(ct);
-
-        if (head is null)
-            return null;
-
-        var deleted = await db.RunQueue.Where(q => q.Id == head.Id).ExecuteDeleteAsync(ct);
-        if (deleted == 0)
-        {
-            logger.LogDebug("Queue item race: row {QueueId} was already dequeued", head.Id);
-            return null;
-        }
-
-        return head.ResearchIterationId;
+        return (await db.Database.GetPendingMigrationsAsync(ct)).ToList();
     }
 }

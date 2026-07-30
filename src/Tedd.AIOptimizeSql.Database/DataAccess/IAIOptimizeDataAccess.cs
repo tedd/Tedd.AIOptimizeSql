@@ -39,6 +39,27 @@ public interface IAIOptimizeDataAccess
     /// </summary>
     Task BeginResearchIterationRunAsync(ResearchIterationId id, CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Atomically takes the head of the run queue and starts it: the queue row is removed and
+    /// the iteration moves to <see cref="ResearchIterationState.Running"/> in one transaction,
+    /// so a failure never consumes the work item. Returns null when the queue is empty or
+    /// another worker won the race.
+    /// </summary>
+    /// <exception cref="ResearchIterationClaimException">
+    /// The queue head could not be started; the queue row is rolled back and the failing
+    /// iteration id is carried on the exception.
+    /// </exception>
+    Task<ResearchIterationId?> TryClaimQueuedResearchIterationAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Takes an iteration out of the queue and marks it stopped with an explanatory message,
+    /// used when a queued iteration cannot be started at all.
+    /// </summary>
+    Task FailQueuedResearchIterationAsync(
+        ResearchIterationId id,
+        string message,
+        CancellationToken cancellationToken = default);
+
     Task DeleteResearchIterationAsync(ResearchIterationId id, CancellationToken cancellationToken = default);
 
     /// <summary>
