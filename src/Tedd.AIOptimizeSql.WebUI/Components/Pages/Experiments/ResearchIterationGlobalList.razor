@@ -44,7 +44,7 @@
             <MudTd DataLabel="Iteration">#@((int)(object)context.Id)</MudTd>
             <MudTd DataLabel="Experiment">
                 <span @onclick:stopPropagation="true">
-                    <MudLink Href="@($"/experiments/{(int)(object)context.ExperimentId}/edit")" Color="Color.Primary">
+                    <MudLink Href="@($"/experiments/{(int)(object)context.ExperimentId}/view")" Color="Color.Primary">
                         @context.ExperimentName
                     </MudLink>
                 </span>
@@ -77,7 +77,7 @@
             </MudTd>
             <MudTd>
                 <MudIconButton Icon="@Icons.Material.Filled.Edit" Color="Color.Primary" Size="Size.Small"
-                               Href="@($"/research-iterations/{(int)(object)context.Id}/edit")"
+                               Href="@($"/experiments/{(int)(object)context.ExperimentId}/research-iterations/{(int)(object)context.Id}/edit")"
                                aria-label="Edit iteration" />
                 <MudIconButton Icon="@Icons.Material.Filled.List" Color="Color.Info" Size="Size.Small"
                                Href="@($"/experiments/{(int)(object)context.ExperimentId}/research-iterations/{(int)(object)context.Id}")"
@@ -148,8 +148,11 @@
         return new TableData<ResearchIterationListRow> { TotalItems = total, Items = items.ToList() };
     }
 
+    // Opens the iteration itself, keeping the experiment in the path so the page knows where
+    // it sits. Row click opens the entity everywhere; the pencil icon is for editing.
     private void OnRowClick(TableRowClickEventArgs<ResearchIterationListRow> args) =>
-        Navigation.NavigateTo($"/research-iterations/{(int)(object)args.Item!.Id}/edit");
+        Navigation.NavigateTo(
+            $"/experiments/{(int)(object)args.Item!.ExperimentId}/research-iterations/{(int)(object)args.Item!.Id}");
 
     private async Task DeleteSingle(ResearchIterationListRow row)
     {

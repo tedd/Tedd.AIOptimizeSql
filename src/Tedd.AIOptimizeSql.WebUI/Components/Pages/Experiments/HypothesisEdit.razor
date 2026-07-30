@@ -19,6 +19,9 @@
                      DiscardAsync="DiscardChangesAsync" />
 
 <MudContainer MaxWidth="MaxWidth.Medium" Class="mt-4">
+    <HierarchyBreadcrumbs ExperimentId="@ExperimentId" IterationId="@IterationId" HypothesisId="@HypothesisId"
+                          Leaf="@(_isNew ? "New hypothesis" : null)" />
+
     <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-4">
         <MudIconButton Icon="@Icons.Material.Filled.ArrowBack" OnClick="GoBack" />
         <MudText Typo="Typo.h4">@(_isNew ? "New" : _editMode ? "Edit" : "View") Hypothesis</MudText>

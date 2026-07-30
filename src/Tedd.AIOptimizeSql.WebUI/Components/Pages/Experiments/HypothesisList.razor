@@ -13,9 +13,9 @@
 <PageTitle>Hypotheses</PageTitle>
 
 <MudContainer MaxWidth="MaxWidth.ExtraLarge" Class="mt-4">
+    <HierarchyBreadcrumbs ExperimentId="@ExperimentId" IterationId="@IterationId" />
+
     <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-2">
-        <MudIconButton Icon="@Icons.Material.Filled.ArrowBack"
-                       OnClick="@(() => Navigation.NavigateTo($"/experiments/{ExperimentId}/research-iterations"))" />
         <MudText Typo="Typo.h4">Hypotheses</MudText>
         <MudSpacer />
         @if (_selectedItems.Count > 0)

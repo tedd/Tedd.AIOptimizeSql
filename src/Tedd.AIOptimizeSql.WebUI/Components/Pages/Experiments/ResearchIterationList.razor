@@ -16,9 +16,9 @@
 <PageTitle>Research iterations</PageTitle>
 
 <MudContainer MaxWidth="MaxWidth.ExtraLarge" Class="mt-4">
+    <HierarchyBreadcrumbs ExperimentId="@ExperimentId" />
+
     <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-4">
-        <MudIconButton Icon="@Icons.Material.Filled.ArrowBack"
-                       OnClick="@(() => Navigation.NavigateTo("/experiments"))" />
         <MudText Typo="Typo.h4">
             Research iterations for: @(_profile?.Name ?? "...")
         </MudText>
@@ -226,9 +226,11 @@
         return new TableData<ResearchIterationRunRowViewModel> { TotalItems = totalItems, Items = items };
     }
 
+    // Row click opens the iteration's hypotheses, matching the other lists where clicking a
+    // row opens the entity rather than its edit form.
     private void OnRowClick(TableRowClickEventArgs<ResearchIterationRunRowViewModel> args)
     {
-        Navigation.NavigateTo($"/experiments/{ExperimentId}/research-iterations/{(int)(object)args.Item!.Iteration.Id}/edit");
+        Navigation.NavigateTo($"/experiments/{ExperimentId}/research-iterations/{(int)(object)args.Item!.Iteration.Id}");
     }
 
     private async Task DeleteSingle(ResearchIterationRunRowViewModel vm)

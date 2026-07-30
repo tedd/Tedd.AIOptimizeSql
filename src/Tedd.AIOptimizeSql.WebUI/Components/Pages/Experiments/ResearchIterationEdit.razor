@@ -25,6 +25,9 @@
                      DiscardAsync="DiscardChangesAsync" />
 
 <MudContainer MaxWidth="MaxWidth.Medium" Class="mt-4">
+    <HierarchyBreadcrumbs ExperimentId="@ExperimentIdFromRoute" IterationId="@(_isNew ? null : IterationId)"
+                          Leaf="@(_isNew ? "New research iteration" : "Settings")" />
+
     <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-4">
         <MudIconButton Icon="@Icons.Material.Filled.ArrowBack" OnClick="GoBack" />
         <MudText Typo="Typo.h4">@(_isNew ? "New" : "Edit") research iteration</MudText>
@@ -71,7 +74,7 @@
                     {
                         <MudText Typo="Typo.body1" Class="mb-2">
                             Experiment:
-                            <MudLink Href="@($"/experiments/{(int)(object)_iteration.ExperimentId}/edit")">@_iteration.Experiment?.Name</MudLink>
+                            <MudLink Href="@($"/experiments/{(int)(object)_iteration.ExperimentId}/view")">@_iteration.Experiment?.Name</MudLink>
                         </MudText>
                         <MudDivider Class="mb-4" />
                         <MudStack Spacing="2" Class="mb-4">

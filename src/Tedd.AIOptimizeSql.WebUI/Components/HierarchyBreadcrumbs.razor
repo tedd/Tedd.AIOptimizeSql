@@ -1,0 +1,125 @@
+@* Shows where the current page sits in Experiment > Research iteration > Hypothesis.
+   Pages pass the ids from their route; names and any missing parent id are resolved
+   here so no page has to load an entity purely for navigation. *@
+
+@rendermode InteractiveServer
+@inject IDbContextFactory<AIOptimizeDbContext> DbContextFactory
+@using Microsoft.EntityFrameworkCore
+@using Tedd.AIOptimizeSql.Database
+
+<MudBreadcrumbs Items="@BuildItems()" Class="px-0 py-1" />
+
+@code {
+    /// <summary>Experiment the page belongs to. Resolved from <see cref="IterationId"/> when omitted.</summary>
+    [Parameter] public int? ExperimentId { get; set; }
+
+    [Parameter] public int? IterationId { get; set; }
+
+    [Parameter] public int? HypothesisId { get; set; }
+
+    [Parameter] public int? BenchmarkRunId { get; set; }
+
+    /// <summary>
+    /// Trailing crumb for pages that are not an entity of their own, e.g. "Edit" or
+    /// "New hypothesis". Always rendered last and never links anywhere.
+    /// </summary>
+    [Parameter] public string? Leaf { get; set; }
+
+    /// <summary>
+    /// Whether to include the iteration-list crumb. Off for pages about the experiment
+    /// itself, where the list is a sibling rather than a parent.
+    /// </summary>
+    [Parameter] public bool ShowIterationList { get; set; } = true;
+
+    private const int MaxNameLength = 40;
+
+    private int? _resolvedExperimentId;
+    private string? _experimentName;
+    private (int? Experiment, int? Iteration) _resolvedFor = (null, null);
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (_resolvedFor == (ExperimentId, IterationId))
+            return;
+
+        _resolvedFor = (ExperimentId, IterationId);
+        _resolvedExperimentId = ExperimentId;
+        _experimentName = null;
+
+        await using var db = await DbContextFactory.CreateDbContextAsync();
+
+        if (_resolvedExperimentId is null && IterationId is not null)
+        {
+            var iterationId = (ResearchIterationId)IterationId.Value;
+            var experimentId = await db.ResearchIterations
+                .AsNoTracking()
+                .Where(r => r.Id == iterationId)
+                .Select(r => (int?)r.ExperimentId)
+                .FirstOrDefaultAsync();
+            _resolvedExperimentId = experimentId;
+        }
+
+        if (_resolvedExperimentId is not null)
+        {
+            // Qualified: the ExperimentId parameter shadows the strongly-typed id enum here.
+            var experimentId = (Tedd.AIOptimizeSql.Database.Models.ExperimentId)_resolvedExperimentId.Value;
+            _experimentName = await db.Experiments
+                .AsNoTracking()
+                .Where(e => e.Id == experimentId)
+                .Select(e => e.Name)
+                .FirstOrDefaultAsync();
+        }
+    }
+
+    private List<BreadcrumbItem> BuildItems()
+    {
+        var items = new List<BreadcrumbItem>
+        {
+            new("Experiments", "/experiments")
+        };
+
+        if (_resolvedExperimentId is int experimentId)
+        {
+            items.Add(new(ExperimentLabel(experimentId), $"/experiments/{experimentId}/view"));
+
+            if (ShowIterationList)
+                items.Add(new("Research iterations", $"/experiments/{experimentId}/research-iterations"));
+
+            if (IterationId is int iterationId)
+            {
+                items.Add(new($"Iteration #{iterationId}",
+                    $"/experiments/{experimentId}/research-iterations/{iterationId}"));
+
+                if (HypothesisId is int hypothesisId)
+                {
+                    items.Add(new($"Hypothesis #{hypothesisId}",
+                        $"/experiments/{experimentId}/research-iterations/{iterationId}/hypotheses/{hypothesisId}"));
+                }
+                else if (BenchmarkRunId is int benchmarkRunId)
+                {
+                    items.Add(new($"Benchmark run #{benchmarkRunId}",
+                        $"/experiments/{experimentId}/research-iterations/{iterationId}/benchmarks/{benchmarkRunId}"));
+                }
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(Leaf))
+            items.Add(new(Leaf, href: null, disabled: true));
+
+        // The page you are already on is a label, not a link.
+        var last = items[^1];
+        items[^1] = new BreadcrumbItem(last.Text, href: null, disabled: true);
+
+        return items;
+    }
+
+    private string ExperimentLabel(int experimentId)
+    {
+        if (string.IsNullOrWhiteSpace(_experimentName))
+            return $"Experiment #{experimentId}";
+
+        return _experimentName.Length <= MaxNameLength
+            ? _experimentName
+            : _experimentName[..(MaxNameLength - 1)] + "…";
+    }
+}

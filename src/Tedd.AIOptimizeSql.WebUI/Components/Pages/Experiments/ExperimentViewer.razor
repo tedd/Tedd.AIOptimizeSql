@@ -12,8 +12,9 @@
 <PageTitle>Experiment results</PageTitle>
 
 <MudContainer MaxWidth="MaxWidth.ExtraLarge" Class="mt-4">
+    <HierarchyBreadcrumbs ExperimentId="@Id" ShowIterationList="false" />
+
     <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-4">
-        <MudIconButton Icon="@Icons.Material.Filled.ArrowBack" OnClick="@(() => Navigation.NavigateTo("/experiments"))" aria-label="Back to experiments" />
         <MudText Typo="Typo.h4">@(_experiment?.Name ?? "Experiment")</MudText>
         <MudSpacer />
         <MudButton Variant="Variant.Outlined" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Edit"
