@@ -1,18 +1,44 @@
 .sb-root {
     display: flex;
     flex-direction: row;
-    gap: 12px;
+    gap: 4px;
     height: calc(100vh - 96px);
     min-height: 480px;
 }
 
 .sb-left {
-    flex: 0 0 320px;
-    max-width: 320px;
+    flex: 0 0 auto;
+    min-width: 180px;
     display: flex;
     flex-direction: column;
     gap: 8px;
     min-height: 0;
+}
+
+.sb-splitter-v {
+    flex: 0 0 6px;
+    cursor: col-resize;
+    border-radius: 3px;
+    background: transparent;
+    transition: background-color 100ms ease;
+}
+
+.sb-splitter-v:hover,
+.sb-splitter-v:active {
+    background: var(--mud-palette-primary);
+}
+
+.sb-splitter-h {
+    flex: 0 0 6px;
+    cursor: row-resize;
+    border-radius: 3px;
+    background: transparent;
+    transition: background-color 100ms ease;
+}
+
+.sb-splitter-h:hover,
+.sb-splitter-h:active {
+    background: var(--mud-palette-primary);
 }
 
 .sb-left-header {
@@ -33,7 +59,11 @@
     flex-direction: column;
     min-width: 0;
     min-height: 0;
-    gap: 8px;
+    gap: 4px;
+}
+
+.sb-toolbar {
+    margin-bottom: 4px;
 }
 
 .sb-toolbar {
@@ -42,7 +72,7 @@
 }
 
 .sb-editor-wrap {
-    flex: 1 1 50%;
+    flex: 0 0 auto;
     min-height: 120px;
     border: 1px solid var(--mud-palette-lines-default);
     border-radius: var(--mud-default-borderradius);
@@ -55,7 +85,7 @@
 }
 
 .sb-results-wrap {
-    flex: 1 1 50%;
+    flex: 1 1 auto;
     min-height: 120px;
     display: flex;
     flex-direction: column;

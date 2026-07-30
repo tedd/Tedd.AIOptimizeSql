@@ -1,6 +1,15 @@
 .wizard-content {
-    min-width: 60vw;
+    /* min-width: 60vw previously fought max-width on wide viewports -- CSS resolves that
+       conflict in min-width's favor, so the content could demand more width than the dialog
+       paper actually had, producing a horizontal scrollbar. Fill the dialog instead. */
+    width: 100%;
     max-width: 900px;
+    box-sizing: border-box;
+    overflow-x: hidden;
+}
+
+.wizard-content ::deep table {
+    max-width: 100%;
 }
 
 .wizard-option {

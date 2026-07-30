@@ -19,8 +19,8 @@
 
 <PageTitle>SQL Browser</PageTitle>
 
-<div class="sb-root">
-    <div class="sb-left">
+<div class="sb-root" @onpointermove="OnRootPointerMove" @onpointerup="OnRootPointerUp" @onpointerleave="OnRootPointerUp">
+    <div class="sb-left" style="@($"flex-basis:{Fmt(_leftWidthPx)}px;")">
         <div class="sb-left-header">
             <MudSelect T="DatabaseConnectionId?" Value="_selectedConnectionId" ValueChanged="OnConnectionChangedAsync"
                        Label="Connection" Dense="true" Variant="Variant.Outlined" Class="mb-2">
@@ -56,6 +56,8 @@
                                 OnShowDependencies="OnShowDependenciesAsync" />
         </div>
     </div>
+
+    <div class="sb-splitter-v" @onpointerdown="OnLeftSplitterPointerDown" title="Drag to resize"></div>
 
     <div class="sb-right">
         <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center" Class="sb-toolbar">
@@ -94,13 +96,16 @@
             </MudButton>
         </MudStack>
 
-        <div class="sb-editor-wrap" @onkeydown="OnEditorKeyDown" @onkeydown:preventDefault="true">
+        <div class="sb-editor-wrap" style="@($"flex-basis:{Fmt(_editorHeightPx)}px;")">
             <StandaloneCodeEditor @ref="_editor"
                                   Id="sql-browser-editor"
                                   CssClass="sb-editor-inner"
                                   ConstructionOptions="BuildEditorOptions"
-                                  OnDidChangeModelContent="OnEditorContentChangedAsync" />
+                                  OnDidChangeModelContent="OnEditorContentChangedAsync"
+                                  OnDidInit="OnEditorInitAsync" />
         </div>
+
+        <div class="sb-splitter-h" @onpointerdown="OnEditorSplitterPointerDown" title="Drag to resize"></div>
 
         <div class="sb-results-wrap">
             <MudTabs ActivePanelIndex="_activeResultTab" ActivePanelIndexChanged="OnActiveTabChangedAsync"
@@ -220,6 +225,21 @@
     private ObjectDependencyGraph? _graph;
     private bool _graphLoading;
 
+    // Resizable panes: dragged entirely in C# (pointer events on .sb-root), the same
+    // approach DependencyGraphView uses for pan/zoom -- no JS interop needed.
+    private double _leftWidthPx = 320;
+    private double _editorHeightPx = 320;
+    private const double MinLeftWidthPx = 200;
+    private const double MaxLeftWidthPx = 800;
+    private const double MinPaneHeightPx = 120;
+
+    private enum DragMode { None, LeftWidth, EditorHeight }
+    private DragMode _dragMode;
+    private double _dragStartClientX;
+    private double _dragStartClientY;
+    private double _dragStartLeftWidth;
+    private double _dragStartEditorHeight;
+
     private bool IsAnalyzeOnly => _selectedConnection?.AnalyzeOnly ?? false;
 
     private string ConnectionStateText =>
@@ -329,12 +349,65 @@
         _editorText = await _editor.GetValue(false, "\n") ?? "";
     }
 
-    private async Task OnEditorKeyDown(Microsoft.AspNetCore.Components.Web.KeyboardEventArgs e)
+    /// <summary>
+    /// F5 / Ctrl+Enter to execute, registered as real Monaco commands. Earlier this was a
+    /// plain @onkeydown handler on the wrapping div with @onkeydown:preventDefault="true" --
+    /// that prevented the DEFAULT ACTION OF EVERY KEYDOWN bubbling through the div, including
+    /// ordinary character keys, so nothing could be typed into the editor. AddCommand lets
+    /// Monaco own the keybinding instead, which does not interfere with normal typing.
+    /// </summary>
+    private async Task OnEditorInitAsync()
     {
-        if (e.Key == "F5" || (e.CtrlKey && e.Key == "Enter"))
+        if (_editor is null)
         {
-            await ExecuteAsync(selectionOnly: false);
+            return;
         }
+
+        await _editor.AddCommand((int)BlazorMonaco.KeyCode.F5,
+            _ => InvokeAsync(() => ExecuteAsync(selectionOnly: false)));
+        await _editor.AddCommand((int)BlazorMonaco.KeyMod.CtrlCmd | (int)BlazorMonaco.KeyCode.Enter,
+            _ => InvokeAsync(() => ExecuteAsync(selectionOnly: false)));
+    }
+
+    private static string Fmt(double v) => v.ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+    private void OnLeftSplitterPointerDown(Microsoft.AspNetCore.Components.Web.PointerEventArgs e)
+    {
+        _dragMode = DragMode.LeftWidth;
+        _dragStartClientX = e.ClientX;
+        _dragStartLeftWidth = _leftWidthPx;
+    }
+
+    private void OnEditorSplitterPointerDown(Microsoft.AspNetCore.Components.Web.PointerEventArgs e)
+    {
+        _dragMode = DragMode.EditorHeight;
+        _dragStartClientY = e.ClientY;
+        _dragStartEditorHeight = _editorHeightPx;
+    }
+
+    private void OnRootPointerMove(Microsoft.AspNetCore.Components.Web.PointerEventArgs e)
+    {
+        switch (_dragMode)
+        {
+            case DragMode.LeftWidth:
+                _leftWidthPx = Math.Clamp(
+                    _dragStartLeftWidth + (e.ClientX - _dragStartClientX),
+                    MinLeftWidthPx, MaxLeftWidthPx);
+                break;
+            case DragMode.EditorHeight:
+                _editorHeightPx = Math.Max(
+                    MinPaneHeightPx,
+                    _dragStartEditorHeight + (e.ClientY - _dragStartClientY));
+                break;
+            case DragMode.None:
+            default:
+                return;
+        }
+    }
+
+    private void OnRootPointerUp(Microsoft.AspNetCore.Components.Web.PointerEventArgs e)
+    {
+        _dragMode = DragMode.None;
     }
 
     private async Task OnObjectDoubleClickAsync(CatalogObject obj)

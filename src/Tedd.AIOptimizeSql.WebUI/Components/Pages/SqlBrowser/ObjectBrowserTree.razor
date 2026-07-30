@@ -30,7 +30,8 @@
                                 <ChildContent>
                                     @foreach (var obj in group.Objects)
                                     {
-                                        <div @oncontextmenu="@(e => OnRowContextMenu(e, obj))" @oncontextmenu:preventDefault="true">
+                                        <div @oncontextmenu="@(e => OnRowContextMenu(e, obj))" @oncontextmenu:preventDefault="true"
+                                             title="@obj.QuotedFullName">
                                             <MudTreeViewItem T="CatalogObject" Value="obj" CanExpand="false"
                                                               Text="@obj.Name"
                                                               EndText="@(obj.RowCount.HasValue ? obj.RowCount.Value.ToString("N0") : null)"
@@ -79,6 +80,21 @@
         z-index: 2001;
         min-width: 220px;
         max-width: 320px;
+    }
+
+    /* Long object/schema names must ellipsize instead of stretching the panel or wrapping;
+       the wrapping div's title attribute (see markup above) carries the full name on hover.
+       min-width: 0 is required on every flex ancestor in the chain for a flex-grow child's
+       ellipsis to actually take effect instead of the row just growing wider. */
+    .obt-tree .mud-treeview-item-content {
+        min-width: 0;
+    }
+
+    .obt-tree .mud-treeview-item-label {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
     }
 </style>
 
