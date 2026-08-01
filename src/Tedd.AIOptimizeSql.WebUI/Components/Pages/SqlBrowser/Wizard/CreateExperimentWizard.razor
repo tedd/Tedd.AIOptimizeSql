@@ -1,6 +1,7 @@
 @implements IDisposable
 @inject IDbContextFactory<Tedd.AIOptimizeSql.Database.AIOptimizeDbContext> DbContextFactory
 @inject IExperimentBlueprintService BlueprintService
+@inject ISandboxScriptService SandboxScriptService
 @inject IAIOptimizeDataAccess DataAccess
 @inject IDialogService DialogService
 @inject ISnackbar Snackbar
@@ -19,7 +20,11 @@
             }
             else
             {
+                @* ActionContent is deliberately empty: the stepper's own Previous/Next buttons would
+                   sit inside the scrolling step surface, duplicating the dialog's Back/Next. *@
                 <MudStepper ActiveIndex="_activeIndex" ActiveIndexChanged="OnActiveIndexChanged" NonLinear="true" ShowResetButton="false">
+                    <ActionContent></ActionContent>
+                    <ChildContent>
                     <MudStep Title="What are we making faster?">
                         <MudText Typo="Typo.body2" Class="mb-3">
                             We'll benchmark this query, let AI propose changes, apply/measure/revert each one automatically,
@@ -212,31 +217,80 @@
                         @if (_blueprint.IsolationMode != ExperimentIsolationMode.None)
                         {
                             <MudAlert Severity="Severity.Info" Class="my-2">
-                                A sandbox copy is thinner than the original — indexes, constraints, compression, and columnstore
-                                must be recreated for measurements to mean anything. That's exactly what the AI step below fills
-                                in; if the scripts are empty here, that's expected until then.
+                                The scripts below are written for you from the live catalog: every ticked table is recreated with
+                                its real keys, indexes, computed columns and defaults, filled from the source, and its statistics
+                                rebuilt — because a copy that is thinner than the original makes every measurement taken in it
+                                meaningless. Regenerate after changing which tables are ticked.
                             </MudAlert>
 
                             @if (_blueprint.IsolationMode == ExperimentIsolationMode.SandboxSchema)
                             {
-                                <MudTextField @bind-Value="_blueprint.SandboxSchemaName" Label="Sandbox schema name"
-                                              Variant="Variant.Outlined" Class="mb-3" />
+                                <MudTextField T="string" Value="@_blueprint.SandboxSchemaName" ValueChanged="OnSandboxSchemaNameChanged"
+                                              Label="Sandbox schema name" Variant="Variant.Outlined" Class="mb-3" />
                             }
                             else
                             {
-                                <MudTextField @bind-Value="_blueprint.SandboxDatabaseName" Label="Sandbox database name"
-                                              Variant="Variant.Outlined" Class="mb-3" />
+                                <MudTextField T="string" Value="@_blueprint.SandboxDatabaseName" ValueChanged="OnSandboxDatabaseNameChanged"
+                                              Label="Sandbox database name" Variant="Variant.Outlined" Class="mb-3" />
+                            }
+
+                            <MudSelect T="AIConnectionId?" @bind-Value="_selectedAiConnectionId" Label="AI connection"
+                                       Variant="Variant.Outlined" Dense="true" Class="mb-3" Clearable="true"
+                                       HelperText="Used by &quot;Complete with AI&quot; here, and by the AI step later.">
+                                @foreach (var conn in _aiConnections)
+                                {
+                                    <MudSelectItem Value="@((AIConnectionId?)conn.Id)">@conn.Name (@conn.Provider / @conn.Model)</MudSelectItem>
+                                }
+                            </MudSelect>
+
+                            <MudStack Row="true" Spacing="2" Class="mb-3 flex-wrap">
+                                <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="GenerateSandboxAsync"
+                                           Disabled="@SandboxBusy" StartIcon="@Icons.Material.Filled.AutoFixHigh">
+                                    @(_sandboxGenerating ? "Generating..." : "Generate scripts")
+                                </MudButton>
+                                <MudTooltip Text="Pick an AI connection above to enable this."
+                                            Disabled="@(_selectedAiConnectionId is not null)">
+                                    <MudButton Variant="Variant.Outlined" OnClick="CompleteSandboxWithAiAsync"
+                                               Disabled="@(SandboxBusy || _selectedAiConnectionId is null)"
+                                               StartIcon="@Icons.Material.Filled.AutoAwesome">
+                                        @(_sandboxAiRunning ? "Working..." : "Complete with AI")
+                                    </MudButton>
+                                </MudTooltip>
+                                <MudButton Variant="Variant.Outlined" OnClick="ValidateSandboxAsync"
+                                           Disabled="@(SandboxBusy || _dbConnection?.AnalyzeOnly == true)">
+                                    @(_validatingSandbox ? "Validating..." : "Validate")
+                                </MudButton>
+                            </MudStack>
+
+                            @if (_sandboxGenerating || _sandboxAiRunning)
+                            {
+                                <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="mb-2">
+                                    <MudProgressCircular Indeterminate="true" Size="Size.Small" />
+                                    <MudText Typo="Typo.body2">@_sandboxProgress</MudText>
+                                </MudStack>
+                            }
+
+                            @if (!string.IsNullOrWhiteSpace(_sandboxSummary))
+                            {
+                                <MudAlert Severity="Severity.Success" Dense="true" Class="mb-2">@_sandboxSummary</MudAlert>
+                            }
+                            @if (_sandboxWarnings.Count > 0)
+                            {
+                                <MudAlert Severity="Severity.Warning" Class="mb-2">
+                                    <MudText Typo="Typo.subtitle2">The generator could not do everything:</MudText>
+                                    <ul class="wizard-list">
+                                        @foreach (var w in _sandboxWarnings)
+                                        {
+                                            <li>@w</li>
+                                        }
+                                    </ul>
+                                </MudAlert>
                             }
 
                             <SqlMonacoField EditorId="wizard-sandbox-setup-sql" Label="Sandbox setup SQL"
-                                            @bind-Value="_blueprint.SandboxSetupSql" />
+                                            Value="@_blueprint.SandboxSetupSql" ValueChanged="OnSandboxSetupSqlChanged" />
                             <SqlMonacoField EditorId="wizard-sandbox-teardown-sql" Label="Sandbox teardown SQL"
-                                            @bind-Value="_blueprint.SandboxTeardownSql" />
-
-                            <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="ValidateSandboxAsync"
-                                       Disabled="@(_validatingSandbox || _dbConnection?.AnalyzeOnly == true)">
-                                @(_validatingSandbox ? "Validating..." : "Validate")
-                            </MudButton>
+                                            Value="@_blueprint.SandboxTeardownSql" ValueChanged="OnSandboxTeardownSqlChanged" />
 
                             @if (_sandboxValidateLog is not null)
                             {
@@ -383,6 +437,7 @@
                             </MudText>
                         }
                     </MudStep>
+                    </ChildContent>
                 </MudStepper>
             }
         </div>
@@ -459,6 +514,14 @@
     private bool? _sandboxValidateOk;
     private string? _sandboxValidateLog;
     private string? _sandboxValidateError;
+
+    private bool _sandboxGenerating;
+    private bool _sandboxAiRunning;
+    private string _sandboxProgress = "";
+    private string? _sandboxSummary;
+    private List<string> _sandboxWarnings = [];
+
+    private bool SandboxBusy => _sandboxGenerating || _sandboxAiRunning || _validatingSandbox;
 
     private bool _aiRunning;
     private bool _aiCompleted;
@@ -699,18 +762,149 @@
 
     // ----- step 4: isolation -----
 
-    private void OnIsolationModeChanged(ExperimentIsolationMode mode)
+    private async Task OnIsolationModeChanged(ExperimentIsolationMode mode)
     {
         _blueprint.IsolationMode = mode;
         _hasProgress = true;
-        _sandboxValidateLog = null;
-        _sandboxValidateError = null;
-        _sandboxValidateOk = null;
+        ResetSandboxFeedback();
 
         if (mode == ExperimentIsolationMode.SandboxSchema && string.IsNullOrWhiteSpace(_blueprint.SandboxSchemaName))
             _blueprint.SandboxSchemaName = $"aiopt_sandbox_{Guid.NewGuid().ToString("N")[..8]}";
         else if (mode == ExperimentIsolationMode.CloneDatabase && string.IsNullOrWhiteSpace(_blueprint.SandboxDatabaseName))
             _blueprint.SandboxDatabaseName = $"{_dbConnection?.Name ?? "db"}_Sandbox_{Guid.NewGuid().ToString("N")[..8]}";
+
+        // Picking a sandbox mode is the point at which the scripts become relevant, so write them
+        // straight away rather than leaving two empty editors and a button to find. Anything the
+        // user has already typed is left alone.
+        if (mode != ExperimentIsolationMode.None && string.IsNullOrWhiteSpace(_blueprint.SandboxSetupSql))
+            await GenerateSandboxAsync();
+    }
+
+    private void OnSandboxSchemaNameChanged(string? value)
+    {
+        _blueprint.SandboxSchemaName = value;
+        _hasProgress = true;
+    }
+
+    private void OnSandboxDatabaseNameChanged(string? value)
+    {
+        _blueprint.SandboxDatabaseName = value;
+        _hasProgress = true;
+    }
+
+    private void OnSandboxSetupSqlChanged(string? value)
+    {
+        _blueprint.SandboxSetupSql = value;
+        _hasProgress = true;
+    }
+
+    private void OnSandboxTeardownSqlChanged(string? value)
+    {
+        _blueprint.SandboxTeardownSql = value;
+        _hasProgress = true;
+    }
+
+    private void ResetSandboxFeedback()
+    {
+        _sandboxValidateLog = null;
+        _sandboxValidateError = null;
+        _sandboxValidateOk = null;
+        _sandboxSummary = null;
+        _sandboxWarnings = [];
+    }
+
+    private SandboxScriptRequest BuildSandboxRequest() => new()
+    {
+        IsolationMode = _blueprint.IsolationMode,
+        SandboxSchemaName = _blueprint.SandboxSchemaName,
+        SandboxDatabaseName = _blueprint.SandboxDatabaseName,
+        BenchmarkSql = _blueprint.BenchmarkSql,
+        Tables = _blueprint.BaseTables
+    };
+
+    /// <summary>
+    /// Takes generated scripts only when there are any: a refusal (a sandbox name that collides
+    /// with something real) reports itself through the warnings and leaves the editors as they were.
+    /// </summary>
+    private void ApplySandboxScripts(SandboxScripts scripts)
+    {
+        _sandboxWarnings = scripts.Warnings.ToList();
+        _sandboxSummary = scripts.Summary;
+        _sandboxValidateLog = null;
+        _sandboxValidateError = null;
+        _sandboxValidateOk = null;
+
+        if (string.IsNullOrWhiteSpace(scripts.Setup))
+            return;
+
+        _blueprint.SandboxSetupSql = scripts.Setup;
+        _blueprint.SandboxTeardownSql = scripts.Teardown;
+        _hasProgress = true;
+    }
+
+    private async Task GenerateSandboxAsync()
+    {
+        if (_dbConnection is null || _blueprint.IsolationMode == ExperimentIsolationMode.None)
+            return;
+
+        _sandboxGenerating = true;
+        _sandboxProgress = "Reading the catalog...";
+        await InvokeAsync(StateHasChanged);
+        try
+        {
+            ApplySandboxScripts(await SandboxScriptService.GenerateAsync(
+                _dbConnection.ConnectionString, BuildSandboxRequest(), _cts.Token));
+        }
+        catch (OperationCanceledException)
+        {
+            // The dialog is closing.
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Could not generate the sandbox scripts: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _sandboxGenerating = false;
+        }
+    }
+
+    private async Task CompleteSandboxWithAiAsync()
+    {
+        if (_dbConnection is null || _blueprint.IsolationMode == ExperimentIsolationMode.None)
+            return;
+
+        var aiConn = _aiConnections.FirstOrDefault(c => c.Id == _selectedAiConnectionId);
+        if (aiConn is null)
+            return;
+
+        _sandboxAiRunning = true;
+        _sandboxProgress = "Starting...";
+        await InvokeAsync(StateHasChanged);
+
+        var progress = new Progress<string>(msg =>
+        {
+            _sandboxProgress = msg;
+            _ = InvokeAsync(StateHasChanged);
+        });
+
+        try
+        {
+            ApplySandboxScripts(await SandboxScriptService.GenerateWithAiAsync(
+                aiConn, _dbConnection.ConnectionString, BuildSandboxRequest(), progress, _cts.Token));
+        }
+        catch (OperationCanceledException)
+        {
+            // The dialog is closing.
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"The AI could not complete the sandbox scripts: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _sandboxAiRunning = false;
+        }
     }
 
     private async Task ValidateSandboxAsync()
@@ -798,10 +992,15 @@
         if (_blueprint.OutputVerificationMode != OutputVerificationMode.None && !(_verificationTested && _verificationDeterministic))
             list.Add("Output verification has not been proven deterministic — go back and test it.");
 
-        if (_blueprint.IsolationMode != ExperimentIsolationMode.None && _selectedAiConnectionId is null &&
-            (string.IsNullOrWhiteSpace(_blueprint.SandboxSetupSql) || _blueprint.SandboxSetupSql.Contains("TODO", StringComparison.OrdinalIgnoreCase)))
+        if (_blueprint.IsolationMode != ExperimentIsolationMode.None)
         {
-            list.Add("No AI connection was used and the sandbox setup script still looks like scaffolding — it likely won't work as-is.");
+            if (string.IsNullOrWhiteSpace(_blueprint.SandboxSetupSql))
+                list.Add("Isolation mode is set but there is no sandbox setup script — go back and generate one.");
+            else if (_blueprint.SandboxSetupSql.Contains("TODO", StringComparison.OrdinalIgnoreCase))
+                list.Add("The sandbox setup script still contains TODO markers, so it won't work as-is — regenerate it, or let the AI finish it.");
+
+            if (string.IsNullOrWhiteSpace(_blueprint.SandboxTeardownSql))
+                list.Add("There is no sandbox teardown script, so every iteration would leave its sandbox behind on the server.");
         }
 
         return list;

@@ -5,10 +5,14 @@
 @inject IDbContextFactory<Tedd.AIOptimizeSql.Database.AIOptimizeDbContext> DbContextFactory
 @inject NavigationManager Navigation
 @inject ISnackbar Snackbar
+@inject IExperimentBlueprintService BlueprintService
+@inject ISandboxScriptService SandboxScriptService
 @using Microsoft.EntityFrameworkCore
 @using Tedd.AIOptimizeSql.Database
 @using Tedd.AIOptimizeSql.Database.Models
 @using Tedd.AIOptimizeSql.Database.Models.Enums
+@using Tedd.AIOptimizeSql.OptimizeEngine.Models.SqlBrowser
+@using Tedd.AIOptimizeSql.OptimizeEngine.Services.SqlBrowser
 
 <PageTitle>@(_isNew ? "New" : "Edit") Experiment</PageTitle>
 
@@ -133,13 +137,66 @@
 
                                 @if (_model.IsolationMode != ExperimentIsolationMode.None)
                                 {
-                                    <MudTextField @bind-Value="_model.SandboxSchemaName" Label="Sandbox schema name"
-                                                  Variant="Variant.Outlined" Class="mb-4" MaxLength="128"
-                                                  HelperText="Used when isolation mode is Sandbox schema." />
+                                    @if (_model.IsolationMode == ExperimentIsolationMode.SandboxSchema)
+                                    {
+                                        <MudTextField @bind-Value="_model.SandboxSchemaName" Label="Sandbox schema name"
+                                                      Variant="Variant.Outlined" Class="mb-4" MaxLength="128"
+                                                      HelperText="The copies live in this schema of the target database." />
+                                    }
+                                    else
+                                    {
+                                        <MudTextField @bind-Value="_model.SandboxDatabaseName" Label="Sandbox database name"
+                                                      Variant="Variant.Outlined" Class="mb-4" MaxLength="128"
+                                                      HelperText="The clone is created on the same server under this name, and dropped again on teardown." />
+                                    }
 
-                                    <MudTextField @bind-Value="_model.SandboxDatabaseName" Label="Sandbox database name"
-                                                  Variant="Variant.Outlined" Class="mb-4" MaxLength="128"
-                                                  HelperText="Used when isolation mode is Clone database." />
+                                    <MudStack Row="true" Spacing="2" Class="mb-3 flex-wrap">
+                                        <MudButton Variant="Variant.Filled" Color="Color.Primary"
+                                                   StartIcon="@Icons.Material.Filled.AutoFixHigh"
+                                                   Disabled="@_sandboxBusy" OnClick="@(() => GenerateSandboxAsync(withAi: false))">
+                                            @(_sandboxGenerating ? "Generating..." : "Generate scripts")
+                                        </MudButton>
+                                        <MudTooltip Text="Pick an AI connection on the Details tab to enable this."
+                                                    Disabled="@(_selectedAiConnId is not null)">
+                                            <MudButton Variant="Variant.Outlined"
+                                                       StartIcon="@Icons.Material.Filled.AutoAwesome"
+                                                       Disabled="@(_sandboxBusy || _selectedAiConnId is null)"
+                                                       OnClick="@(() => GenerateSandboxAsync(withAi: true))">
+                                                @(_sandboxAiRunning ? "Working..." : "Complete with AI")
+                                            </MudButton>
+                                        </MudTooltip>
+                                    </MudStack>
+
+                                    <MudText Typo="Typo.caption" Class="d-block mb-3">
+                                        Generation reads the target database's catalog and the benchmark SQL: the tables the
+                                        benchmark touches are recreated with their real keys, indexes and defaults, filled from
+                                        the source, and — for a clone database — the views, functions and procedures it calls are
+                                        copied too.
+                                    </MudText>
+
+                                    @if (_sandboxGenerating || _sandboxAiRunning)
+                                    {
+                                        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="mb-3">
+                                            <MudProgressCircular Indeterminate="true" Size="Size.Small" />
+                                            <MudText Typo="Typo.body2">@_sandboxProgress</MudText>
+                                        </MudStack>
+                                    }
+                                    @if (!string.IsNullOrWhiteSpace(_sandboxSummary))
+                                    {
+                                        <MudAlert Severity="Severity.Success" Dense="true" Class="mb-3">@_sandboxSummary</MudAlert>
+                                    }
+                                    @if (_sandboxWarnings.Count > 0)
+                                    {
+                                        <MudAlert Severity="Severity.Warning" Class="mb-3">
+                                            <MudText Typo="Typo.subtitle2">The generator could not do everything:</MudText>
+                                            <ul class="ml-4">
+                                                @foreach (var w in _sandboxWarnings)
+                                                {
+                                                    <li>@w</li>
+                                                }
+                                            </ul>
+                                        </MudAlert>
+                                    }
 
                                     <SqlMonacoField EditorId="@_editorIdSandboxSetup"
                                                     Label="Sandbox setup SQL"
@@ -304,6 +361,108 @@
     };
 
     private bool _discardBusy;
+
+    private bool _sandboxGenerating;
+    private bool _sandboxAiRunning;
+    private string _sandboxProgress = "";
+    private string? _sandboxSummary;
+    private List<string> _sandboxWarnings = new();
+
+    private bool _sandboxBusy => _sandboxGenerating || _sandboxAiRunning;
+
+    /// <summary>
+    /// Writes the sandbox setup and teardown scripts from the target database's catalog. The
+    /// benchmark SQL is analyzed first, because which tables the sandbox has to contain is a
+    /// property of the query, not something the edit form can know on its own.
+    /// </summary>
+    private async Task GenerateSandboxAsync(bool withAi)
+    {
+        if (_model is null || _sandboxBusy)
+            return;
+
+        var dbConn = _dbConnections.FirstOrDefault(c => c.Id == _selectedDbConnId);
+        if (dbConn is null)
+        {
+            Snackbar.Add("Pick a database connection first — the scripts are generated from its catalog.", Severity.Warning);
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(_model.BenchmarkSql))
+        {
+            Snackbar.Add("Benchmark SQL is required: it decides which tables the sandbox has to contain.", Severity.Warning);
+            _activeTabIndex = 1;
+            return;
+        }
+
+        var aiConn = withAi ? _aiConnections.FirstOrDefault(c => c.Id == _selectedAiConnId) : null;
+        if (withAi && aiConn is null)
+            return;
+
+        if (_model.IsolationMode == ExperimentIsolationMode.SandboxSchema && string.IsNullOrWhiteSpace(_model.SandboxSchemaName))
+            _model.SandboxSchemaName = $"aiopt_sandbox_{Guid.NewGuid().ToString("N")[..8]}";
+        else if (_model.IsolationMode == ExperimentIsolationMode.CloneDatabase && string.IsNullOrWhiteSpace(_model.SandboxDatabaseName))
+            _model.SandboxDatabaseName = $"{dbConn.Name}_Sandbox_{Guid.NewGuid().ToString("N")[..8]}";
+
+        if (withAi) _sandboxAiRunning = true; else _sandboxGenerating = true;
+        _sandboxProgress = "Analyzing the benchmark...";
+        _sandboxSummary = null;
+        _sandboxWarnings = new();
+        await InvokeAsync(StateHasChanged);
+
+        var progress = new Progress<string>(msg =>
+        {
+            _sandboxProgress = msg;
+            _ = InvokeAsync(StateHasChanged);
+        });
+
+        try
+        {
+            var (blueprint, _, _) = await BlueprintService.AnalyzeQueryAsync(
+                dbConn.ConnectionString, _model.BenchmarkSql!, _pageCts.Token);
+
+            var request = new SandboxScriptRequest
+            {
+                IsolationMode = _model.IsolationMode,
+                SandboxSchemaName = _model.SandboxSchemaName,
+                SandboxDatabaseName = _model.SandboxDatabaseName,
+                BenchmarkSql = _model.BenchmarkSql!,
+                Tables = blueprint.BaseTables
+            };
+
+            var scripts = aiConn is not null
+                ? await SandboxScriptService.GenerateWithAiAsync(
+                    aiConn, dbConn.ConnectionString, request, progress, _pageCts.Token)
+                : await SandboxScriptService.GenerateAsync(dbConn.ConnectionString, request, _pageCts.Token);
+
+            _sandboxSummary = scripts.Summary;
+            _sandboxWarnings = scripts.Warnings.ToList();
+
+            if (string.IsNullOrWhiteSpace(scripts.Setup))
+            {
+                // A refusal — a sandbox name that collides with something real — explains itself
+                // through the warnings; overwriting the editors with nothing would only hide it.
+                Snackbar.Add("No scripts were generated. See the warnings above.", Severity.Warning);
+                return;
+            }
+
+            _model.SandboxSetupSql = scripts.Setup;
+            _model.SandboxTeardownSql = scripts.Teardown;
+            Snackbar.Add("Sandbox scripts generated. Review them, then Save.", Severity.Success);
+        }
+        catch (OperationCanceledException)
+        {
+            // Navigating away.
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Could not generate the sandbox scripts: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _sandboxGenerating = false;
+            _sandboxAiRunning = false;
+        }
+    }
 
     public void Dispose()
     {

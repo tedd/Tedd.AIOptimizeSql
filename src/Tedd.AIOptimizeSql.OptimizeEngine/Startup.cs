@@ -25,6 +25,7 @@ public static class Startup
         builder.Services.TryAddSingleton<ISqlCatalogService, SqlCatalogService>();
         builder.Services.TryAddSingleton<IAdHocQueryService, AdHocQueryService>();
         builder.Services.TryAddSingleton<IObjectDependencyService, ObjectDependencyService>();
+        builder.Services.TryAddSingleton<ISandboxScriptService, SandboxScriptService>();
         builder.Services.TryAddSingleton<IExperimentBlueprintService, ExperimentBlueprintService>();
         builder.Services.TryAddSingleton<ExperimentSandboxCoordinator>();
 

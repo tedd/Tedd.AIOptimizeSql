@@ -1,7 +1,6 @@
 using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
-using System.Text.RegularExpressions;
 
 using Microsoft.Agents.AI;
 using Microsoft.Data.SqlClient;
@@ -22,9 +21,10 @@ namespace Tedd.AIOptimizeSql.OptimizeEngine.Services.SqlBrowser;
 /// scaffolding and asked only for the judgement calls. When the AI is unusable the deterministic
 /// result stands on its own and a warning says so — the blueprint is never left half-filled.
 /// </summary>
-public sealed partial class ExperimentBlueprintService(
+public sealed class ExperimentBlueprintService(
     ISchemaDiscoveryService schemaDiscovery,
     IObjectDependencyService dependencyService,
+    ISandboxScriptService sandboxScriptService,
     AiAgentFactory agentFactory,
     ILogger<ExperimentBlueprintService> logger) : IExperimentBlueprintService
 {
@@ -242,7 +242,8 @@ public sealed partial class ExperimentBlueprintService(
             : TryGetInitialCatalog(connectionString);
 
         var (sandboxSchemaName, sandboxDatabaseName, setupSql, teardownSql) =
-            BuildSandboxScaffolding(request.IsolationMode, current, databaseName, blueprint.BaseTables, warnings);
+            await BuildSandboxScaffoldingAsync(
+                connectionString, request, current, databaseName, blueprint.BaseTables, warnings, ct);
 
         blueprint.SandboxSchemaName = sandboxSchemaName;
         blueprint.SandboxDatabaseName = sandboxDatabaseName;
@@ -350,27 +351,31 @@ public sealed partial class ExperimentBlueprintService(
     }
 
     /// <summary>
-    /// Picks the sandbox names (keeping any the user already chose) and builds the deterministic
-    /// setup/teardown pair for the isolation mode.
+    /// Picks the sandbox names (keeping any the user already chose) and generates the
+    /// setup/teardown pair from the live catalog, so the AI is handed working scripts to review
+    /// rather than scaffolding to fill in. Only when the catalog cannot be read does it fall back
+    /// to <see cref="SandboxScriptBuilder"/>'s offline outline.
     /// </summary>
-    private (string? SchemaName, string? DatabaseName, string? Setup, string? Teardown) BuildSandboxScaffolding(
-        ExperimentIsolationMode mode,
-        ExperimentBlueprint current,
-        string databaseName,
-        IReadOnlyList<BlueprintTable> tables,
-        List<string> warnings)
+    private async Task<(string? SchemaName, string? DatabaseName, string? Setup, string? Teardown)>
+        BuildSandboxScaffoldingAsync(
+            string connectionString,
+            ExperimentBlueprintRequest request,
+            ExperimentBlueprint current,
+            string databaseName,
+            IReadOnlyList<BlueprintTable> tables,
+            List<string> warnings,
+            CancellationToken ct)
     {
-        switch (mode)
+        string? schemaName = null;
+        string? cloneName = null;
+
+        switch (request.IsolationMode)
         {
             case ExperimentIsolationMode.SandboxSchema:
-            {
-                var schemaName = FirstNonBlank(current.SandboxSchemaName) ?? SandboxScriptBuilder.DefaultSandboxSchema;
-                var (setup, teardown) = SandboxScriptBuilder.BuildSandboxSchema(schemaName, tables);
-                return (schemaName, null, setup, teardown);
-            }
+                schemaName = FirstNonBlank(current.SandboxSchemaName) ?? SandboxScriptBuilder.DefaultSandboxSchema;
+                break;
 
             case ExperimentIsolationMode.CloneDatabase:
-            {
                 if (string.IsNullOrWhiteSpace(databaseName))
                 {
                     warnings.Add(
@@ -381,15 +386,46 @@ public sealed partial class ExperimentBlueprintService(
                     return (null, null, null, null);
                 }
 
-                var cloneName = FirstNonBlank(current.SandboxDatabaseName)
-                                ?? SandboxScriptBuilder.DefaultCloneDatabaseName(databaseName);
-                var (setup, teardown) = SandboxScriptBuilder.BuildCloneDatabase(cloneName, databaseName, tables);
-                return (null, cloneName, setup, teardown);
-            }
+                cloneName = FirstNonBlank(current.SandboxDatabaseName)
+                            ?? SandboxScriptBuilder.DefaultCloneDatabaseName(databaseName);
+                break;
 
             default:
                 return (null, null, null, null);
         }
+
+        try
+        {
+            var scripts = await sandboxScriptService.GenerateAsync(connectionString, new SandboxScriptRequest
+            {
+                IsolationMode = request.IsolationMode,
+                SandboxSchemaName = schemaName,
+                SandboxDatabaseName = cloneName,
+                BenchmarkSql = request.BenchmarkSql,
+                Tables = tables
+            }, ct);
+
+            warnings.AddRange(scripts.Warnings);
+            if (!string.IsNullOrWhiteSpace(scripts.Setup))
+                return (schemaName, cloneName, scripts.Setup, scripts.Teardown);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Catalog-driven sandbox generation failed; falling back to the offline outline");
+            warnings.Add(
+                $"The sandbox scripts could not be generated from the catalog ({ex.Message}). What follows is an " +
+                "outline the AI is asked to finish, not a working script — review it before running.");
+        }
+
+        var fallback = request.IsolationMode == ExperimentIsolationMode.SandboxSchema
+            ? SandboxScriptBuilder.BuildSandboxSchema(schemaName!, tables)
+            : SandboxScriptBuilder.BuildCloneDatabase(cloneName!, databaseName, tables);
+
+        return (schemaName, cloneName, fallback.Setup, fallback.Teardown);
     }
 
     #endregion
@@ -789,21 +825,9 @@ public sealed partial class ExperimentBlueprintService(
         return sb.ToString();
     }
 
-    /// <summary>
-    /// Tolerant JSON parse: models wrap objects in prose or code fences even when told not to,
-    /// so strip fences and take the outermost balanced object before deserializing.
-    /// </summary>
     private AiBlueprintResponse? ParseResponse(string? rawResponse)
     {
-        if (string.IsNullOrWhiteSpace(rawResponse))
-            return null;
-
-        var text = rawResponse.Trim();
-        var fence = CodeFencePattern().Match(text);
-        if (fence.Success)
-            text = fence.Groups[1].Value.Trim();
-
-        var json = ExtractJsonObject(text);
+        var json = AiJson.ExtractObject(rawResponse);
         if (json is null)
         {
             logger.LogWarning("AI blueprint response contained no JSON object");
@@ -812,7 +836,7 @@ public sealed partial class ExperimentBlueprintService(
 
         try
         {
-            return JsonSerializer.Deserialize<AiBlueprintResponse>(json, JsonOptions);
+            return JsonSerializer.Deserialize<AiBlueprintResponse>(json, AiJson.Options);
         }
         catch (JsonException ex)
         {
@@ -820,32 +844,6 @@ public sealed partial class ExperimentBlueprintService(
             return null;
         }
     }
-
-    private static string? ExtractJsonObject(string text)
-    {
-        var start = text.IndexOf('{');
-        if (start < 0)
-            return null;
-
-        var depth = 0;
-        for (var i = start; i < text.Length; i++)
-        {
-            if (text[i] == '{') depth++;
-            else if (text[i] == '}') depth--;
-
-            if (depth == 0)
-                return text[start..(i + 1)];
-        }
-
-        return null;
-    }
-
-    private static readonly JsonSerializerOptions JsonOptions = new()
-    {
-        PropertyNameCaseInsensitive = true,
-        ReadCommentHandling = JsonCommentHandling.Skip,
-        AllowTrailingCommas = true
-    };
 
     /// <summary>Shape of the JSON the agent is asked for; property names match the snake_case keys.</summary>
     private sealed class AiBlueprintResponse
@@ -863,9 +861,6 @@ public sealed partial class ExperimentBlueprintService(
         public string? Output_verification_sql { get; set; }
         public List<string>? Warnings { get; set; }
     }
-
-    [GeneratedRegex(@"^```(?:json|sql)?\s*\n([\s\S]*?)\n\s*```\s*$", RegexOptions.Compiled)]
-    private static partial Regex CodeFencePattern();
 
     #endregion
 
