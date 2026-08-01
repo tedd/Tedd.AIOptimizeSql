@@ -42,31 +42,47 @@ Every hypothesis records its improvement percentage, before/after benchmark runs
 
 ## Using the app, step by step
 
-The home page walks you through the flow: connect a database, connect an AI, analyze, experiment.
+The app is organised around **one database at a time**. You pick it up front on the start screen,
+and everything after that — the dashboard, analyses, experiments, the SQL browser — is scoped to
+it. That scope is in the URL (`/db/3/experiments/…`), so links and bookmarks carry the database
+with them, and there is no way to accidentally read one database's results while looking at
+another. The app bar always shows which one you are in; click it to switch.
 
 ![Home page](docs/screenshots/home.png)
 
-### Step 1 — Add a database connection
+### Step 1 — Add an AI connection
 
-**DB Connections → New.** Name it and paste a SQL Server connection string. The account needs to read system views (DMVs), and — for experiments — create/drop indexes and other objects.
+**Settings → AI connections → New.** Pick a provider (OpenAI, Azure OpenAI, Anthropic, Ollama, or a
+local endpoint), a model, the endpoint URL, and your API key. You can add several — e.g. a cheap
+model for routine work and a strong one for hard problems.
+
+This comes first because every database is **bound** to the AI it works with: analyses, experiments
+and the Create Experiment wizard all inherit it, so there has to be an AI to point at before a
+database can be added. An AI still bound to a database cannot be deleted without unbinding it
+first, and the app tells you which databases would be affected.
+
+![New AI connection with sample values](docs/screenshots/ai-connection-edit.png)
+
+### Step 2 — Add a database connection
+
+**Settings → Database connections → New.** Name it, paste a SQL Server connection string, and pick
+the AI it uses. The account needs to read system views (DMVs), and — for experiments — create/drop
+indexes and other objects.
 
 The **Analyze only (production-safe)** switch restricts the connection to read-only queries and estimated execution plans: no benchmarks, no hypothesis apply/revert, no touching data. (Re-read the disclaimer above before trusting any switch with production.)
 
 ![New database connection with a sample connection string](docs/screenshots/database-connection-edit.png)
 
-### Step 2 — Add an AI connection
-
-**AI Connections → New.** Pick a provider (OpenAI, Azure OpenAI, Anthropic, Ollama, or a local endpoint), a model, the endpoint URL, and your API key. You can add several — e.g. a cheap model for routine work and a strong one for hard problems — and choose per analysis/experiment.
-
-![New AI connection with sample values](docs/screenshots/ai-connection-edit.png)
-
 ### Step 3 — Run a database analysis
 
-**Database analysis → New Analysis.** Pick the database and AI connection, optionally give focus areas ("the nightly batch jobs feel slow"), and hit **Save & Run**. The worker snapshots metrics, runs rule-based checks, lets the AI do its deep dive, and writes an executive summary.
+**Analysis → New Analysis.** The database and its AI are already chosen — you are inside them —
+so you only give a name and, optionally, focus areas ("the nightly batch jobs feel slow"), then hit
+**Save & Run**. If the database has no AI bound (or the one it had was deleted), you are asked for
+one and the answer is saved back onto the database, so the question is asked once. The worker snapshots metrics, runs rule-based checks, lets the AI do its deep dive, and writes an executive summary.
 
 ![New analysis with sample inputs](docs/screenshots/analysis-edit.png)
 
-Results land in a dashboard with a health score, problem counts, findings (each with severity, evidence, recommendation, and often suggested SQL — never executed automatically), the AI's live work plan, raw metrics, and a full log. Findings may include **proposed experiments** you can open and run directly.
+Results land in a dashboard with a health score, problem counts, findings (each with severity, evidence, recommendation, and often suggested SQL — never executed automatically), the AI's live work plan, raw metrics, and a full log. Every finding has a **Start experiment from this finding** button: it opens the Create Experiment wizard with the finding in hand, and the AI writes the benchmark query that would prove or disprove it. The resulting experiment is linked back to the finding.
 
 ![Analysis dashboard](docs/screenshots/analysis-viewer.png)
 
@@ -76,7 +92,14 @@ The list page shows every analysis with its state and finding counts:
 
 ### Step 4 — Run experiments
 
-**Experiments → New.** On the **Details** tab: name, database connection, AI connection, and optional AI instructions — use these to fence the AI in ("do not change the schema of Sales.Orders").
+There are three ways in: **New experiment (wizard)** in the menu, the **Create experiment** button
+in the SQL browser once you have a query, or a finding in an analysis. The wizard walks through
+what to measure, which tables it touches, how to prove the result is unchanged, where it runs
+(in place, a sandbox schema, or a database clone), and lets the AI fill in the rest.
+
+For a blank experiment, **Experiments → New (blank)**. On the **Details** tab: name, AI connection
+(defaulted from the database), and optional AI instructions — use these to fence the AI in ("do not
+change the schema of Sales.Orders").
 
 ![New experiment, details tab with sample inputs](docs/screenshots/experiment-edit.png)
 
@@ -84,13 +107,25 @@ On the **SQL** tab, provide the **Benchmark SQL** — the query you want faster.
 
 ![Experiment SQL tab with a sample benchmark query](docs/screenshots/experiment-edit-sql.png)
 
-Save, then start a **research iteration** — one batch of AI optimization attempts. You can pass per-iteration hints ("the previous index attempt regressed, try join order instead"). The viewer shows iterations, hypotheses, improvements, and benchmark details as they happen:
+Save, then hit **Start run**. You are asked how many hypotheses the run may try — the number that
+decides both how long it takes and how many tokens it burns — and can pass hints for that run
+("the previous index attempt regressed, try join order instead"). Hypotheses can also be written by
+hand, with a **Fill in with AI** button that drafts the description, the optimize SQL and the revert
+SQL for you to review. The viewer shows iterations, hypotheses, improvements, and benchmark details
+as they happen:
 
 ![Experiment viewer](docs/screenshots/experiment-viewer.png)
 
-The **Research iterations** page tracks queue state and results across all experiments:
+The **Research iterations** page tracks queue state and results across every experiment on this database:
 
 ![Research iterations overview](docs/screenshots/research-iterations.png)
+
+### Tracking what the AI costs
+
+Each database's dashboard has a **Token usage** tab: every AI conversation started for that
+database, what it was for (analysis, hypothesis generation, SQL repair, the wizard…), which model
+answered, how many requests it took, and the input/output/total tokens it reported. Conversation
+history itself stays where it belongs — in the agent harness — and only the usage ledger is stored.
 
 The built-in **Documentation** page covers all of this in more depth — hypothesis lifecycle, benchmark runs, integrity checks, and troubleshooting tips.
 

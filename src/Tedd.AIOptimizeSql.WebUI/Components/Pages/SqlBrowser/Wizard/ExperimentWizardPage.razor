@@ -1,0 +1,169 @@
+@* Hosts the Create Experiment wizard as a page of its own so it is reachable from the menu and
+   from an analysis finding, not only from a query in the SQL browser. *@
+
+@page "/db/{DbId:int}/experiments/wizard"
+@implements IDisposable
+@rendermode InteractiveServer
+@inject IDbContextFactory<Tedd.AIOptimizeSql.Database.AIOptimizeDbContext> DbContextFactory
+@inject IDialogService DialogService
+@inject NavigationManager Navigation
+@inject ISnackbar Snackbar
+@using Microsoft.EntityFrameworkCore
+@using Tedd.AIOptimizeSql.OptimizeEngine.Models.SqlBrowser
+@using Tedd.AIOptimizeSql.WebUI.Components.Pages.SqlBrowser.Wizard
+
+<PageTitle>New experiment</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.Medium" Class="mt-4">
+    <MudText Typo="Typo.h4" GutterBottom="true">New experiment</MudText>
+
+    @if (_loading)
+    {
+        <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+    }
+    else if (_error is not null)
+    {
+        <MudAlert Severity="Severity.Error" Class="mb-4">@_error</MudAlert>
+        <MudButton Variant="Variant.Outlined" Href="@DbRoutes.Experiments(DbId)">Back to experiments</MudButton>
+    }
+    else
+    {
+        <MudText Typo="Typo.body1" Class="mb-4">
+            The wizard walks through what to measure, what it touches, how to prove the result is
+            unchanged, where it runs, and lets the AI fill in the rest.
+        </MudText>
+
+        @if (_finding is not null)
+        {
+            <MudAlert Severity="Severity.Info" Class="mb-4">
+                Starting from the analysis finding <strong>@_finding.Title</strong>. The AI can draft
+                the benchmark query for it in the first step.
+            </MudAlert>
+        }
+
+        @if (Db is { HasAi: false })
+        {
+            <MudAlert Severity="Severity.Warning" Class="mb-4">
+                No AI is bound to this database. The wizard's deterministic steps still work, but the
+                AI steps will be unavailable until one is bound.
+                <MudButton Class="mt-2 d-block" Variant="Variant.Outlined" Size="Size.Small"
+                           Href="@DbRoutes.DatabaseConnection(DbId)">
+                    Bind an AI to this database
+                </MudButton>
+            </MudAlert>
+        }
+
+        <MudStack Row="true" Spacing="2">
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.AutoAwesome"
+                       OnClick="OpenWizardAsync" Disabled="@_opening">
+                Start the wizard
+            </MudButton>
+            <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.TableView"
+                       Href="@DbRoutes.Browser(DbId)">
+                Or write a query in the SQL browser first
+            </MudButton>
+        </MudStack>
+    }
+</MudContainer>
+
+@code {
+    [Parameter] public int DbId { get; set; }
+
+    /// <summary>Analysis finding to start from, passed as <c>?finding=</c>.</summary>
+    [SupplyParameterFromQuery(Name = "finding")]
+    public int? FindingId { get; set; }
+
+    /// <summary>Seed query, passed as <c>?sql=</c> when arriving from somewhere with one.</summary>
+    [SupplyParameterFromQuery(Name = "sql")]
+    public string? Sql { get; set; }
+
+    [CascadingParameter] private DatabaseScope? Db { get; set; }
+
+    private readonly CancellationTokenSource _pageCts = new();
+    private bool _loading = true;
+    private bool _opening;
+    private string? _error;
+    private FindingExperimentContext? _finding;
+    private bool _autoOpened;
+
+    public void Dispose()
+    {
+        _pageCts.Cancel();
+        _pageCts.Dispose();
+    }
+
+    protected override Task OnInitializedAsync() =>
+        PageLoadCancellation.RunPageLoadAsync(async ct =>
+        {
+            if (FindingId is { } findingId)
+            {
+                await using var db = await DbContextFactory.CreateDbContextAsync(ct);
+                var id = (AnalysisFindingId)findingId;
+                var f = await db.AnalysisFindings.AsNoTracking()
+                    .FirstOrDefaultAsync(x => x.Id == id, ct);
+
+                if (f is null)
+                    _error = "That analysis finding no longer exists.";
+                else
+                    _finding = new FindingExperimentContext
+                    {
+                        Title = f.Title,
+                        Description = f.Description,
+                        Evidence = f.Evidence,
+                        Recommendation = f.Recommendation,
+                        RecommendationSql = f.RecommendationSql,
+                        ObjectSchema = f.ObjectSchema,
+                        ObjectName = f.ObjectName,
+                        Category = f.Category.ToString(),
+                        Severity = f.Severity.ToString(),
+                    };
+            }
+
+            _loading = false;
+        }, _pageCts.Token);
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        // Arriving from a finding or with a query in hand is an explicit "start the wizard",
+        // so do not make the user press a second button to do what they already asked for.
+        if (!_loading && !_autoOpened && _error is null && (_finding is not null || !string.IsNullOrWhiteSpace(Sql)))
+        {
+            _autoOpened = true;
+            await OpenWizardAsync();
+        }
+    }
+
+    private async Task OpenWizardAsync()
+    {
+        if (_opening)
+            return;
+
+        _opening = true;
+        try
+        {
+            AnalysisFindingId? findingId = FindingId is { } fid ? (AnalysisFindingId)fid : null;
+
+            var parameters = new DialogParameters<CreateExperimentWizard>
+            {
+                { x => x.ConnectionId, (DatabaseConnectionId)DbId },
+                { x => x.Sql, Sql ?? "" },
+                { x => x.Finding, _finding },
+                { x => x.FindingId, findingId },
+                { x => x.DefaultAiConnectionId, Db?.TypedAiConnectionId },
+            };
+
+            var dialog = await DialogService.ShowAsync<CreateExperimentWizard>(
+                "Create experiment",
+                parameters,
+                new DialogOptions { MaxWidth = MaxWidth.Large, FullWidth = true, CloseButton = true });
+
+            var result = await dialog.Result;
+            if (result is not null && !result.Canceled && result.Data is int newExperimentId)
+                Navigation.NavigateTo(DbRoutes.EditExperiment(DbId, newExperimentId));
+        }
+        finally
+        {
+            _opening = false;
+        }
+    }
+}

@@ -27,6 +27,7 @@ namespace Tedd.AIOptimizeSql.OptimizeEngine.Services.SqlBrowser;
 public sealed partial class SandboxScriptService(
     ISchemaDiscoveryService schemaDiscovery,
     AiAgentFactory agentFactory,
+    AiConversationTracker conversationTracker,
     ILogger<SandboxScriptService> logger) : ISandboxScriptService
 {
     /// <summary>Schema context is the bulk of the AI prompt; past this it is truncated with a note.</summary>
@@ -811,6 +812,14 @@ public sealed partial class SandboxScriptService(
 
         var warnings = generated.Warnings.ToList();
 
+        var conversation = await conversationTracker.StartAsync(new AiConversationStart
+        {
+            Kind = AiConversationKind.SandboxScript,
+            AiConnection = aiConnection,
+            DatabaseConnectionId = request.DatabaseConnectionId,
+            Title = $"Sandbox scripts ({request.IsolationMode})",
+        }, ct);
+
         try
         {
             progress?.Report($"Asking {aiConnection.Model} to finish the sandbox scripts…");
@@ -819,6 +828,8 @@ public sealed partial class SandboxScriptService(
             var sw = Stopwatch.StartNew();
             var response = await agent.RunAsync(BuildPrompt(request, model, generated), cancellationToken: ct);
             sw.Stop();
+            conversation.Record(response?.Usage);
+            await conversation.CompleteAsync(CancellationToken.None);
 
             progress?.Report($"AI responded after {sw.ElapsedMilliseconds} ms, parsing…");
 
@@ -848,10 +859,12 @@ public sealed partial class SandboxScriptService(
         }
         catch (OperationCanceledException)
         {
+            await conversation.FailAsync("Cancelled.", CancellationToken.None);
             throw;
         }
         catch (Exception ex)
         {
+            await conversation.FailAsync(ex.Message, CancellationToken.None);
             logger.LogError(ex, "AI refinement of the sandbox scripts failed");
             warnings.Add(
                 $"The AI could not be used to finish these scripts ({ex.Message}). The deterministic scripts " +

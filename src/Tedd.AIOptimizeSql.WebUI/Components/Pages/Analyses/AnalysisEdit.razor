@@ -1,8 +1,9 @@
-@page "/analyses/new"
+@page "/db/{DbId:int}/analyses/new"
 @implements IDisposable
 @rendermode InteractiveServer
 @inject IDbContextFactory<Tedd.AIOptimizeSql.Database.AIOptimizeDbContext> DbContextFactory
 @inject NavigationManager Navigation
+@inject IDialogService DialogService
 @inject ISnackbar Snackbar
 @using Microsoft.EntityFrameworkCore
 @using Tedd.AIOptimizeSql.Database
@@ -13,94 +14,89 @@
 
 <MudContainer MaxWidth="MaxWidth.Medium" Class="mt-4">
     <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-4">
-        <MudIconButton Icon="@Icons.Material.Filled.ArrowBack" OnClick="@(() => Navigation.NavigateTo("/analyses"))" />
+        <MudIconButton Icon="@Icons.Material.Filled.ArrowBack" OnClick="@(() => Navigation.NavigateTo(DbRoutes.Analyses(DbId)))" />
         <MudText Typo="Typo.h4">New Database Analysis</MudText>
     </MudStack>
 
-    @if (_loading)
-    {
-        <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
-    }
-    else
-    {
-        <MudCard Elevation="3" Class="rounded-lg">
-            <MudCardContent>
-                <MudForm @ref="_form" @bind-IsValid="_formValid">
-                    <MudTextField @bind-Value="_name" Label="Name" Required="true"
-                                  RequiredError="Name is required" MaxLength="1024"
-                                  Variant="Variant.Outlined" Class="mb-4" />
+    <MudCard Elevation="3" Class="rounded-lg">
+        <MudCardContent>
+            <MudForm @ref="_form" @bind-IsValid="_formValid">
+                <MudTextField @bind-Value="_name" Label="Name" Required="true"
+                              RequiredError="Name is required" MaxLength="1024"
+                              Variant="Variant.Outlined" Class="mb-4" />
 
-                    <MudSelect T="DatabaseConnectionId?" @bind-Value="_databaseConnectionId" Label="Database connection" Required="true"
-                               Variant="Variant.Outlined" Class="mb-1">
-                        @foreach (var c in _databaseConnections)
-                        {
-                            <MudSelectItem Value="@((DatabaseConnectionId?)c.Id)">
-                                @c.Name @(c.AnalyzeOnly ? " (analyze-only)" : "")
-                            </MudSelectItem>
-                        }
-                    </MudSelect>
-                    <MudAlert Severity="Severity.Info" Dense="true" Class="mb-4">
-                        Analysis is always <strong>read-only</strong> against the target database, regardless of the
-                        connection's analyze-only setting. The AI inspects metrics, runs SELECT/DMV queries and
-                        estimated execution plans, but never changes anything — safe for production.
-                    </MudAlert>
+                @* The database is not a choice here: it is the one you are already inside. *@
+                <MudTextField Value="@(Db?.Name ?? $"#{DbId}")" Label="Database" ReadOnly="true"
+                              Variant="Variant.Outlined" Class="mb-1" />
+                <MudAlert Severity="Severity.Info" Dense="true" Class="mb-4">
+                    Analysis is always <strong>read-only</strong> against the target database, regardless of the
+                    connection's analyze-only setting. The AI inspects metrics, runs SELECT/DMV queries and
+                    estimated execution plans, but never changes anything — safe for production.
+                </MudAlert>
 
-                    <MudSelect T="AIConnectionId?" @bind-Value="_aiConnectionId" Label="AI connection" Required="true"
-                               Variant="Variant.Outlined" Class="mb-4">
-                        @foreach (var c in _aiConnections)
-                        {
-                            <MudSelectItem Value="@((AIConnectionId?)c.Id)">@c.Name (@c.Provider / @c.Model)</MudSelectItem>
-                        }
-                    </MudSelect>
+                <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="mb-1">
+                    <MudTextField Value="@AiDisplayName" Label="AI connection" ReadOnly="true"
+                                  Variant="Variant.Outlined" Class="flex-grow-1" />
+                    <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.SmartToy"
+                               OnClick="ChooseAiAsync">
+                        @(_aiConnectionId is null ? "Choose AI" : "Change")
+                    </MudButton>
+                </MudStack>
+                <MudText Typo="Typo.caption" Color="Color.Secondary" Class="mb-4 d-block">
+                    Inherited from the database. Choosing one here binds it to the database, so later
+                    analyses and experiments use it too.
+                </MudText>
 
-                    <MudTextField @bind-Value="_instructions" Label="Instructions / focus areas (optional)"
-                                  HelperText="E.g. 'Focus on the Orders module' or 'We suspect nightly batch jobs are slow'"
-                                  Lines="3" Variant="Variant.Outlined" Class="mb-4" />
+                <MudTextField @bind-Value="_instructions" Label="Instructions / focus areas (optional)"
+                              HelperText="E.g. 'Focus on the Orders module' or 'We suspect nightly batch jobs are slow'"
+                              Lines="3" Variant="Variant.Outlined" Class="mb-4" />
 
-                    <MudStack Row="true" Spacing="6" Wrap="Wrap.Wrap" Class="mb-2">
-                        <MudSwitch @bind-Value="_enableWebSearch" Color="Color.Primary"
-                                   Label="Allow web search (requires configured API key)" />
-                        <MudSwitch @bind-Value="_includeProcsAndViews" Color="Color.Primary"
-                                   Label="Review stored procedures and views" />
-                    </MudStack>
+                <MudStack Row="true" Spacing="6" Wrap="Wrap.Wrap" Class="mb-2">
+                    <MudSwitch @bind-Value="_enableWebSearch" Color="Color.Primary"
+                               Label="Allow web search (requires configured API key)" />
+                    <MudSwitch @bind-Value="_includeProcsAndViews" Color="Color.Primary"
+                               Label="Review stored procedures and views" />
+                </MudStack>
 
-                    <MudNumericField T="int" @bind-Value="_maxAiFindings" Label="Max AI findings" Min="1" Max="100"
-                                     Variant="Variant.Outlined" Class="mb-4" Style="max-width: 220px;" />
-                </MudForm>
-            </MudCardContent>
-            <MudCardActions Class="pa-4">
-                <MudSpacer />
-                <MudButton Variant="Variant.Text" OnClick="@(() => Navigation.NavigateTo("/analyses"))" Class="mr-2">Cancel</MudButton>
-                <MudButton Variant="Variant.Outlined" Color="Color.Primary" Disabled="@(!_formValid)"
-                           OnClick="@(() => Save(queue: false))" StartIcon="@Icons.Material.Filled.Save" Class="mr-2">
-                    Save as draft
-                </MudButton>
-                <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="@(!_formValid)"
-                           OnClick="@(() => Save(queue: true))" StartIcon="@Icons.Material.Filled.PlayArrow">
-                    Save &amp; Run
-                </MudButton>
-            </MudCardActions>
-        </MudCard>
-    }
+                <MudNumericField T="int" @bind-Value="_maxAiFindings" Label="Max AI findings" Min="1" Max="100"
+                                 Variant="Variant.Outlined" Class="mb-4" Style="max-width: 220px;" />
+            </MudForm>
+        </MudCardContent>
+        <MudCardActions Class="pa-4">
+            <MudSpacer />
+            <MudButton Variant="Variant.Text" OnClick="@(() => Navigation.NavigateTo(DbRoutes.Analyses(DbId)))" Class="mr-2">Cancel</MudButton>
+            <MudButton Variant="Variant.Outlined" Color="Color.Primary" Disabled="@(!_formValid || _saving)"
+                       OnClick="@(() => Save(queue: false))" StartIcon="@Icons.Material.Filled.Save" Class="mr-2">
+                Save as draft
+            </MudButton>
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="@(!_formValid || _saving)"
+                       OnClick="@(() => Save(queue: true))" StartIcon="@Icons.Material.Filled.PlayArrow">
+                Save &amp; Run
+            </MudButton>
+        </MudCardActions>
+    </MudCard>
 </MudContainer>
 
 @code {
+    [Parameter] public int DbId { get; set; }
+
+    [CascadingParameter] private DatabaseScope? Db { get; set; }
+
     private readonly CancellationTokenSource _pageCts = new();
 
-    private bool _loading = true;
     private bool _formValid;
+    private bool _saving;
     private MudForm? _form;
 
     private string _name = $"Analysis {DateTime.Now:yyyy-MM-dd HH:mm}";
-    private DatabaseConnectionId? _databaseConnectionId;
     private AIConnectionId? _aiConnectionId;
+    private string? _aiConnectionName;
     private string? _instructions;
     private bool _enableWebSearch = true;
     private bool _includeProcsAndViews = true;
     private int _maxAiFindings = 25;
 
-    private List<DatabaseConnection> _databaseConnections = new();
-    private List<AIConnection> _aiConnections = new();
+    private string AiDisplayName => _aiConnectionName ?? "None — pick one before running";
 
     public void Dispose()
     {
@@ -108,53 +104,85 @@
         _pageCts.Dispose();
     }
 
-    protected override Task OnInitializedAsync() =>
-        PageLoadCancellation.RunPageLoadAsync(async ct =>
+    protected override void OnParametersSet()
+    {
+        // The scope is cascaded by the route guard and can arrive after the first render.
+        if (Db is not null && _aiConnectionId is null)
         {
-            await using var db = await DbContextFactory.CreateDbContextAsync(ct);
-            _databaseConnections = await db.DatabaseConnections.AsNoTracking().OrderBy(c => c.Name).ToListAsync(ct);
-            _aiConnections = await db.AIConnections.AsNoTracking().OrderBy(c => c.Name).ToListAsync(ct);
+            _aiConnectionId = Db.TypedAiConnectionId;
+            _aiConnectionName = Db.AiConnectionName;
+        }
+    }
 
-            _loading = false;
-        }, _pageCts.Token);
+    /// <summary>
+    /// Picking an AI binds it to the database, which is what turns "run an analysis with no AI"
+    /// into a one-time question instead of a per-analysis one.
+    /// </summary>
+    private async Task ChooseAiAsync()
+    {
+        if (Db is null)
+            return;
+
+        // Force the prompt even when a binding exists, so this doubles as "change the AI".
+        var unbound = Db with { AiConnectionId = null, AiConnectionName = null };
+        var chosen = await AiBindingPrompt.EnsureAiConnectionAsync(
+            unbound, DialogService, "An analysis needs an AI to run its deep dive.");
+
+        if (chosen is null)
+            return;
+
+        _aiConnectionId = chosen;
+        await using var db = await DbContextFactory.CreateDbContextAsync(_pageCts.Token);
+        _aiConnectionName = await db.AIConnections.AsNoTracking()
+            .Where(a => a.Id == chosen.Value)
+            .Select(a => a.Name)
+            .FirstOrDefaultAsync(_pageCts.Token);
+    }
 
     private async Task Save(bool queue)
     {
         await _form!.ValidateAsync();
-        if (!_formValid) return;
+        if (!_formValid || _saving) return;
 
-        if (_databaseConnectionId is null)
-        {
-            Snackbar.Add("Select a database connection.", Severity.Warning);
-            return;
-        }
         if (_aiConnectionId is null)
         {
-            Snackbar.Add("Select an AI connection.", Severity.Warning);
-            return;
+            await ChooseAiAsync();
+            if (_aiConnectionId is null)
+            {
+                Snackbar.Add("An analysis needs an AI connection.", Severity.Warning);
+                return;
+            }
         }
 
-        await using var db = await DbContextFactory.CreateDbContextAsync();
-        var now = DateTime.UtcNow;
-        var analysis = new DatabaseAnalysis
+        _saving = true;
+        try
         {
-            Id = DatabaseAnalysisId.Transient,
-            Name = _name,
-            DatabaseConnectionId = _databaseConnectionId,
-            AIConnectionId = _aiConnectionId,
-            Instructions = string.IsNullOrWhiteSpace(_instructions) ? null : _instructions,
-            EnableWebSearch = _enableWebSearch,
-            IncludeStoredProceduresAndViews = _includeProcsAndViews,
-            MaxAiFindings = _maxAiFindings,
-            State = queue ? DatabaseAnalysisState.Queued : DatabaseAnalysisState.Draft,
-            LastMessage = queue ? "Queued" : "Draft",
-            CreatedAt = now,
-            ModifiedAt = now,
-        };
-        db.DatabaseAnalyses.Add(analysis);
-        await db.SaveChangesAsync();
+            await using var db = await DbContextFactory.CreateDbContextAsync(_pageCts.Token);
+            var now = DateTime.UtcNow;
+            var analysis = new DatabaseAnalysis
+            {
+                Id = DatabaseAnalysisId.Transient,
+                Name = _name,
+                DatabaseConnectionId = (DatabaseConnectionId)DbId,
+                AIConnectionId = _aiConnectionId,
+                Instructions = string.IsNullOrWhiteSpace(_instructions) ? null : _instructions,
+                EnableWebSearch = _enableWebSearch,
+                IncludeStoredProceduresAndViews = _includeProcsAndViews,
+                MaxAiFindings = _maxAiFindings,
+                State = queue ? DatabaseAnalysisState.Queued : DatabaseAnalysisState.Draft,
+                LastMessage = queue ? "Queued" : "Draft",
+                CreatedAt = now,
+                ModifiedAt = now,
+            };
+            db.DatabaseAnalyses.Add(analysis);
+            await db.SaveChangesAsync(_pageCts.Token);
 
-        Snackbar.Add(queue ? "Analysis queued — the worker will pick it up shortly." : "Analysis saved as draft.", Severity.Success);
-        Navigation.NavigateTo($"/analyses/{(int)(object)analysis.Id}");
+            Snackbar.Add(queue ? "Analysis queued — the worker will pick it up shortly." : "Analysis saved as draft.", Severity.Success);
+            Navigation.NavigateTo(DbRoutes.Analysis(DbId, (int)(object)analysis.Id));
+        }
+        finally
+        {
+            _saving = false;
+        }
     }
 }

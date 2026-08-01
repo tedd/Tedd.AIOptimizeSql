@@ -1,4 +1,4 @@
-@page "/experiments"
+@page "/db/{DbId:int}/experiments"
 @implements IDisposable
 @rendermode InteractiveServer
 @inject IDbContextFactory<Tedd.AIOptimizeSql.Database.AIOptimizeDbContext> DbContextFactory
@@ -22,9 +22,13 @@
                 Delete Selected (@_selectedItems.Count)
             </MudButton>
         }
-        <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Add"
-                   Href="/experiments/new">
-            New Experiment
+        <MudButton Variant="Variant.Outlined" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Add"
+                   Href="@DbRoutes.NewExperiment(DbId)" Class="mr-2">
+            New (blank)
+        </MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Secondary" StartIcon="@Icons.Material.Filled.AutoAwesome"
+                   Href="@DbRoutes.ExperimentWizard(DbId)">
+            New with wizard
         </MudButton>
     </MudStack>
 
@@ -33,7 +37,6 @@
               OnRowClick="OnRowClick" RowClass="cursor-pointer" Class="rounded-lg">
         <HeaderContent>
             <MudTh><MudTableSortLabel SortLabel="Name" T="Experiment">Name</MudTableSortLabel></MudTh>
-            <MudTh><MudTableSortLabel SortLabel="DatabaseConnection" T="Experiment">DB Connection</MudTableSortLabel></MudTh>
             <MudTh><MudTableSortLabel SortLabel="AIConnection" T="Experiment">AI Connection</MudTableSortLabel></MudTh>
             <MudTh><MudTableSortLabel SortLabel="Iterations" T="Experiment">Iterations</MudTableSortLabel></MudTh>
             <MudTh><MudTableSortLabel SortLabel="CreatedAt" T="Experiment">Created</MudTableSortLabel></MudTh>
@@ -42,25 +45,11 @@
         </HeaderContent>
         <RowTemplate>
             <MudTd DataLabel="Name">@context.Name</MudTd>
-            <MudTd DataLabel="DB Connection">
-                @if (context.DatabaseConnection != null)
-                {
-                    <span @onclick:stopPropagation="true">
-                        <MudLink Href="@($"/database-connections/{(int)(object)context.DatabaseConnectionId!}")" Color="Color.Primary">
-                            @context.DatabaseConnection.Name
-                        </MudLink>
-                    </span>
-                }
-                else
-                {
-                    <MudText Typo="Typo.body2" Color="Color.Default">--</MudText>
-                }
-            </MudTd>
             <MudTd DataLabel="AI Connection">
                 @if (context.AIConnection != null)
                 {
                     <span @onclick:stopPropagation="true">
-                        <MudLink Href="@($"/ai-connections/{(int)(object)context.AIConnectionId!}")" Color="Color.Secondary">
+                        <MudLink Href="@DbRoutes.AiConnection((int)(object)context.AIConnectionId!)" Color="Color.Secondary">
                             @context.AIConnection.Name
                         </MudLink>
                     </span>
@@ -78,10 +67,10 @@
             <MudTd @onclick:stopPropagation="true">
                 <MudStack Row="true" Spacing="0">
                     <MudIconButton Icon="@Icons.Material.Filled.Edit" Color="Color.Primary" Size="Size.Small"
-                                   OnClick="@(() => Navigation.NavigateTo($"/experiments/{(int)(object)context.Id}/edit"))"
+                                   OnClick="@(() => Navigation.NavigateTo(DbRoutes.EditExperiment(DbId, (int)(object)context.Id)))"
                                    aria-label="Edit" />
                     <MudIconButton Icon="@Icons.Material.Filled.PlayArrow" Color="Color.Success" Size="Size.Small"
-                                   OnClick="@(() => Navigation.NavigateTo($"/experiments/{(int)(object)context.Id}/research-iterations"))"
+                                   OnClick="@(() => Navigation.NavigateTo(DbRoutes.ExperimentIterations(DbId, (int)(object)context.Id)))"
                                    aria-label="View research iterations" />
                     <MudIconButton Icon="@Icons.Material.Filled.Delete" Color="Color.Error" Size="Size.Small"
                                    OnClick="@(() => DeleteSingle(context))" aria-label="Delete" />
@@ -98,6 +87,8 @@
 </MudContainer>
 
 @code {
+    [Parameter] public int DbId { get; set; }
+
     private readonly CancellationTokenSource _pageCts = new();
     private MudTable<Experiment>? _table;
     private HashSet<Experiment> _selectedItems = new();
@@ -135,17 +126,15 @@
     private async Task<TableData<Experiment>> LoadServerDataCore(TableState state, CancellationToken cancellationToken)
     {
         await using var db = await DbContextFactory.CreateDbContextAsync(cancellationToken);
+        var scopeId = (DatabaseConnectionId)DbId;
         IQueryable<Experiment> query = db.Experiments
-            .Include(p => p.DatabaseConnection)
+            .Where(p => p.DatabaseConnectionId == scopeId)
             .Include(p => p.AIConnection)
             .Include(p => p.ResearchIterations);
 
         query = state.SortLabel switch
         {
             "Name" => state.SortDirection == SortDirection.Descending ? query.OrderByDescending(x => x.Name) : query.OrderBy(x => x.Name),
-            "DatabaseConnection" => state.SortDirection == SortDirection.Descending
-                ? query.OrderByDescending(x => x.DatabaseConnection != null ? x.DatabaseConnection.Name : "")
-                : query.OrderBy(x => x.DatabaseConnection != null ? x.DatabaseConnection.Name : ""),
             "AIConnection" => state.SortDirection == SortDirection.Descending
                 ? query.OrderByDescending(x => x.AIConnection != null ? x.AIConnection.Name : "")
                 : query.OrderBy(x => x.AIConnection != null ? x.AIConnection.Name : ""),
@@ -179,7 +168,7 @@
     }
 
     private void OnRowClick(TableRowClickEventArgs<Experiment> args) =>
-        Navigation.NavigateTo($"/experiments/{(int)(object)args.Item!.Id}/view");
+        Navigation.NavigateTo(DbRoutes.Experiment(DbId, (int)(object)args.Item!.Id));
 
     private async Task DeleteSelected()
     {

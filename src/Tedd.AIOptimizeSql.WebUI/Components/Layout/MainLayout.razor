@@ -11,6 +11,34 @@
         <MudIconButton Icon="@Icons.Material.Filled.Menu" Color="Color.Inherit" Edge="Edge.Start"
                        OnClick="@ToggleDrawer" />
         <MudText Typo="Typo.h6" Class="ml-2">AI SQL Optimizer</MudText>
+
+        @* Which database everything on screen belongs to, always visible: every list, every
+           experiment and every analysis below is filtered to it. *@
+        @if (Db is not null)
+        {
+            <MudChip T="string" Class="ml-4" Size="Size.Small" Color="Color.Surface" Variant="Variant.Filled"
+                     Icon="@Icons.Material.Filled.Storage" Href="@DbRoutes.SelectDatabase"
+                     title="Switch database">
+                @Db.Name
+            </MudChip>
+            @if (Db.AnalyzeOnly)
+            {
+                <MudTooltip Text="Analyze only: nothing on this connection ever modifies the target database.">
+                    <MudChip T="string" Class="ml-1" Size="Size.Small" Color="Color.Warning" Variant="Variant.Filled"
+                             Icon="@Icons.Material.Filled.Shield">analyze-only</MudChip>
+                </MudTooltip>
+            }
+            @if (!Db.HasAi)
+            {
+                <MudTooltip Text="No AI is bound to this database — analyses and experiments will ask for one.">
+                    <MudChip T="string" Class="ml-1" Size="Size.Small" Color="Color.Error" Variant="Variant.Filled"
+                             Icon="@Icons.Material.Filled.SmartToy" Href="@DbRoutes.DatabaseConnection(Db.Id)">
+                        no AI
+                    </MudChip>
+                </MudTooltip>
+            }
+        }
+
         <MudSpacer />
         <MudIconButton Icon="@Icons.Material.Filled.DarkMode" Color="Color.Inherit"
                        OnClick="@ToggleDarkMode" aria-label="Toggle dark mode" />
@@ -39,6 +67,8 @@
 </MudLayout>
 
 @code {
+    [CascadingParameter] private DatabaseScope? Db { get; set; }
+
     private bool _drawerOpen = true;
     private bool _isDarkMode = true;
 

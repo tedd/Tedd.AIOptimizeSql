@@ -23,6 +23,15 @@ public record DatabaseConnection
     public bool AnalyzeOnly { get; set; }
 
     /// <summary>
+    /// AI connection this database works with. Everything started from inside the
+    /// database — analyses, experiments, the wizard — inherits it, so an AI has to
+    /// exist before a database can be added. The AI cannot be deleted while a database
+    /// still points at it; unbind it here first.
+    /// </summary>
+    public AIConnectionId? AIConnectionId { get; set; }
+    public AIConnection? AIConnection { get; set; }
+
+    /// <summary>
     /// Created UTC
     /// </summary>
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;

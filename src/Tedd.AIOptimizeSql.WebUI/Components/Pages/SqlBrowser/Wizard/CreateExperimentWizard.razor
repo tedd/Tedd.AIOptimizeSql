@@ -31,7 +31,42 @@
                             and keep only the changes that are <strong>both</strong> faster <strong>and</strong> return exactly the same rows.
                         </MudText>
 
-                        <SqlMonacoField EditorId="wizard-benchmark-sql" Label="Query being optimized" Value="@Sql" ReadOnly="true" />
+                        @if (Finding is not null)
+                        {
+                            @* Started from a finding: the AI writes the query that would prove it,
+                               because "we think this is slow" is not yet something you can measure. *@
+                            <MudAlert Severity="Severity.Info" Class="mb-3">
+                                <MudText Typo="Typo.subtitle2">From analysis finding: @Finding.Title</MudText>
+                                @if (!string.IsNullOrWhiteSpace(Finding.Recommendation))
+                                {
+                                    <MudText Typo="Typo.body2" Class="mt-1">@Finding.Recommendation</MudText>
+                                }
+                            </MudAlert>
+
+                            <MudStack Row="true" Spacing="2" Class="mb-3" AlignItems="AlignItems.Center">
+                                <MudTooltip Text="This database has no AI bound to it." Disabled="@(_selectedAiConnectionId is not null)">
+                                    <MudButton Variant="Variant.Filled" Color="Color.Secondary"
+                                               StartIcon="@Icons.Material.Filled.AutoAwesome"
+                                               Disabled="@(_drafting || _selectedAiConnectionId is null)"
+                                               OnClick="DraftFromFindingAsync">
+                                        @(_drafting ? "Thinking…" : _draftDone ? "Re-draft with AI" : "Ask AI to draft the experiment")
+                                    </MudButton>
+                                </MudTooltip>
+                                @if (_drafting)
+                                {
+                                    <MudProgressCircular Indeterminate="true" Size="Size.Small" />
+                                }
+                            </MudStack>
+
+                            @if (_draftError is not null)
+                            {
+                                <MudAlert Severity="Severity.Warning" Class="mb-3">@_draftError</MudAlert>
+                            }
+                        }
+
+                        <SqlMonacoField EditorId="wizard-benchmark-sql" Label="Query being optimized"
+                                        Value="@_blueprint.BenchmarkSql" ValueChanged="OnBenchmarkSqlChanged"
+                                        HelperText="This is what every hypothesis is measured against — make it representative." />
 
                         <MudTextField T="string" Value="@_blueprint.Name" ValueChanged="OnNameChanged" Label="Experiment name" Variant="Variant.Outlined"
                                       Required="true" RequiredError="Give this experiment a name" Class="mb-4" />
@@ -46,7 +81,7 @@
                         }
 
                         <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="AnalyzeAsync"
-                                   Disabled="@(_analyzing || string.IsNullOrWhiteSpace(_blueprint.Name))"
+                                   Disabled="@(_analyzing || string.IsNullOrWhiteSpace(_blueprint.Name) || string.IsNullOrWhiteSpace(_blueprint.BenchmarkSql))"
                                    StartIcon="@Icons.Material.Filled.TravelExplore">
                             @(_analyzing ? "Analyzing..." : _graph is null ? "Analyze" : "Re-analyze")
                         </MudButton>
@@ -471,7 +506,18 @@
 @code {
     [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = default!;
     [Parameter] public DatabaseConnectionId ConnectionId { get; set; }
+
+    /// <summary>Seed query, e.g. whatever was in the browser's editor. May be empty.</summary>
     [Parameter] public string Sql { get; set; } = "";
+
+    /// <summary>Set when the wizard was opened from an analysis finding rather than from a query.</summary>
+    [Parameter] public FindingExperimentContext? Finding { get; set; }
+
+    /// <summary>The finding to link the created experiment back to, so it stops offering to re-create it.</summary>
+    [Parameter] public AnalysisFindingId? FindingId { get; set; }
+
+    /// <summary>The AI bound to the database, pre-selected so the AI steps work without a detour.</summary>
+    [Parameter] public AIConnectionId? DefaultAiConnectionId { get; set; }
 
     private readonly CancellationTokenSource _cts = new();
     private AIOptimizeDbContext? _db;
@@ -499,6 +545,10 @@
     private string _schemaContextMarkdown = "";
     private bool _analyzing;
     private string? _analyzeError;
+
+    private bool _drafting;
+    private bool _draftDone;
+    private string? _draftError;
 
     private bool _outputSqlManuallyEdited;
     private bool _nameManuallyEdited;
@@ -539,9 +589,19 @@
 
         _blueprint = new ExperimentBlueprint
         {
-            Name = $"Optimize query - {DateTime.Now:MMM d, HH:mm}",
+            Name = Finding is null
+                ? $"Optimize query - {DateTime.Now:MMM d, HH:mm}"
+                : $"Investigate: {Finding.Title}",
             BenchmarkSql = Sql,
         };
+
+        // A finding often already carries the fix; the goal is stated in the finding's own words.
+        if (Finding is not null && !string.IsNullOrWhiteSpace(Finding.Recommendation))
+            _goal = Finding.Recommendation;
+
+        _selectedAiConnectionId = DefaultAiConnectionId is { } defaultAi && _aiConnections.Any(c => c.Id == defaultAi)
+            ? defaultAi
+            : _aiConnections.Count == 1 ? _aiConnections[0].Id : null;
 
         if (_dbConnection?.AnalyzeOnly == true)
             _queueFirstIteration = false;
@@ -608,6 +668,73 @@
         _hasProgress = true;
     }
 
+    /// <summary>
+    /// Editing the query invalidates the analysis: what it touches, the fingerprint script and
+    /// the sandbox were all derived from the previous text.
+    /// </summary>
+    private void OnBenchmarkSqlChanged(string? value)
+    {
+        _blueprint.BenchmarkSql = value ?? "";
+        _graph = null;
+        _verificationTested = false;
+        _hasProgress = true;
+    }
+
+    private async Task DraftFromFindingAsync()
+    {
+        if (Finding is null || _dbConnection is null)
+            return;
+
+        var aiConn = _aiConnections.FirstOrDefault(c => c.Id == _selectedAiConnectionId);
+        if (aiConn is null)
+            return;
+
+        _drafting = true;
+        _draftError = null;
+        await InvokeAsync(StateHasChanged);
+        try
+        {
+            var draft = await BlueprintService.DraftFromFindingAsync(
+                aiConn,
+                Finding with
+                {
+                    DatabaseConnectionId = ConnectionId,
+                    DatabaseName = _dbConnection.Name,
+                },
+                _cts.Token);
+
+            _draftError = draft.Error;
+
+            if (!string.IsNullOrWhiteSpace(draft.BenchmarkSql))
+            {
+                _blueprint.BenchmarkSql = draft.BenchmarkSql!;
+                _graph = null;
+                _verificationTested = false;
+                _draftDone = true;
+                _hasProgress = true;
+            }
+
+            if (!_nameManuallyEdited && !string.IsNullOrWhiteSpace(draft.Name))
+                _blueprint.Name = draft.Name!;
+            if (!string.IsNullOrWhiteSpace(draft.Goal))
+                _goal = draft.Goal!;
+            if (!string.IsNullOrWhiteSpace(draft.Instructions))
+                _blueprint.Instructions = draft.Instructions;
+        }
+        catch (OperationCanceledException)
+        {
+            // The dialog is closing.
+        }
+        catch (Exception ex)
+        {
+            _draftError = $"Could not draft the experiment: {ex.Message}";
+        }
+        finally
+        {
+            _drafting = false;
+        }
+    }
+
     private async Task AnalyzeAsync()
     {
         if (_dbConnection is null)
@@ -623,8 +750,9 @@
 
         try
         {
+            var benchmarkSql = _blueprint.BenchmarkSql;
             var (blueprint, schemaMarkdown, graph) =
-                await BlueprintService.AnalyzeQueryAsync(_dbConnection.ConnectionString, Sql, _cts.Token);
+                await BlueprintService.AnalyzeQueryAsync(_dbConnection.ConnectionString, benchmarkSql, _cts.Token);
 
             // Preserve anything the user already decided in other steps (Analyze/Re-analyze is
             // reachable from any step thanks to non-linear navigation). Name is the exception:
@@ -816,6 +944,7 @@
     private SandboxScriptRequest BuildSandboxRequest() => new()
     {
         IsolationMode = _blueprint.IsolationMode,
+        DatabaseConnectionId = ConnectionId,
         SandboxSchemaName = _blueprint.SandboxSchemaName,
         SandboxDatabaseName = _blueprint.SandboxDatabaseName,
         BenchmarkSql = _blueprint.BenchmarkSql,
@@ -964,6 +1093,7 @@
                 OutputVerificationMode = _blueprint.OutputVerificationMode,
                 BaseTables = _blueprint.BaseTables.Where(t => t.Include).ToList(),
                 DatabaseName = _dbConnection.Name,
+                DatabaseConnectionId = ConnectionId,
             };
 
             _blueprint = await BlueprintService.CompleteWithAiAsync(
@@ -988,6 +1118,9 @@
     private List<string> BlockingWarnings()
     {
         var list = new List<string>();
+
+        if (string.IsNullOrWhiteSpace(_blueprint.BenchmarkSql))
+            list.Add("There is no benchmark query, so there is nothing to measure.");
 
         if (_blueprint.OutputVerificationMode != OutputVerificationMode.None && !(_verificationTested && _verificationDeterministic))
             list.Add("Output verification has not been proven deterministic — go back and test it.");
@@ -1040,6 +1173,18 @@
 
             _db.Experiments.Add(experiment);
             await _db.SaveChangesAsync(_cts.Token);
+
+            // Close the loop back to the finding, so the analysis shows "open experiment"
+            // instead of offering to create a second one for the same problem.
+            if (FindingId is { } findingId)
+            {
+                var now = DateTime.UtcNow;
+                await _db.AnalysisFindings
+                    .Where(f => f.Id == findingId)
+                    .ExecuteUpdateAsync(s => s
+                        .SetProperty(f => f.ProposedExperimentId, (ExperimentId?)experiment.Id)
+                        .SetProperty(f => f.ModifiedAt, now), _cts.Token);
+            }
 
             if (_queueFirstIteration && _dbConnection?.AnalyzeOnly != true)
             {

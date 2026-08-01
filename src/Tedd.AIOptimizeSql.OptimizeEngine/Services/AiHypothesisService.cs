@@ -20,6 +20,7 @@ public sealed class AiHypothesisService(
     ISchemaDiscoveryService schemaDiscoveryService,
     HypothesisTestingService hypothesisTestingService,
     AgentTaskLoopRunner taskLoopRunner,
+    AiConversationTracker conversationTracker,
     ResearchIterationLogger iterationLogger,
     ExperimentSandboxCoordinator sandboxCoordinator,
     IServiceScopeFactory scopeFactory,
@@ -376,20 +377,50 @@ public sealed class AiHypothesisService(
             "HypothesisService",
             cancellationToken);
 
-        var loop = await taskLoopRunner.RunAsync(
-            agent,
-            prompt,
-            AgentTaskScope.ForHypothesis(hypothesisId),
-            isResponseAcceptable: r => AiResponseParser.ParseHypothesisResponse(r) != null,
-            shouldAbort: async abortCt =>
-            {
-                var gate = await TryGetIterationRunGateAsync(iteration.Id, abortCt);
-                return gate is null or { State: ResearchIterationState.Stopped or ResearchIterationState.Paused };
-            },
-            log: (msg, logCt) => AppendHypothesisLogAsync(hypothesisId, msg, "HypothesisService", logCt),
-            cancellationToken: cancellationToken);
+        var conversation = await conversationTracker.StartAsync(new AiConversationStart
+        {
+            Kind = AiConversationKind.Hypothesis,
+            AiConnection = aiConnection,
+            DatabaseConnectionId = experiment.DatabaseConnectionId,
+            Title = $"{experiment.Name} — hypothesis #{priorHypotheses.Count + 1}",
+            RelatedExperimentId = (int)(object)experiment.Id,
+            RelatedResearchIterationId = (int)(object)iteration.Id,
+            RelatedHypothesisId = (int)(object)hypothesisId,
+        }, cancellationToken);
+
+        AgentTaskLoopRunner.LoopResult loop;
+        try
+        {
+            loop = await taskLoopRunner.RunAsync(
+                agent,
+                prompt,
+                AgentTaskScope.ForHypothesis(hypothesisId),
+                isResponseAcceptable: r => AiResponseParser.ParseHypothesisResponse(r) != null,
+                shouldAbort: async abortCt =>
+                {
+                    var gate = await TryGetIterationRunGateAsync(iteration.Id, abortCt);
+                    return gate is null or { State: ResearchIterationState.Stopped or ResearchIterationState.Paused };
+                },
+                log: (msg, logCt) => AppendHypothesisLogAsync(hypothesisId, msg, "HypothesisService", logCt),
+                conversation: conversation,
+                cancellationToken: cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            await conversation.FailAsync(ex.Message, CancellationToken.None);
+            throw;
+        }
+
+        await conversation.CompleteAsync(CancellationToken.None);
 
         _logger.LogInformation("AI agent returned in {ElapsedMs}ms over {Runs} run(s)", loop.ElapsedMs, loop.RunsUsed);
+
+        await AppendHypothesisLogAsync(
+            hypothesisId,
+            $"AI used {conversation.TotalTokens:N0} tokens over {conversation.RequestCount} request(s) " +
+            $"({conversation.InputTokens:N0} in / {conversation.OutputTokens:N0} out).",
+            "HypothesisService",
+            cancellationToken);
 
         var parsed = AiResponseParser.ParseHypothesisResponse(loop.LastResponse);
 
@@ -595,18 +626,41 @@ public sealed class AiHypothesisService(
                 "You are a MSSQL performance optimization expert. Combine the most effective strategies into one ultimate optimization.\n\n" +
                 AgentTaskPromptSection.Build(maxRuns), tools);
 
-            var loop = await taskLoopRunner.RunAsync(
-                agent,
-                combinedPrompt,
-                AgentTaskScope.ForHypothesis(placeholder.Id),
-                isResponseAcceptable: r => AiResponseParser.ParseHypothesisResponse(r) != null,
-                shouldAbort: async abortCt =>
-                {
-                    var gate = await TryGetIterationRunGateAsync(iterationId, abortCt);
-                    return gate is null or { State: ResearchIterationState.Stopped or ResearchIterationState.Paused };
-                },
-                log: (msg, logCt) => AppendHypothesisLogAsync(placeholder.Id, msg, "HypothesisService", logCt),
-                cancellationToken: ct);
+            var conversation = await conversationTracker.StartAsync(new AiConversationStart
+            {
+                Kind = AiConversationKind.CombinedHypothesis,
+                AiConnection = aiConnection,
+                DatabaseConnectionId = experiment.DatabaseConnectionId,
+                Title = $"{experiment.Name} — combined optimization",
+                RelatedExperimentId = (int)(object)experiment.Id,
+                RelatedResearchIterationId = (int)(object)iterationId,
+                RelatedHypothesisId = (int)(object)placeholder.Id,
+            }, ct);
+
+            AgentTaskLoopRunner.LoopResult loop;
+            try
+            {
+                loop = await taskLoopRunner.RunAsync(
+                    agent,
+                    combinedPrompt,
+                    AgentTaskScope.ForHypothesis(placeholder.Id),
+                    isResponseAcceptable: r => AiResponseParser.ParseHypothesisResponse(r) != null,
+                    shouldAbort: async abortCt =>
+                    {
+                        var gate = await TryGetIterationRunGateAsync(iterationId, abortCt);
+                        return gate is null or { State: ResearchIterationState.Stopped or ResearchIterationState.Paused };
+                    },
+                    log: (msg, logCt) => AppendHypothesisLogAsync(placeholder.Id, msg, "HypothesisService", logCt),
+                    conversation: conversation,
+                    cancellationToken: ct);
+            }
+            catch (Exception ex)
+            {
+                await conversation.FailAsync(ex.Message, CancellationToken.None);
+                throw;
+            }
+
+            await conversation.CompleteAsync(CancellationToken.None);
 
             var parsed = AiResponseParser.ParseHypothesisResponse(loop.LastResponse);
 

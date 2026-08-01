@@ -21,6 +21,17 @@ public interface IExperimentBlueprintService
         AnalyzeQueryAsync(string connectionString, string benchmarkSql, CancellationToken ct = default);
 
     /// <summary>
+    /// Step 0, when the experiment starts from an analysis finding rather than from a query in
+    /// the editor: the AI reads the finding and writes the benchmark query that would prove or
+    /// disprove it, plus a name and a goal. The result is a starting point the user edits — the
+    /// real schema discovery still happens in <see cref="AnalyzeQueryAsync"/> afterwards.
+    /// </summary>
+    Task<FindingExperimentDraft> DraftFromFindingAsync(
+        AIConnection aiConnection,
+        FindingExperimentContext finding,
+        CancellationToken ct = default);
+
+    /// <summary>
     /// Step 2: ask the AI to complete the blueprint — name, description, instructions,
     /// measurement plan, isolation and verification recommendations, and the sandbox scripts
     /// for the chosen isolation mode. Falls back to the deterministic scaffolding when the AI

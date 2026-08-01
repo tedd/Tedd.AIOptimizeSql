@@ -1,0 +1,174 @@
+@page "/"
+@implements IDisposable
+@rendermode InteractiveServer
+@inject IDbContextFactory<Tedd.AIOptimizeSql.Database.AIOptimizeDbContext> DbContextFactory
+@using Microsoft.EntityFrameworkCore
+
+<PageTitle>Select a database</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.Medium" Class="mt-8">
+    <MudText Typo="Typo.h3" GutterBottom="true">AI SQL Optimizer</MudText>
+
+    @if (_loading)
+    {
+        <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+    }
+    else if (_databases.Count > 0)
+    {
+        <MudText Typo="Typo.body1" Class="mb-6">
+            Pick the database you want to work on. Everything after this — analyses, experiments,
+            the SQL browser — is that database and nothing else.
+        </MudText>
+
+        @foreach (var db in _databases)
+        {
+            <MudPaper Outlined="true" Class="mb-3 pa-4 rounded-lg">
+                <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="3">
+                    <MudIcon Icon="@Icons.Material.Filled.Storage" Color="Color.Primary" Size="Size.Large" />
+                    <MudStack Spacing="1" Class="flex-grow-1">
+                        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Wrap="Wrap.Wrap">
+                            <MudText Typo="Typo.h6">@db.Name</MudText>
+                            @if (db.AnalyzeOnly)
+                            {
+                                <MudChip T="string" Size="Size.Small" Color="Color.Warning" Variant="Variant.Outlined"
+                                         Icon="@Icons.Material.Filled.Shield">analyze-only</MudChip>
+                            }
+                            @if (db.AIConnection is { } ai)
+                            {
+                                <MudChip T="string" Size="Size.Small" Color="Color.Info" Variant="Variant.Outlined"
+                                         Icon="@Icons.Material.Filled.SmartToy">@ai.Name</MudChip>
+                            }
+                            else
+                            {
+                                <MudChip T="string" Size="Size.Small" Color="Color.Error" Variant="Variant.Outlined"
+                                         Icon="@Icons.Material.Filled.SmartToy">no AI bound</MudChip>
+                            }
+                        </MudStack>
+                        <MudText Typo="Typo.caption" Class="mud-text-secondary">@Summarize(db.ConnectionString)</MudText>
+                    </MudStack>
+                    <MudButton Variant="Variant.Filled" Color="Color.Primary" EndIcon="@Icons.Material.Filled.ArrowForward"
+                               Href="@DbRoutes.Dashboard((int)(object)db.Id)">
+                        Open
+                    </MudButton>
+                </MudStack>
+            </MudPaper>
+        }
+
+        <MudButton Variant="Variant.Outlined" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Add"
+                   Href="@DbRoutes.NewDatabaseConnection">
+            Add another database
+        </MudButton>
+    }
+    else if (_aiConnectionCount == 0)
+    {
+        @* Ordering matters: a database carries the AI it works with, so the AI has to exist first. *@
+        <MudAlert Severity="Severity.Info" Class="mb-4">
+            Nothing is configured yet. Add an AI connection first — every database is bound to the
+            AI it works with, so the AI has to exist before a database can point at it.
+        </MudAlert>
+
+        <MudCard Elevation="3" Class="rounded-lg">
+            <MudCardHeader>
+                <CardHeaderAvatar><MudAvatar Color="Color.Secondary" Variant="Variant.Filled">1</MudAvatar></CardHeaderAvatar>
+                <CardHeaderContent>
+                    <MudText Typo="Typo.h6">Add an AI connection</MudText>
+                </CardHeaderContent>
+            </MudCardHeader>
+            <MudCardContent>
+                <MudText Typo="Typo.body2">
+                    Provider, model, endpoint and API key — OpenAI, Azure OpenAI, Anthropic, Ollama,
+                    or a local endpoint.
+                </MudText>
+            </MudCardContent>
+            <MudCardActions>
+                <MudButton Variant="Variant.Filled" Color="Color.Secondary" StartIcon="@Icons.Material.Filled.SmartToy"
+                           Href="@DbRoutes.NewAiConnection">
+                    Add AI connection
+                </MudButton>
+                <MudButton Variant="Variant.Text" Href="@DbRoutes.AiConnections">AI settings</MudButton>
+            </MudCardActions>
+        </MudCard>
+    }
+    else
+    {
+        <MudAlert Severity="Severity.Info" Class="mb-4">
+            You have an AI connection but no database yet. Add the SQL Server database you want to
+            analyze and optimize, and pick which AI it should use.
+        </MudAlert>
+
+        <MudCard Elevation="3" Class="rounded-lg">
+            <MudCardHeader>
+                <CardHeaderAvatar><MudAvatar Color="Color.Primary" Variant="Variant.Filled">2</MudAvatar></CardHeaderAvatar>
+                <CardHeaderContent>
+                    <MudText Typo="Typo.h6">Add a database connection</MudText>
+                </CardHeaderContent>
+            </MudCardHeader>
+            <MudCardContent>
+                <MudText Typo="Typo.body2">
+                    Name it, paste a SQL Server connection string, and choose the AI it works with.
+                    Turn on <strong>Analyze only</strong> if the connection must never be allowed to
+                    modify anything.
+                </MudText>
+            </MudCardContent>
+            <MudCardActions>
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Storage"
+                           Href="@DbRoutes.NewDatabaseConnection">
+                    Add database connection
+                </MudButton>
+                <MudButton Variant="Variant.Text" Href="@DbRoutes.DatabaseConnections">Database settings</MudButton>
+            </MudCardActions>
+        </MudCard>
+    }
+
+    <MudAlert Severity="Severity.Warning" Class="mt-8" Elevation="1">
+        Experiments apply real changes to the target database while testing (and revert them afterwards).
+        Do not point this tool at a production database — use a copy or a test environment.
+    </MudAlert>
+
+    <MudText Typo="Typo.body2" Class="mt-4">
+        New here? The <MudLink Href="@DbRoutes.Documentation">documentation</MudLink> walks through
+        analyses, experiments, hypotheses and benchmark runs.
+    </MudText>
+</MudContainer>
+
+@code {
+    private readonly CancellationTokenSource _pageCts = new();
+
+    private bool _loading = true;
+    private List<DatabaseConnection> _databases = new();
+    private int _aiConnectionCount;
+
+    public void Dispose()
+    {
+        _pageCts.Cancel();
+        _pageCts.Dispose();
+    }
+
+    protected override Task OnInitializedAsync() =>
+        PageLoadCancellation.RunPageLoadAsync(async ct =>
+        {
+            await using var db = await DbContextFactory.CreateDbContextAsync(ct);
+            _databases = await db.DatabaseConnections.AsNoTracking()
+                .Include(c => c.AIConnection)
+                .OrderBy(c => c.Name)
+                .ToListAsync(ct);
+            _aiConnectionCount = await db.AIConnections.CountAsync(ct);
+            _loading = false;
+        }, _pageCts.Token);
+
+    /// <summary>Server and database from the connection string, without leaking credentials.</summary>
+    private static string Summarize(string connectionString)
+    {
+        try
+        {
+            var builder = new Microsoft.Data.SqlClient.SqlConnectionStringBuilder(connectionString);
+            var server = string.IsNullOrWhiteSpace(builder.DataSource) ? "(server not set)" : builder.DataSource;
+            var database = string.IsNullOrWhiteSpace(builder.InitialCatalog) ? "(database not set)" : builder.InitialCatalog;
+            return $"{server} / {database}";
+        }
+        catch
+        {
+            return "(connection string could not be parsed)";
+        }
+    }
+}

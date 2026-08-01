@@ -1,0 +1,666 @@
+@* The front page of a database: what has actually been proven here, and what it cost. *@
+
+@page "/db/{DbId:int}"
+@implements IDisposable
+@rendermode InteractiveServer
+@inject IDbContextFactory<Tedd.AIOptimizeSql.Database.AIOptimizeDbContext> DbContextFactory
+@inject IAIOptimizeDataAccess DataAccess
+@inject IOptions<UiPollingOptions> UiPolling
+@using Microsoft.EntityFrameworkCore
+@using Tedd.AIOptimizeSql.Database
+@using Tedd.AIOptimizeSql.Database.Models
+@using Tedd.AIOptimizeSql.Database.Models.Enums
+
+<PageTitle>@(Db?.Name ?? "Dashboard")</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.ExtraLarge" Class="mt-4">
+    <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-4">
+        <MudText Typo="Typo.h4">@(Db?.Name ?? "Dashboard")</MudText>
+        <MudSpacer />
+        <MudButton Variant="Variant.Outlined" Color="Color.Info" StartIcon="@Icons.Material.Filled.MonitorHeart"
+                   Href="@DbRoutes.NewAnalysis(DbId)" Class="mr-2">
+            Run analysis
+        </MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Secondary" StartIcon="@Icons.Material.Filled.AutoAwesome"
+                   Href="@DbRoutes.ExperimentWizard(DbId)">
+            New experiment
+        </MudButton>
+    </MudStack>
+
+    @if (_loading)
+    {
+        <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+    }
+    else
+    {
+        <MudTabs @bind-ActivePanelIndex="_activeTab" Rounded="true" Border="true">
+
+            @* ───────────────────────────── RESULTS ───────────────────────────── *@
+            <MudTabPanel Text="Results" Icon="@Icons.Material.Filled.Insights">
+                <MudStack Spacing="0" Class="pt-4">
+                    @if (_totalHypotheses == 0 && _analysisCount == 0)
+                    {
+                        <MudAlert Severity="Severity.Info" Class="mb-4">
+                            Nothing has run against this database yet. Start with an analysis to find out
+                            what is slow, or go straight to an experiment if you already know.
+                        </MudAlert>
+                    }
+
+                    <MudGrid Class="mb-6">
+                        <MudItem xs="6" md="3">
+                            <MudPaper Elevation="2" Class="pa-4 rounded-lg d-flex flex-column align-center">
+                                <MudText Typo="Typo.h4" Color="@(_bestImprovement > 0 ? Color.Success : Color.Default)">
+                                    @(_bestImprovement > 0 ? "+" : "")@_bestImprovement.ToString("F1")%
+                                </MudText>
+                                <MudText Typo="Typo.caption">Best improvement</MudText>
+                            </MudPaper>
+                        </MudItem>
+                        <MudItem xs="6" md="3">
+                            <MudPaper Elevation="2" Class="pa-4 rounded-lg d-flex flex-column align-center">
+                                <MudText Typo="Typo.h4" Color="Color.Success">@_improvedCount</MudText>
+                                <MudText Typo="Typo.caption">Hypotheses that helped</MudText>
+                            </MudPaper>
+                        </MudItem>
+                        <MudItem xs="6" md="3">
+                            <MudPaper Elevation="2" Class="pa-4 rounded-lg d-flex flex-column align-center">
+                                <MudText Typo="Typo.h4">@_totalHypotheses</MudText>
+                                <MudText Typo="Typo.caption">Hypotheses measured</MudText>
+                            </MudPaper>
+                        </MudItem>
+                        <MudItem xs="6" md="3">
+                            <MudPaper Elevation="2" Class="pa-4 rounded-lg d-flex flex-column align-center">
+                                <MudText Typo="Typo.h4" Color="@(_openProblemCount > 0 ? Color.Warning : Color.Success)">
+                                    @_openProblemCount
+                                </MudText>
+                                <MudText Typo="Typo.caption">Findings worth acting on</MudText>
+                            </MudPaper>
+                        </MudItem>
+                    </MudGrid>
+
+                    <MudGrid Class="mb-6">
+                        <MudItem xs="12" lg="7">
+                            <MudCard Elevation="3" Class="rounded-lg" Style="height: 100%;">
+                                <MudCardHeader>
+                                    <CardHeaderContent>
+                                        <MudText Typo="Typo.h6">Noticeable results</MudText>
+                                        <MudText Typo="Typo.caption">
+                                            The optimizations that measurably changed a benchmark, best first. Only
+                                            hypotheses whose output still matched the baseline are counted as wins.
+                                        </MudText>
+                                    </CardHeaderContent>
+                                </MudCardHeader>
+                                <MudCardContent>
+                                    @if (_topResults.Count == 0)
+                                    {
+                                        <MudText Typo="Typo.body2">No measured results yet.</MudText>
+                                    }
+                                    else
+                                    {
+                                        <MiniBarList Items="@_topResultBars" BarColor="var(--mud-palette-success)" LabelWidth="160" />
+
+                                        <MudTable Items="_topResults" Dense="true" Hover="true" Class="mt-4" Elevation="0">
+                                            <HeaderContent>
+                                                <MudTh>Experiment</MudTh>
+                                                <MudTh>Hypothesis</MudTh>
+                                                <MudTh Style="text-align:right;">Improvement</MudTh>
+                                                <MudTh Style="text-align:right;">Elapsed</MudTh>
+                                            </HeaderContent>
+                                            <RowTemplate>
+                                                <MudTd DataLabel="Experiment">
+                                                    <MudLink Href="@DbRoutes.Experiment(DbId, context.ExperimentId)">@context.ExperimentName</MudLink>
+                                                </MudTd>
+                                                <MudTd DataLabel="Hypothesis">
+                                                    <MudLink Href="@DbRoutes.Hypothesis(DbId, context.ExperimentId, context.IterationId, context.HypothesisId)">
+                                                        @Shorten(context.Description, 70)
+                                                    </MudLink>
+                                                </MudTd>
+                                                <MudTd DataLabel="Improvement" Style="text-align:right;">
+                                                    <MudText Typo="Typo.body2" Color="Color.Success">+@context.ImprovementPct.ToString("F1")%</MudText>
+                                                </MudTd>
+                                                <MudTd DataLabel="Elapsed" Style="text-align:right;">
+                                                    @context.BeforeMs.ToString("N0") → @context.AfterMs.ToString("N0") ms
+                                                </MudTd>
+                                            </RowTemplate>
+                                        </MudTable>
+                                    }
+                                </MudCardContent>
+                            </MudCard>
+                        </MudItem>
+
+                        <MudItem xs="12" lg="5">
+                            <MudCard Elevation="3" Class="rounded-lg" Style="height: 100%;">
+                                <MudCardHeader>
+                                    <CardHeaderContent>
+                                        <MudText Typo="Typo.h6">Findings by severity</MudText>
+                                        <MudText Typo="Typo.caption">Across every analysis of this database.</MudText>
+                                    </CardHeaderContent>
+                                </MudCardHeader>
+                                <MudCardContent>
+                                    @if (_severitySeries.Count == 0)
+                                    {
+                                        <MudText Typo="Typo.body2">No findings yet.</MudText>
+                                    }
+                                    else
+                                    {
+                                        <MudChart T="double" ChartType="ChartType.Donut"
+                                                  ChartSeries="@_severitySeries" ChartLabels="@_severityLabels"
+                                                  ChartOptions="@_severityOptions"
+                                                  LegendPosition="MudBlazor.Position.Right"
+                                                  Width="240px" Height="240px" />
+                                    }
+                                </MudCardContent>
+                                <MudCardActions>
+                                    <MudButton Variant="Variant.Text" Href="@DbRoutes.Analyses(DbId)">All analyses (@_analysisCount)</MudButton>
+                                </MudCardActions>
+                            </MudCard>
+                        </MudItem>
+                    </MudGrid>
+
+                    @if (_experimentSeries.Count > 0)
+                    {
+                        <MudCard Elevation="3" Class="rounded-lg mb-6">
+                            <MudCardHeader>
+                                <CardHeaderContent>
+                                    <MudText Typo="Typo.h6">Baseline vs best result, per experiment</MudText>
+                                    <MudText Typo="Typo.caption">
+                                        Server elapsed time in milliseconds; lower is faster. A pair with equal bars means
+                                        nothing measurably beat the baseline yet.
+                                    </MudText>
+                                </CardHeaderContent>
+                            </MudCardHeader>
+                            <MudCardContent>
+                                <MudChart T="double" ChartType="ChartType.Bar"
+                                          ChartSeries="@_experimentSeries" ChartLabels="@_experimentLabels"
+                                          Width="100%" Height="320px" />
+                            </MudCardContent>
+                        </MudCard>
+                    }
+
+                    @if (_activitySeries.Count > 0)
+                    {
+                        <MudCard Elevation="3" Class="rounded-lg mb-6">
+                            <MudCardHeader>
+                                <CardHeaderContent>
+                                    <MudText Typo="Typo.h6">Hypotheses measured per day</MudText>
+                                    <MudText Typo="Typo.caption">The last @_activityLabels.Length days of work on this database.</MudText>
+                                </CardHeaderContent>
+                            </MudCardHeader>
+                            <MudCardContent>
+                                <MudChart T="double" ChartType="ChartType.Line"
+                                          ChartSeries="@_activitySeries" ChartLabels="@_activityLabels"
+                                          Width="100%" Height="260px" />
+                            </MudCardContent>
+                        </MudCard>
+                    }
+                </MudStack>
+            </MudTabPanel>
+
+            @* ─────────────────────────── TOKEN USAGE ─────────────────────────── *@
+            <MudTabPanel Text="Token usage" Icon="@Icons.Material.Filled.Toll">
+                <MudStack Spacing="0" Class="pt-4">
+                    <MudText Typo="Typo.body2" Color="Color.Secondary" Class="mb-4">
+                        Every AI conversation started for this database and what it cost. The conversation
+                        itself lives in the agent harness; what is kept here is the usage each request
+                        reported. A model that does not report token counts still shows as activity, with
+                        zero tokens.
+                    </MudText>
+
+                    <MudGrid Class="mb-6">
+                        <MudItem xs="6" md="3">
+                            <MudPaper Elevation="2" Class="pa-4 rounded-lg d-flex flex-column align-center">
+                                <MudText Typo="Typo.h4">@_totalTokens.ToString("N0")</MudText>
+                                <MudText Typo="Typo.caption">Total tokens</MudText>
+                            </MudPaper>
+                        </MudItem>
+                        <MudItem xs="6" md="3">
+                            <MudPaper Elevation="2" Class="pa-4 rounded-lg d-flex flex-column align-center">
+                                <MudText Typo="Typo.h4" Color="Color.Info">@_totalInputTokens.ToString("N0")</MudText>
+                                <MudText Typo="Typo.caption">Input</MudText>
+                            </MudPaper>
+                        </MudItem>
+                        <MudItem xs="6" md="3">
+                            <MudPaper Elevation="2" Class="pa-4 rounded-lg d-flex flex-column align-center">
+                                <MudText Typo="Typo.h4" Color="Color.Secondary">@_totalOutputTokens.ToString("N0")</MudText>
+                                <MudText Typo="Typo.caption">Output</MudText>
+                            </MudPaper>
+                        </MudItem>
+                        <MudItem xs="6" md="3">
+                            <MudPaper Elevation="2" Class="pa-4 rounded-lg d-flex flex-column align-center">
+                                <MudText Typo="Typo.h4">@_conversationCount.ToString("N0")</MudText>
+                                <MudText Typo="Typo.caption">Conversations (@_requestCount.ToString("N0") requests)</MudText>
+                            </MudPaper>
+                        </MudItem>
+                    </MudGrid>
+
+                    <MudGrid Class="mb-6">
+                        <MudItem xs="12" md="6">
+                            <MudCard Elevation="3" Class="rounded-lg" Style="height: 100%;">
+                                <MudCardHeader>
+                                    <CardHeaderContent><MudText Typo="Typo.h6">Tokens by activity</MudText></CardHeaderContent>
+                                </MudCardHeader>
+                                <MudCardContent>
+                                    <MiniBarList Items="@_tokensByKind" BarColor="var(--mud-palette-secondary)" LabelWidth="150" />
+                                </MudCardContent>
+                            </MudCard>
+                        </MudItem>
+                        <MudItem xs="12" md="6">
+                            <MudCard Elevation="3" Class="rounded-lg" Style="height: 100%;">
+                                <MudCardHeader>
+                                    <CardHeaderContent><MudText Typo="Typo.h6">Tokens by model</MudText></CardHeaderContent>
+                                </MudCardHeader>
+                                <MudCardContent>
+                                    <MiniBarList Items="@_tokensByModel" BarColor="var(--mud-palette-info)" LabelWidth="150" />
+                                </MudCardContent>
+                            </MudCard>
+                        </MudItem>
+                    </MudGrid>
+
+                    @if (_tokenTrendSeries.Count > 0)
+                    {
+                        <MudCard Elevation="3" Class="rounded-lg mb-6">
+                            <MudCardHeader>
+                                <CardHeaderContent>
+                                    <MudText Typo="Typo.h6">Tokens per day</MudText>
+                                    <MudText Typo="Typo.caption">The last @_tokenTrendLabels.Length days.</MudText>
+                                </CardHeaderContent>
+                            </MudCardHeader>
+                            <MudCardContent>
+                                <MudChart T="double" ChartType="ChartType.Line"
+                                          ChartSeries="@_tokenTrendSeries" ChartLabels="@_tokenTrendLabels"
+                                          Width="100%" Height="260px" />
+                            </MudCardContent>
+                        </MudCard>
+                    }
+
+                    <MudCard Elevation="3" Class="rounded-lg">
+                        <MudCardHeader>
+                            <CardHeaderContent>
+                                <MudText Typo="Typo.h6">Recent conversations</MudText>
+                            </CardHeaderContent>
+                        </MudCardHeader>
+                        <MudCardContent>
+                            <MudTable Items="_recentConversations" Dense="true" Hover="true" Elevation="0"
+                                      FixedHeader="true" Height="440px">
+                                <HeaderContent>
+                                    <MudTh>Started</MudTh>
+                                    <MudTh>Activity</MudTh>
+                                    <MudTh>What for</MudTh>
+                                    <MudTh>Model</MudTh>
+                                    <MudTh Style="text-align:right;">Requests</MudTh>
+                                    <MudTh Style="text-align:right;">In</MudTh>
+                                    <MudTh Style="text-align:right;">Out</MudTh>
+                                    <MudTh Style="text-align:right;">Total</MudTh>
+                                    <MudTh>State</MudTh>
+                                </HeaderContent>
+                                <RowTemplate>
+                                    <MudTd DataLabel="Started">@context.StartedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</MudTd>
+                                    <MudTd DataLabel="Activity">@Humanize(context.Kind)</MudTd>
+                                    <MudTd DataLabel="What for">
+                                        <MudText Typo="Typo.body2" Style="max-width:280px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
+                                            @(context.Title ?? "—")
+                                        </MudText>
+                                    </MudTd>
+                                    <MudTd DataLabel="Model">@(context.Model ?? "—")</MudTd>
+                                    <MudTd DataLabel="Requests" Style="text-align:right;">@context.RequestCount</MudTd>
+                                    <MudTd DataLabel="In" Style="text-align:right;">@context.InputTokens.ToString("N0")</MudTd>
+                                    <MudTd DataLabel="Out" Style="text-align:right;">@context.OutputTokens.ToString("N0")</MudTd>
+                                    <MudTd DataLabel="Total" Style="text-align:right;"><strong>@context.TotalTokens.ToString("N0")</strong></MudTd>
+                                    <MudTd DataLabel="State">
+                                        <MudTooltip Text="@context.LastMessage" Disabled="@string.IsNullOrWhiteSpace(context.LastMessage)">
+                                            <MudChip T="string" Size="Size.Small" Variant="Variant.Text"
+                                                     Color="@StateColor(context.State)">
+                                                @context.State
+                                            </MudChip>
+                                        </MudTooltip>
+                                    </MudTd>
+                                </RowTemplate>
+                                <NoRecordsContent>
+                                    <MudText Typo="Typo.body2" Class="pa-4">
+                                        No AI conversations recorded for this database yet.
+                                    </MudText>
+                                </NoRecordsContent>
+                            </MudTable>
+                        </MudCardContent>
+                    </MudCard>
+                </MudStack>
+            </MudTabPanel>
+        </MudTabs>
+    }
+</MudContainer>
+
+@code {
+    [Parameter] public int DbId { get; set; }
+
+    [CascadingParameter] private DatabaseScope? Db { get; set; }
+
+    private readonly CancellationTokenSource _pageCts = new();
+    private bool _loading = true;
+    private int _activeTab;
+
+    /// <summary>How far back the "per day" charts look.</summary>
+    private const int TrendDays = 30;
+
+    private const int TopResultCount = 10;
+
+    // ── Results tab ──
+    private int _totalHypotheses;
+    private int _improvedCount;
+    private int _analysisCount;
+    private int _openProblemCount;
+    private float _bestImprovement;
+
+    private List<ResultRow> _topResults = new();
+    private IReadOnlyList<MiniBarList.MiniBarItem> _topResultBars = Array.Empty<MiniBarList.MiniBarItem>();
+
+    private List<ChartSeries<double>> _severitySeries = new();
+    private string[] _severityLabels = Array.Empty<string>();
+    private ChartOptions _severityOptions = new();
+
+    private List<ChartSeries<double>> _experimentSeries = new();
+    private string[] _experimentLabels = Array.Empty<string>();
+
+    private List<ChartSeries<double>> _activitySeries = new();
+    private string[] _activityLabels = Array.Empty<string>();
+
+    // ── Token usage tab ──
+    private long _totalTokens;
+    private long _totalInputTokens;
+    private long _totalOutputTokens;
+    private int _conversationCount;
+    private int _requestCount;
+
+    private IReadOnlyList<MiniBarList.MiniBarItem> _tokensByKind = Array.Empty<MiniBarList.MiniBarItem>();
+    private IReadOnlyList<MiniBarList.MiniBarItem> _tokensByModel = Array.Empty<MiniBarList.MiniBarItem>();
+
+    private List<ChartSeries<double>> _tokenTrendSeries = new();
+    private string[] _tokenTrendLabels = Array.Empty<string>();
+
+    private List<AiConversation> _recentConversations = new();
+
+    /// <summary>One proven optimization, flattened for the results table and bar list.</summary>
+    private sealed record ResultRow(
+        int ExperimentId,
+        string ExperimentName,
+        int IterationId,
+        int HypothesisId,
+        string Description,
+        float ImprovementPct,
+        int BeforeMs,
+        int AfterMs);
+
+    public void Dispose()
+    {
+        _pageCts.Cancel();
+        _pageCts.Dispose();
+    }
+
+    /// <summary>Which database the loaded figures belong to, so a re-cascade does not re-query.</summary>
+    private int? _loadedForDbId;
+
+    protected override Task OnParametersSetAsync()
+    {
+        if (_loadedForDbId == DbId)
+            return Task.CompletedTask;
+
+        _loadedForDbId = DbId;
+        _loading = true;
+        return PageLoadCancellation.RunPageLoadAsync(LoadAsync, _pageCts.Token);
+    }
+
+    protected override Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            var sec = Math.Max(1, UiPolling.Value.EntityListRefreshSeconds);
+            WatermarkBackgroundReload.Start(
+                TimeSpan.FromSeconds(sec),
+                _pageCts.Token,
+                () => DataAccess.GetMaxAiConversationModifiedAtAsync((DatabaseConnectionId)DbId, _pageCts.Token),
+                work => InvokeAsync(work),
+                () => LoadAsync(_pageCts.Token),
+                () => InvokeAsync(StateHasChanged));
+        }
+
+        return Task.CompletedTask;
+    }
+
+    private async Task LoadAsync(CancellationToken ct)
+    {
+        var scopeId = (DatabaseConnectionId)DbId;
+        await using var db = await DbContextFactory.CreateDbContextAsync(ct);
+
+        await LoadResultsAsync(db, scopeId, ct);
+        await LoadTokenUsageAsync(db, scopeId, ct);
+
+        _loading = false;
+    }
+
+    private async Task LoadResultsAsync(AIOptimizeDbContext db, DatabaseConnectionId scopeId, CancellationToken ct)
+    {
+        var experiments = await db.Experiments.AsNoTracking()
+            .Where(e => e.DatabaseConnectionId == scopeId)
+            .Select(e => new { e.Id, e.Name })
+            .ToListAsync(ct);
+        var experimentNames = experiments.ToDictionary(e => e.Id, e => e.Name);
+
+        // Only hypotheses with both benchmarks are results; the rest are still in flight.
+        var measured = await db.Hypotheses.AsNoTracking()
+            .Where(h => h.ResearchIteration!.Experiment!.DatabaseConnectionId == scopeId
+                        && h.BenchmarkRunBefore != null
+                        && h.BenchmarkRunAfter != null)
+            .Select(h => new
+            {
+                h.Id,
+                h.ResearchIterationId,
+                ExperimentId = h.ResearchIteration!.ExperimentId,
+                h.Description,
+                h.ImpovementPercentage,
+                h.Status,
+                h.OutputMatchesBaseline,
+                h.CreatedAt,
+                BeforeMs = h.BenchmarkRunBefore!.TotalServerElapsedTimeMs,
+                AfterMs = h.BenchmarkRunAfter!.TotalServerElapsedTimeMs,
+            })
+            .ToListAsync(ct);
+
+        _totalHypotheses = measured.Count;
+
+        // A "win" is faster AND still returning the baseline's rows. A faster query with
+        // different output is a bug, not a result, so it never counts here.
+        var wins = measured
+            .Where(h => h.ImpovementPercentage > 0
+                        && h.Status == HypothesisState.Completed
+                        && h.OutputMatchesBaseline != false)
+            .OrderByDescending(h => h.ImpovementPercentage)
+            .ToList();
+
+        _improvedCount = wins.Count;
+        _bestImprovement = wins.Count == 0 ? 0 : wins[0].ImpovementPercentage;
+
+        _topResults = wins
+            .Take(TopResultCount)
+            .Select(h => new ResultRow(
+                (int)(object)h.ExperimentId,
+                experimentNames.GetValueOrDefault(h.ExperimentId, $"Experiment #{(int)(object)h.ExperimentId}"),
+                (int)(object)h.ResearchIterationId,
+                (int)(object)h.Id,
+                string.IsNullOrWhiteSpace(h.Description) ? $"Hypothesis #{(int)(object)h.Id}" : h.Description!,
+                h.ImpovementPercentage,
+                h.BeforeMs,
+                h.AfterMs))
+            .ToList();
+
+        _topResultBars = _topResults
+            .Select(r => new MiniBarList.MiniBarItem(
+                Shorten(r.Description, 40),
+                $"{r.ExperimentName}: {r.Description}",
+                r.ImprovementPct,
+                $"+{r.ImprovementPct:F1}%"))
+            .ToList();
+
+        // Per-experiment baseline vs best, so the chart says "did this experiment achieve anything".
+        var byExperiment = wins
+            .GroupBy(h => h.ExperimentId)
+            .Select(g => new
+            {
+                ExperimentId = g.Key,
+                BaselineMs = (double)g.Max(h => h.BeforeMs),
+                BestMs = (double)g.Min(h => h.AfterMs),
+            })
+            .OrderByDescending(x => x.BaselineMs - x.BestMs)
+            .Take(10)
+            .ToList();
+
+        _experimentLabels = byExperiment
+            .Select(x => Shorten(experimentNames.GetValueOrDefault(x.ExperimentId, $"#{(int)(object)x.ExperimentId}"), 18))
+            .ToArray();
+        _experimentSeries = byExperiment.Count == 0
+            ? new List<ChartSeries<double>>()
+            : new List<ChartSeries<double>>
+            {
+                new() { Name = "Baseline (ms)", Data = byExperiment.Select(x => x.BaselineMs).ToList() },
+                new() { Name = "Best result (ms)", Data = byExperiment.Select(x => x.BestMs).ToList() },
+            };
+
+        var (activityLabels, activityCounts) = BucketPerDay(
+            measured.Select(h => (h.CreatedAt, 1d)));
+        _activityLabels = activityLabels;
+        _activitySeries = activityCounts.Sum() == 0
+            ? new List<ChartSeries<double>>()
+            : new List<ChartSeries<double>> { new() { Name = "Hypotheses", Data = activityCounts.ToList() } };
+
+        _analysisCount = await db.DatabaseAnalyses.CountAsync(a => a.DatabaseConnectionId == scopeId, ct);
+
+        var findingsBySeverity = await db.AnalysisFindings.AsNoTracking()
+            .Where(f => f.DatabaseAnalysis!.DatabaseConnectionId == scopeId)
+            .GroupBy(f => f.Severity)
+            .Select(g => new { Severity = g.Key, Count = g.Count() })
+            .ToListAsync(ct);
+
+        _openProblemCount = findingsBySeverity
+            .Where(x => x.Severity != FindingSeverity.Good && x.Severity != FindingSeverity.Info)
+            .Sum(x => x.Count);
+
+        var severityOrder = new[]
+        {
+            FindingSeverity.Critical, FindingSeverity.High, FindingSeverity.Medium,
+            FindingSeverity.Low, FindingSeverity.Info, FindingSeverity.Good
+        };
+        var present = severityOrder
+            .Select(sv => (Severity: sv, Count: findingsBySeverity.FirstOrDefault(x => x.Severity == sv)?.Count ?? 0))
+            .Where(x => x.Count > 0)
+            .ToList();
+
+        _severityLabels = present.Select(x => $"{x.Severity} ({x.Count})").ToArray();
+        _severitySeries = present.Count == 0
+            ? new List<ChartSeries<double>>()
+            : new List<ChartSeries<double>> { new() { Name = "Findings", Data = present.Select(x => (double)x.Count).ToList() } };
+        _severityOptions = new ChartOptions { ChartPalette = present.Select(x => SeverityHex(x.Severity)).ToArray() };
+    }
+
+    private async Task LoadTokenUsageAsync(AIOptimizeDbContext db, DatabaseConnectionId scopeId, CancellationToken ct)
+    {
+        var conversations = await db.AiConversations.AsNoTracking()
+            .Where(c => c.DatabaseConnectionId == scopeId)
+            .OrderByDescending(c => c.StartedAt)
+            .Take(500)
+            .ToListAsync(ct);
+
+        _recentConversations = conversations;
+        _conversationCount = conversations.Count;
+        _requestCount = conversations.Sum(c => c.RequestCount);
+        _totalTokens = conversations.Sum(c => c.TotalTokens);
+        _totalInputTokens = conversations.Sum(c => c.InputTokens);
+        _totalOutputTokens = conversations.Sum(c => c.OutputTokens);
+
+        _tokensByKind = conversations
+            .GroupBy(c => c.Kind)
+            .Select(g => new { Kind = g.Key, Tokens = g.Sum(c => c.TotalTokens), Count = g.Count() })
+            .OrderByDescending(x => x.Tokens)
+            .Select(x => new MiniBarList.MiniBarItem(
+                Humanize(x.Kind),
+                $"{Humanize(x.Kind)}: {x.Tokens:N0} tokens over {x.Count} conversation(s)",
+                x.Tokens,
+                x.Tokens.ToString("N0")))
+            .ToList();
+
+        _tokensByModel = conversations
+            .GroupBy(c => c.Model ?? "(unknown model)")
+            .Select(g => new { Model = g.Key, Tokens = g.Sum(c => c.TotalTokens), Count = g.Count() })
+            .OrderByDescending(x => x.Tokens)
+            .Take(10)
+            .Select(x => new MiniBarList.MiniBarItem(
+                x.Model,
+                $"{x.Model}: {x.Tokens:N0} tokens over {x.Count} conversation(s)",
+                x.Tokens,
+                x.Tokens.ToString("N0")))
+            .ToList();
+
+        var (labels, totals) = BucketPerDay(conversations.Select(c => (c.StartedAt, (double)c.TotalTokens)));
+        _tokenTrendLabels = labels;
+        _tokenTrendSeries = totals.Sum() == 0
+            ? new List<ChartSeries<double>>()
+            : new List<ChartSeries<double>> { new() { Name = "Tokens", Data = totals.ToList() } };
+    }
+
+    /// <summary>
+    /// Sums values into one bucket per day over the trailing window, so a chart has a point for
+    /// every day rather than only the days something happened.
+    /// </summary>
+    private static (string[] Labels, double[] Values) BucketPerDay(IEnumerable<(DateTime UtcTimestamp, double Value)> points)
+    {
+        var today = DateTime.UtcNow.Date;
+        var start = today.AddDays(-(TrendDays - 1));
+
+        var labels = new string[TrendDays];
+        var values = new double[TrendDays];
+        for (var i = 0; i < TrendDays; i++)
+            labels[i] = start.AddDays(i).ToString("MM-dd");
+
+        foreach (var (timestamp, value) in points)
+        {
+            var index = (int)(timestamp.Date - start).TotalDays;
+            if (index >= 0 && index < TrendDays)
+                values[index] += value;
+        }
+
+        return (labels, values);
+    }
+
+    private static string Shorten(string? text, int maxChars)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return "—";
+        var oneLine = text.ReplaceLineEndings(" ").Trim();
+        return oneLine.Length <= maxChars ? oneLine : oneLine[..(maxChars - 1)] + "…";
+    }
+
+    private static string Humanize(AiConversationKind kind) => kind switch
+    {
+        AiConversationKind.DatabaseAnalysis => "Database analysis",
+        AiConversationKind.Hypothesis => "Hypothesis generation",
+        AiConversationKind.CombinedHypothesis => "Combined optimization",
+        AiConversationKind.HypothesisRepair => "SQL repair",
+        AiConversationKind.ExperimentBlueprint => "Experiment wizard",
+        AiConversationKind.SandboxScript => "Sandbox scripts",
+        AiConversationKind.HypothesisSuggestion => "Manual hypothesis draft",
+        _ => kind.ToString(),
+    };
+
+    private static Color StateColor(AiConversationState state) => state switch
+    {
+        AiConversationState.Completed => Color.Success,
+        AiConversationState.Failed => Color.Error,
+        _ => Color.Info,
+    };
+
+    private static string SeverityHex(FindingSeverity severity) => severity switch
+    {
+        FindingSeverity.Critical => "#D32F2F",
+        FindingSeverity.High => "#F57C00",
+        FindingSeverity.Medium => "#FBC02D",
+        FindingSeverity.Low => "#0288D1",
+        FindingSeverity.Good => "#2E7D32",
+        _ => "#757575",
+    };
+}

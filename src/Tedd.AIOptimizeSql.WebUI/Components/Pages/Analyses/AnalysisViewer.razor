@@ -1,10 +1,11 @@
-@page "/analyses/{Id:int}"
+@page "/db/{DbId:int}/analyses/{Id:int}"
 @implements IDisposable
 @rendermode InteractiveServer
 @inject IDbContextFactory<Tedd.AIOptimizeSql.Database.AIOptimizeDbContext> DbContextFactory
 @inject IAIOptimizeDataAccess DataAccess
 @inject IOptions<UiPollingOptions> UiPolling
 @inject NavigationManager Navigation
+@inject IDialogService DialogService
 @inject ISnackbar Snackbar
 @using Microsoft.EntityFrameworkCore
 @using System.Text.Json
@@ -16,7 +17,7 @@
 
 <MudContainer MaxWidth="MaxWidth.ExtraLarge" Class="mt-4">
     <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-4">
-        <MudIconButton Icon="@Icons.Material.Filled.ArrowBack" OnClick="@(() => Navigation.NavigateTo("/analyses"))" aria-label="Back" />
+        <MudIconButton Icon="@Icons.Material.Filled.ArrowBack" OnClick="@(() => Navigation.NavigateTo(DbRoutes.Analyses(DbId)))" aria-label="Back" />
         <MudText Typo="Typo.h4">@(_analysis?.Name ?? "Analysis")</MudText>
         @if (_analysis is not null)
         {
@@ -416,8 +417,18 @@
                                             {
                                                 <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Primary"
                                                            StartIcon="@Icons.Material.Filled.Science"
-                                                           Href="@($"/experiments/{(int)(object)f.ProposedExperimentId.Value}/view")">
+                                                           Href="@DbRoutes.Experiment(DbId, (int)(object)f.ProposedExperimentId.Value)">
                                                     Open experiment
+                                                </MudButton>
+                                            }
+                                            else
+                                            {
+                                                @* A finding is only ever a claim until it is measured. This is the
+                                                   shortest path from "the AI thinks X" to "X was proven". *@
+                                                <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Secondary"
+                                                           StartIcon="@Icons.Material.Filled.Science"
+                                                           Href="@DbRoutes.ExperimentWizardForFinding(DbId, (int)(object)f.Id)">
+                                                    Start experiment from this finding
                                                 </MudButton>
                                             }
                                         </MudStack>
@@ -474,6 +485,10 @@
 </MudContainer>
 
 @code {
+    [Parameter] public int DbId { get; set; }
+
+    [CascadingParameter] private DatabaseScope? Db { get; set; }
+
     [Parameter] public int Id { get; set; }
 
     private readonly CancellationTokenSource _pageCts = new();
@@ -740,9 +755,21 @@
 
     private async Task QueueAnalysis()
     {
+        // Re-running an analysis whose AI was deleted would silently produce rule-based findings
+        // only. Ask for one instead, and bind it to the database so it is asked once.
+        var aiId = await EnsureAiConnectionAsync();
+        if (aiId is null)
+            return;
+
         await using var db = await DbContextFactory.CreateDbContextAsync();
         var analysisId = (DatabaseAnalysisId)(object)Id;
         var now = DateTime.UtcNow;
+        await db.DatabaseAnalyses
+            .Where(a => a.Id == analysisId && a.AIConnectionId == null)
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(a => a.AIConnectionId, aiId)
+                .SetProperty(a => a.ModifiedAt, now));
+
         var n = await db.DatabaseAnalyses
             .Where(a => a.Id == analysisId &&
                         (a.State == DatabaseAnalysisState.Draft || a.State == DatabaseAnalysisState.Failed ||
@@ -754,6 +781,19 @@
                 .SetProperty(a => a.ModifiedAt, now));
         Snackbar.Add(n == 1 ? "Analysis queued" : "Could not queue analysis", n == 1 ? Severity.Success : Severity.Warning);
         await PageLoadCancellation.RunPageLoadAsync(LoadAsync, _pageCts.Token);
+    }
+
+    /// <summary>
+    /// The AI this analysis will use: its own, or — when that was cleared — the one bound to the
+    /// database, asking for a binding when there is none. Null means the user backed out.
+    /// </summary>
+    private async Task<AIConnectionId?> EnsureAiConnectionAsync()
+    {
+        if (_analysis?.AIConnectionId is { } existing)
+            return existing;
+
+        return await AiBindingPrompt.EnsureAiConnectionAsync(
+            Db, DialogService, "This analysis has no AI connection, and an analysis needs one for its deep dive.");
     }
 
     private async Task StopAnalysis()

@@ -1,5 +1,4 @@
-@page "/sql-browser"
-@page "/sql-browser/{ConnectionId:int}"
+@page "/db/{DbId:int}/browser"
 @implements IDisposable
 @rendermode InteractiveServer
 @using System.Text
@@ -22,13 +21,7 @@
 <div class="sb-root" @onpointermove="OnRootPointerMove" @onpointerup="OnRootPointerUp" @onpointerleave="OnRootPointerUp">
     <div class="sb-left" style="@($"flex-basis:{Fmt(_leftWidthPx)}px;")">
         <div class="sb-left-header">
-            <MudSelect T="DatabaseConnectionId?" Value="_selectedConnectionId" ValueChanged="OnConnectionChangedAsync"
-                       Label="Connection" Dense="true" Variant="Variant.Outlined" Class="mb-2">
-                @foreach (var conn in _connections)
-                {
-                    <MudSelectItem Value="@((DatabaseConnectionId?)conn.Id)">@conn.Name</MudSelectItem>
-                }
-            </MudSelect>
+            <MudText Typo="Typo.subtitle2" Class="mb-2">@(_selectedConnection?.Name ?? "Database")</MudText>
 
             @if (_catalogLoading)
             {
@@ -200,12 +193,13 @@
 </div>
 
 @code {
-    [Parameter] public int? ConnectionId { get; set; }
+    [Parameter] public int DbId { get; set; }
+
+    [CascadingParameter] private DatabaseScope? Db { get; set; }
 
     private readonly CancellationTokenSource _pageCts = new();
     private CancellationTokenSource? _runCts;
 
-    private List<DatabaseConnection> _connections = new();
     private DatabaseConnectionId? _selectedConnectionId;
     private DatabaseConnection? _selectedConnection;
 
@@ -249,7 +243,7 @@
         _catalog is not null ? "Connected" : "Not connected";
 
     private string CreateExperimentDisabledReason =>
-        _selectedConnectionId is null ? "Select a connection first" :
+        _selectedConnection is null ? "This database connection could not be loaded" :
         string.IsNullOrWhiteSpace(_editorText) ? "Write a query first" :
         "";
 
@@ -262,20 +256,9 @@
     }
 
     protected override Task OnInitializedAsync() =>
-        PageLoadCancellation.RunPageLoadAsync(async ct =>
-        {
-            await using var db = await DbContextFactory.CreateDbContextAsync(ct);
-            _connections = await db.DatabaseConnections.OrderBy(c => c.Name).ToListAsync(ct);
-
-            if (ConnectionId.HasValue)
-            {
-                var id = (DatabaseConnectionId)(object)ConnectionId.Value;
-                if (_connections.Any(c => c.Id == id))
-                {
-                    await LoadConnectionAsync(id, ct);
-                }
-            }
-        }, _pageCts.Token);
+        PageLoadCancellation.RunPageLoadAsync(
+            ct => LoadConnectionAsync((DatabaseConnectionId)DbId, ct),
+            _pageCts.Token);
 
     private StandaloneEditorConstructionOptions BuildEditorOptions(StandaloneCodeEditor _) =>
         new()
@@ -292,15 +275,16 @@
             InsertSpaces = true,
         };
 
-    private async Task OnConnectionChangedAsync(DatabaseConnectionId? id)
-    {
-        await LoadConnectionAsync(id, _pageCts.Token);
-    }
-
-    private async Task LoadConnectionAsync(DatabaseConnectionId? id, CancellationToken ct)
+    private async Task LoadConnectionAsync(DatabaseConnectionId id, CancellationToken ct)
     {
         _selectedConnectionId = id;
-        _selectedConnection = _connections.FirstOrDefault(c => c.Id == id);
+
+        await using (var db = await DbContextFactory.CreateDbContextAsync(ct))
+        {
+            _selectedConnection = await db.DatabaseConnections.AsNoTracking()
+                .FirstOrDefaultAsync(c => c.Id == id, ct);
+        }
+
         _catalog = null;
         _catalogError = null;
         _lastResult = null;
@@ -663,6 +647,7 @@
         {
             { x => x.ConnectionId, _selectedConnectionId!.Value },
             { x => x.Sql, sql },
+            { x => x.DefaultAiConnectionId, Db?.TypedAiConnectionId },
         };
         var dialog = await DialogService.ShowAsync<Tedd.AIOptimizeSql.WebUI.Components.Pages.SqlBrowser.Wizard.CreateExperimentWizard>(
             "Create experiment", parameters, new DialogOptions { MaxWidth = MaxWidth.Large, FullWidth = true, CloseButton = true });
@@ -671,7 +656,7 @@
         if (result is not null && !result.Canceled && result.Data is int newExperimentId)
         {
             Snackbar.Add("Experiment created.", Severity.Success);
-            Navigation.NavigateTo($"/experiments/{newExperimentId}/edit");
+            Navigation.NavigateTo(DbRoutes.EditExperiment(DbId, newExperimentId));
         }
     }
 }

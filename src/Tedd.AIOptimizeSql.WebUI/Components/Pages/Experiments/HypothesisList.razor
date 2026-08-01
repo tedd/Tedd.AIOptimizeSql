@@ -1,4 +1,4 @@
-@page "/experiments/{ExperimentId:int}/research-iterations/{IterationId:int}"
+@page "/db/{DbId:int}/experiments/{ExperimentId:int}/research-iterations/{IterationId:int}"
 @implements IDisposable
 @rendermode InteractiveServer
 @inject IDbContextFactory<AIOptimizeDbContext> DbContextFactory
@@ -13,7 +13,7 @@
 <PageTitle>Hypotheses</PageTitle>
 
 <MudContainer MaxWidth="MaxWidth.ExtraLarge" Class="mt-4">
-    <HierarchyBreadcrumbs ExperimentId="@ExperimentId" IterationId="@IterationId" />
+    <HierarchyBreadcrumbs DbId="@DbId" ExperimentId="@ExperimentId" IterationId="@IterationId" />
 
     <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-2">
         <MudText Typo="Typo.h4">Hypotheses</MudText>
@@ -26,11 +26,11 @@
             </MudButton>
         }
         <MudButton Variant="Variant.Outlined" Color="Color.Secondary" StartIcon="@Icons.Material.Filled.Tune"
-                   Href="@($"/experiments/{ExperimentId}/research-iterations/{IterationId}/edit")">
+                   Href="@DbRoutes.EditIteration(DbId, ExperimentId, IterationId)">
             Iteration settings
         </MudButton>
         <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Add"
-                   Href="@($"/experiments/{ExperimentId}/research-iterations/{IterationId}/hypotheses/new")">
+                   Href="@DbRoutes.NewHypothesis(DbId, ExperimentId, IterationId)">
             New Hypothesis
         </MudButton>
     </MudStack>
@@ -131,7 +131,7 @@
             <MudTd DataLabel="Builds On">
                 @if (context.BuildsOnHypothesisId.HasValue)
                 {
-                    <MudLink Href="@($"/experiments/{ExperimentId}/research-iterations/{IterationId}/hypotheses/{(int)(object)context.BuildsOnHypothesisId}")"
+                    <MudLink Href="@DbRoutes.Hypothesis(DbId, ExperimentId, IterationId, (int)(object)context.BuildsOnHypothesisId)"
                              Color="Color.Primary">
                         #@((int)(object)context.BuildsOnHypothesisId)
                     </MudLink>
@@ -158,6 +158,8 @@
 </MudContainer>
 
 @code {
+    [Parameter] public int DbId { get; set; }
+
     [Parameter] public int ExperimentId { get; set; }
     [Parameter] public int IterationId { get; set; }
 
@@ -264,7 +266,7 @@
 
     private void OnRowClick(TableRowClickEventArgs<Hypothesis> args)
     {
-        Navigation.NavigateTo($"/experiments/{ExperimentId}/research-iterations/{IterationId}/hypotheses/{(int)(object)args.Item!.Id}");
+        Navigation.NavigateTo(DbRoutes.Hypothesis(DbId, ExperimentId, IterationId, (int)(object)args.Item!.Id));
     }
 
     private async Task DeleteSingle(Hypothesis item)

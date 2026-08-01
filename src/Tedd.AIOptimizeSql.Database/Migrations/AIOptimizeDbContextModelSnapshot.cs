@@ -356,6 +356,9 @@ namespace Tedd.AIOptimizeSql.Database.Migrations
 
                     SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
 
+                    b.Property<int?>("AIConnectionId")
+                        .HasColumnType("int");
+
                     b.Property<bool>("AnalyzeOnly")
                         .HasColumnType("bit");
 
@@ -377,7 +380,98 @@ namespace Tedd.AIOptimizeSql.Database.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("AIConnectionId");
+
                     b.ToTable("DatabaseConnections");
+                });
+
+            modelBuilder.Entity("Tedd.AIOptimizeSql.Database.Models.AiConversation", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<int?>("AIConnectionId")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<int?>("DatabaseConnectionId")
+                        .HasColumnType("int");
+
+                    b.Property<long>("ElapsedMs")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime?>("EndedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<long>("InputTokens")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("nvarchar(32)");
+
+                    b.Property<string>("LastMessage")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("Model")
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<DateTime>("ModifiedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<long>("OutputTokens")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("Provider")
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<int?>("RelatedDatabaseAnalysisId")
+                        .HasColumnType("int");
+
+                    b.Property<int?>("RelatedExperimentId")
+                        .HasColumnType("int");
+
+                    b.Property<int?>("RelatedHypothesisId")
+                        .HasColumnType("int");
+
+                    b.Property<int?>("RelatedResearchIterationId")
+                        .HasColumnType("int");
+
+                    b.Property<int>("RequestCount")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime>("StartedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("State")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("nvarchar(16)");
+
+                    b.Property<string>("Title")
+                        .HasMaxLength(512)
+                        .HasColumnType("nvarchar(512)");
+
+                    b.Property<long>("TotalTokens")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AIConnectionId");
+
+                    b.HasIndex("DatabaseConnectionId");
+
+                    b.HasIndex("StartedAt");
+
+                    b.ToTable("AiConversations");
                 });
 
             modelBuilder.Entity("Tedd.AIOptimizeSql.Database.Models.Experiment", b =>
@@ -764,6 +858,33 @@ namespace Tedd.AIOptimizeSql.Database.Migrations
                         .IsRequired();
 
                     b.Navigation("DatabaseAnalysis");
+                });
+
+            modelBuilder.Entity("Tedd.AIOptimizeSql.Database.Models.DatabaseConnection", b =>
+                {
+                    b.HasOne("Tedd.AIOptimizeSql.Database.Models.AIConnection", "AIConnection")
+                        .WithMany()
+                        .HasForeignKey("AIConnectionId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.Navigation("AIConnection");
+                });
+
+            modelBuilder.Entity("Tedd.AIOptimizeSql.Database.Models.AiConversation", b =>
+                {
+                    b.HasOne("Tedd.AIOptimizeSql.Database.Models.AIConnection", "AIConnection")
+                        .WithMany()
+                        .HasForeignKey("AIConnectionId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.HasOne("Tedd.AIOptimizeSql.Database.Models.DatabaseConnection", "DatabaseConnection")
+                        .WithMany()
+                        .HasForeignKey("DatabaseConnectionId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.Navigation("AIConnection");
+
+                    b.Navigation("DatabaseConnection");
                 });
 
             modelBuilder.Entity("Tedd.AIOptimizeSql.Database.Models.Experiment", b =>

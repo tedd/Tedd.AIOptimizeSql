@@ -1,10 +1,11 @@
-@page "/database-connections/new"
-@page "/database-connections/{Id:int}"
+@page "/settings/databases/new"
+@page "/settings/databases/{Id:int}"
 @implements IDisposable
 @rendermode InteractiveServer
 @inject IDbContextFactory<Tedd.AIOptimizeSql.Database.AIOptimizeDbContext> DbContextFactory
 @inject NavigationManager Navigation
 @inject ISnackbar Snackbar
+@inject DatabaseScopeNotifier ScopeNotifier
 @using Microsoft.EntityFrameworkCore
 @using Tedd.AIOptimizeSql.Database
 @using Tedd.AIOptimizeSql.Database.Models
@@ -29,6 +30,22 @@
     {
         <MudAlert Severity="Severity.Error">Connection not found.</MudAlert>
     }
+    else if (_aiConnections.Count == 0)
+    {
+        @* A database carries the AI it works with, so there is nothing useful to save yet. *@
+        <MudAlert Severity="Severity.Warning" Class="mb-4">
+            <MudText Typo="Typo.subtitle2">Add an AI connection first</MudText>
+            <MudText Typo="Typo.body2" Class="mt-1">
+                Every database is bound to the AI it works with — analyses and experiments started
+                inside it inherit that AI — so there has to be one to bind to before a database can
+                be created.
+            </MudText>
+            <MudButton Variant="Variant.Filled" Color="Color.Secondary" Class="mt-3"
+                       StartIcon="@Icons.Material.Filled.SmartToy" Href="@DbRoutes.NewAiConnection">
+                Add AI connection
+            </MudButton>
+        </MudAlert>
+    }
     else
     {
         <MudCard Elevation="3" Class="rounded-lg">
@@ -40,6 +57,20 @@
                     <MudTextField @bind-Value="_model.ConnectionString" Label="Connection String" Required="true"
                                   RequiredError="Connection string is required" MaxLength="4000"
                                   Lines="3" Variant="Variant.Outlined" Class="mb-4" />
+
+                    <MudSelect T="AIConnectionId?" @bind-Value="_model.AIConnectionId" Label="AI connection"
+                               Required="true" RequiredError="Pick the AI this database works with"
+                               Variant="Variant.Outlined" Class="mb-1">
+                        @foreach (var ai in _aiConnections)
+                        {
+                            <MudSelectItem Value="@((AIConnectionId?)ai.Id)">@ai.Name (@ai.Provider / @ai.Model)</MudSelectItem>
+                        }
+                    </MudSelect>
+                    <MudText Typo="Typo.caption" Color="Color.Secondary" Class="mb-4 d-block">
+                        Analyses, experiments and the Create Experiment wizard started inside this
+                        database default to this AI. It cannot be deleted while this database still
+                        points at it.
+                    </MudText>
 
                     <MudSwitch @bind-Value="_model.AnalyzeOnly" Color="Color.Warning" Class="mb-1"
                                Label="Analyze only (production-safe)" />
@@ -80,14 +111,17 @@
     private MudForm? _form;
     private readonly CancellationTokenSource _pageCts = new();
     private AIOptimizeDbContext? _db;
+    private List<AIConnection> _aiConnections = new();
     private string _baselineName = "";
     private string _baselineConnectionString = "";
     private bool _baselineAnalyzeOnly;
+    private AIConnectionId? _baselineAiConnectionId;
 
     private bool IsModified =>
         !_loading && _model != null &&
         (_model.Name != _baselineName || _model.ConnectionString != _baselineConnectionString
-         || _model.AnalyzeOnly != _baselineAnalyzeOnly);
+         || _model.AnalyzeOnly != _baselineAnalyzeOnly
+         || _model.AIConnectionId != _baselineAiConnectionId);
 
     private void CaptureBaseline()
     {
@@ -95,6 +129,7 @@
         _baselineName = _model.Name;
         _baselineConnectionString = _model.ConnectionString;
         _baselineAnalyzeOnly = _model.AnalyzeOnly;
+        _baselineAiConnectionId = _model.AIConnectionId;
     }
 
     public void Dispose()
@@ -109,6 +144,8 @@
         PageLoadCancellation.RunPageLoadAsync(async ct =>
         {
             _db = await DbContextFactory.CreateDbContextAsync(ct);
+            _aiConnections = await _db.AIConnections.AsNoTracking().OrderBy(a => a.Name).ToListAsync(ct);
+
             if (Id.HasValue)
             {
                 _isNew = false;
@@ -118,7 +155,13 @@
             else
             {
                 _isNew = true;
-                _model = new DatabaseConnection { Name = "", ConnectionString = "" };
+                _model = new DatabaseConnection
+                {
+                    Name = "",
+                    ConnectionString = "",
+                    // One AI configured is not a choice; pre-select it so the common case is one field less.
+                    AIConnectionId = _aiConnections.Count == 1 ? _aiConnections[0].Id : null,
+                };
             }
             _loading = false;
             CaptureBaseline();
@@ -146,6 +189,7 @@
                 .SetProperty(c => c.Name, _model.Name)
                 .SetProperty(c => c.ConnectionString, _model.ConnectionString)
                 .SetProperty(c => c.AnalyzeOnly, _model.AnalyzeOnly)
+                .SetProperty(c => c.AIConnectionId, _model.AIConnectionId)
                 .SetProperty(c => c.ModifiedAt, now));
             if (n != 1)
             {
@@ -157,13 +201,17 @@
         }
         Snackbar.Add(_isNew ? "Connection created" : "Connection saved", Severity.Success);
         CaptureBaseline();
+
+        // The app bar and nav read the database from the cascaded scope; without this a rename
+        // or an AI rebind would keep showing the values from when the database was opened.
+        await ScopeNotifier.NotifyChangedAsync();
         return true;
     }
 
     private async Task Save()
     {
         if (!await TryPersistAsync()) return;
-        Navigation.NavigateTo("/database-connections");
+        Navigation.NavigateTo(DbRoutes.DatabaseConnections);
     }
 
     private async Task DiscardChangesAsync()
@@ -171,7 +219,12 @@
         if (_db is null || _model == null) return;
         if (_isNew)
         {
-            _model = new DatabaseConnection { Name = "", ConnectionString = "" };
+            _model = new DatabaseConnection
+            {
+                Name = "",
+                ConnectionString = "",
+                AIConnectionId = _aiConnections.Count == 1 ? _aiConnections[0].Id : null,
+            };
         }
         else
         {
@@ -188,5 +241,5 @@
         await InvokeAsync(StateHasChanged);
     }
 
-    private void GoBack() => Navigation.NavigateTo("/database-connections");
+    private void GoBack() => Navigation.NavigateTo(DbRoutes.DatabaseConnections);
 }

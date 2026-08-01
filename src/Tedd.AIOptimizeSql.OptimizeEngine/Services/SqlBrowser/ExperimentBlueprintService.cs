@@ -26,6 +26,7 @@ public sealed class ExperimentBlueprintService(
     IObjectDependencyService dependencyService,
     ISandboxScriptService sandboxScriptService,
     AiAgentFactory agentFactory,
+    AiConversationTracker conversationTracker,
     ILogger<ExperimentBlueprintService> logger) : IExperimentBlueprintService
 {
     /// <summary>Schema context is the bulk of the prompt; past this it is truncated with a note.</summary>
@@ -273,6 +274,14 @@ public sealed class ExperimentBlueprintService(
         AiBlueprintResponse? ai = null;
         string? aiError = null;
 
+        var conversation = await conversationTracker.StartAsync(new AiConversationStart
+        {
+            Kind = AiConversationKind.ExperimentBlueprint,
+            AiConnection = aiConnection,
+            DatabaseConnectionId = request.DatabaseConnectionId,
+            Title = $"Experiment wizard: {FirstNonBlank(current.Name, "new experiment")}",
+        }, ct);
+
         try
         {
             progress?.Report($"Asking {aiConnection.Model} to complete the blueprint…");
@@ -285,6 +294,8 @@ public sealed class ExperimentBlueprintService(
             var sw = Stopwatch.StartNew();
             var response = await agent.RunAsync(prompt, cancellationToken: ct);
             sw.Stop();
+            conversation.Record(response?.Usage);
+            await conversation.CompleteAsync(CancellationToken.None);
 
             progress?.Report($"AI responded after {sw.ElapsedMilliseconds} ms, parsing…");
 
@@ -296,10 +307,12 @@ public sealed class ExperimentBlueprintService(
         }
         catch (OperationCanceledException)
         {
+            await conversation.FailAsync("Cancelled.", CancellationToken.None);
             throw;
         }
         catch (Exception ex)
         {
+            await conversation.FailAsync(ex.Message, CancellationToken.None);
             aiError = ex.Message;
             logger.LogError(ex, "AI could not complete the experiment blueprint");
         }
@@ -399,6 +412,7 @@ public sealed class ExperimentBlueprintService(
             var scripts = await sandboxScriptService.GenerateAsync(connectionString, new SandboxScriptRequest
             {
                 IsolationMode = request.IsolationMode,
+                DatabaseConnectionId = request.DatabaseConnectionId,
                 SandboxSchemaName = schemaName,
                 SandboxDatabaseName = cloneName,
                 BenchmarkSql = request.BenchmarkSql,
@@ -860,6 +874,146 @@ public sealed class ExperimentBlueprintService(
         public string? Sandbox_teardown_sql { get; set; }
         public string? Output_verification_sql { get; set; }
         public List<string>? Warnings { get; set; }
+    }
+
+    #endregion
+
+    #region Draft from an analysis finding
+
+    /// <inheritdoc />
+    public async Task<FindingExperimentDraft> DraftFromFindingAsync(
+        AIConnection aiConnection,
+        FindingExperimentContext finding,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(aiConnection);
+        ArgumentNullException.ThrowIfNull(finding);
+
+        var conversation = await conversationTracker.StartAsync(new AiConversationStart
+        {
+            Kind = AiConversationKind.ExperimentBlueprint,
+            AiConnection = aiConnection,
+            DatabaseConnectionId = finding.DatabaseConnectionId,
+            Title = $"Draft experiment for finding: {finding.Title}",
+        }, ct);
+
+        try
+        {
+            var agent = agentFactory.Create(aiConnection, FindingDraftInstructions, new List<AITool>());
+            var response = await agent.RunAsync(BuildFindingPrompt(finding), cancellationToken: ct);
+            conversation.Record(response?.Usage);
+            await conversation.CompleteAsync(CancellationToken.None);
+
+            var json = AiJson.ExtractObject(response?.ToString());
+            if (json is null)
+                return new FindingExperimentDraft(null, null, null, null,
+                    "The AI replied with something that is not the expected JSON.");
+
+            var draft = JsonSerializer.Deserialize<AiFindingDraftResponse>(json, AiJson.Options);
+            if (draft is null || string.IsNullOrWhiteSpace(draft.Benchmark_sql))
+                return new FindingExperimentDraft(draft?.Name, null, draft?.Goal, draft?.Instructions,
+                    "The AI could not turn this finding into a benchmark query. Write the query you want measured.");
+
+            return new FindingExperimentDraft(
+                draft.Name, draft.Benchmark_sql, draft.Goal, draft.Instructions, Error: null);
+        }
+        catch (OperationCanceledException)
+        {
+            await conversation.FailAsync("Cancelled.", CancellationToken.None);
+            throw;
+        }
+        catch (Exception ex)
+        {
+            await conversation.FailAsync(ex.Message, CancellationToken.None);
+            logger.LogError(ex, "The AI could not draft an experiment from an analysis finding");
+            return new FindingExperimentDraft(null, null, null, null,
+                $"The AI could not be reached: {ex.Message}");
+        }
+    }
+
+    private const string FindingDraftInstructions = """
+        You turn a database analysis finding into an experiment that will prove or disprove it.
+
+        An experiment measures ONE query before and after a change. Your job is to write the query
+        whose timing would actually move if the finding were addressed — not a demonstration of the
+        problem, and not the fix itself.
+
+        Rules, without exception:
+        * T-SQL for Microsoft SQL Server only. Every identifier bracket-quoted and schema-qualified.
+        * The benchmark query is READ-ONLY and safe to run repeatedly: no INSERT/UPDATE/DELETE/DDL.
+        * It must be runnable as-is. Where the finding does not tell you the real parameter values,
+          declare variables with plausible literals at the top rather than leaving placeholders.
+        * If the finding names an object, the query must actually touch that object.
+        * Prefer a realistic workload over a synthetic one: a query a real caller would issue.
+
+        Reply with JSON only, no prose and no markdown fences:
+        {"name": "...", "benchmark_sql": "...", "goal": "...", "instructions": "..."}
+
+        name         short experiment name
+        benchmark_sql the query to measure
+        goal         one sentence on what "faster" means here, in the user's terms
+        instructions guard rails for the optimizing AI, e.g. which objects it must not change
+        """;
+
+    private static string BuildFindingPrompt(FindingExperimentContext finding)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine("# Analysis finding");
+        sb.AppendLine($"Title: {finding.Title}");
+        if (!string.IsNullOrWhiteSpace(finding.Severity))
+            sb.AppendLine($"Severity: {finding.Severity}");
+        if (!string.IsNullOrWhiteSpace(finding.Category))
+            sb.AppendLine($"Category: {finding.Category}");
+        if (!string.IsNullOrWhiteSpace(finding.ObjectName))
+            sb.AppendLine($"Affected object: [{finding.ObjectSchema ?? "dbo"}].[{finding.ObjectName}]");
+        if (!string.IsNullOrWhiteSpace(finding.DatabaseName))
+            sb.AppendLine($"Database: {finding.DatabaseName}");
+
+        if (!string.IsNullOrWhiteSpace(finding.Description))
+        {
+            sb.AppendLine();
+            sb.AppendLine("## What was found");
+            sb.AppendLine(finding.Description.Trim());
+        }
+
+        if (!string.IsNullOrWhiteSpace(finding.Evidence))
+        {
+            sb.AppendLine();
+            sb.AppendLine("## Evidence");
+            var evidence = finding.Evidence.Trim();
+            sb.AppendLine(evidence.Length <= MaxSchemaContextChars
+                ? evidence
+                : evidence[..MaxSchemaContextChars] + "\n\n… (evidence truncated)");
+        }
+
+        if (!string.IsNullOrWhiteSpace(finding.Recommendation))
+        {
+            sb.AppendLine();
+            sb.AppendLine("## Recommendation");
+            sb.AppendLine(finding.Recommendation.Trim());
+        }
+
+        if (!string.IsNullOrWhiteSpace(finding.RecommendationSql))
+        {
+            sb.AppendLine();
+            sb.AppendLine("## Suggested remediation SQL (this is the FIX, not the benchmark)");
+            sb.AppendLine("```sql");
+            sb.AppendLine(finding.RecommendationSql.Trim());
+            sb.AppendLine("```");
+        }
+
+        sb.AppendLine();
+        sb.AppendLine("Write the benchmark query that would demonstrate the improvement if this finding were addressed, and return it as JSON.");
+        return sb.ToString();
+    }
+
+    /// <summary>Shape of the JSON the finding-draft agent is asked for.</summary>
+    private sealed class AiFindingDraftResponse
+    {
+        public string? Name { get; set; }
+        public string? Benchmark_sql { get; set; }
+        public string? Goal { get; set; }
+        public string? Instructions { get; set; }
     }
 
     #endregion

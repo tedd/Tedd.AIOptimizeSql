@@ -5,11 +5,16 @@ namespace Tedd.AIOptimizeSql.Database.DataAccess;
 
 public interface IAIOptimizeDataAccess
 {
+    /// <summary>
+    /// One page of research iterations, optionally narrowed to the iterations whose experiment
+    /// targets <paramref name="databaseConnectionId"/>.
+    /// </summary>
     Task<(IReadOnlyList<ResearchIterationListRow> Items, int TotalCount)> GetResearchIterationsPageAsync(
         int skip,
         int take,
         string? sortLabel,
         ListSortDirection sortDirection,
+        DatabaseConnectionId? databaseConnectionId = null,
         CancellationToken cancellationToken = default);
 
     Task<ResearchIteration?> GetResearchIterationForEditAsync(ResearchIterationId id, CancellationToken cancellationToken = default);
@@ -82,7 +87,30 @@ public interface IAIOptimizeDataAccess
     /// </summary>
     Task<int> DeleteHypothesesAsync(IReadOnlyCollection<HypothesisId> ids, CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Clears every reference to an AI connection — experiments, iteration snapshots, analyses,
+    /// the databases bound to it, and the token ledger — so the connection row can be deleted.
+    /// </summary>
     Task ClearAiConnectionReferencesAsync(AIConnectionId id, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Names of the databases currently bound to this AI connection. Non-empty means deleting
+    /// the AI connection would leave those databases without one, so the UI asks first.
+    /// </summary>
+    Task<IReadOnlyList<string>> GetDatabaseNamesUsingAiConnectionAsync(
+        AIConnectionId id, CancellationToken cancellationToken = default);
+
+    /// <summary>Binds (or, with null, unbinds) the AI connection a database works with.</summary>
+    Task BindAiConnectionToDatabaseAsync(
+        DatabaseConnectionId databaseConnectionId,
+        AIConnectionId? aiConnectionId,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Latest change in the AI token ledger, for the whole ledger or one database's slice of it.
+    /// </summary>
+    Task<DateTime?> GetMaxAiConversationModifiedAtAsync(
+        DatabaseConnectionId? databaseConnectionId, CancellationToken cancellationToken = default);
 
     Task<DateTime?> GetMaxAiConnectionModifiedAtAsync(CancellationToken cancellationToken = default);
 

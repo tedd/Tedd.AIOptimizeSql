@@ -1,10 +1,11 @@
-@page "/experiments/{Id:int}/view"
+@page "/db/{DbId:int}/experiments/{Id:int}/view"
 @implements IDisposable
 @rendermode InteractiveServer
 @inject IDbContextFactory<Tedd.AIOptimizeSql.Database.AIOptimizeDbContext> DbContextFactory
 @inject IAIOptimizeDataAccess DataAccess
 @inject IOptions<UiPollingOptions> UiPolling
 @inject NavigationManager Navigation
+@inject IDialogService DialogService
 @using Microsoft.EntityFrameworkCore
 @using Tedd.AIOptimizeSql.Database
 @using Tedd.AIOptimizeSql.Database.Models
@@ -12,22 +13,26 @@
 <PageTitle>Experiment results</PageTitle>
 
 <MudContainer MaxWidth="MaxWidth.ExtraLarge" Class="mt-4">
-    <HierarchyBreadcrumbs ExperimentId="@Id" ShowIterationList="false" />
+    <HierarchyBreadcrumbs DbId="@DbId" ExperimentId="@Id" ShowIterationList="false" />
 
     <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-4">
         <MudText Typo="Typo.h4">@(_experiment?.Name ?? "Experiment")</MudText>
         <MudSpacer />
         <MudButton Variant="Variant.Outlined" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Edit"
-                   Href="@($"/experiments/{Id}/edit")">
+                   Href="@DbRoutes.EditExperiment(DbId, Id)">
             Edit
         </MudButton>
         <MudButton Variant="Variant.Outlined" Color="Color.Secondary" StartIcon="@Icons.Material.Filled.Search"
-                   Href="@($"/experiments/{Id}/research-iterations")">
+                   Href="@DbRoutes.ExperimentIterations(DbId, Id)">
             Iterations
         </MudButton>
-        <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.AddCircle"
-                   Href="@($"/experiments/{Id}/research-iterations/new")">
-            New Iteration
+        <MudButton Variant="Variant.Outlined" Color="Color.Primary" StartIcon="@Icons.Material.Filled.AddCircle"
+                   Href="@DbRoutes.NewExperimentIteration(DbId, Id)">
+            New iteration
+        </MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Success" StartIcon="@Icons.Material.Filled.PlayArrow"
+                   OnClick="StartRunAsync">
+            Start run
         </MudButton>
     </MudStack>
 
@@ -273,11 +278,58 @@
 </MudContainer>
 
 @code {
+    [Parameter] public int DbId { get; set; }
+
     [Parameter] public int Id { get; set; }
+
+    [CascadingParameter] private DatabaseScope? Db { get; set; }
 
     private readonly CancellationTokenSource _pageCts = new();
 
     private int _activeTabIndex;
+
+    /// <summary>
+    /// Queues one research iteration, asking first how many hypotheses it may run — the number
+    /// that decides both how long the run takes and how many tokens it burns.
+    /// </summary>
+    private async Task StartRunAsync()
+    {
+        // The iteration snapshots the experiment's AI when it starts, so an experiment without
+        // one produces a run that cannot generate a single hypothesis. Fix it here instead.
+        if (_experiment?.AIConnectionId is null)
+        {
+            var chosen = await AiBindingPrompt.EnsureAiConnectionAsync(
+                Db, DialogService, "A run needs an AI to generate and test hypotheses.");
+            if (chosen is null)
+                return;
+
+            await using var db = await DbContextFactory.CreateDbContextAsync(_pageCts.Token);
+            var experimentId = (ExperimentId)Id;
+            var now = DateTime.UtcNow;
+            await db.Experiments
+                .Where(e => e.Id == experimentId)
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(e => e.AIConnectionId, chosen)
+                    .SetProperty(e => e.ModifiedAt, now), _pageCts.Token);
+
+            if (_experiment is not null)
+                _experiment.AIConnectionId = chosen;
+        }
+
+        var parameters = new DialogParameters<Tedd.AIOptimizeSql.WebUI.Components.Dialogs.StartRunDialog>
+        {
+            { x => x.ExperimentId, (ExperimentId)Id },
+            { x => x.AnalyzeOnly, Db?.AnalyzeOnly ?? false },
+            { x => x.DefaultMaxHypotheses, _orderedIterations.LastOrDefault()?.MaxNumberOfHypotheses ?? 10 },
+        };
+
+        var dialog = await DialogService.ShowAsync<Tedd.AIOptimizeSql.WebUI.Components.Dialogs.StartRunDialog>(
+            "Start a run", parameters, new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true, CloseButton = true });
+
+        var result = await dialog.Result;
+        if (result is not null && !result.Canceled && result.Data is int iterationId)
+            Navigation.NavigateTo(DbRoutes.EditIteration(DbId, Id, iterationId));
+    }
 
     private Experiment? _experiment;
     private bool _loading = true;

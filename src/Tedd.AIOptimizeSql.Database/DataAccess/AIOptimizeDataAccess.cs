@@ -12,10 +12,14 @@ public sealed class AIOptimizeDataAccess(IDbContextFactory<AIOptimizeDbContext> 
         int take,
         string? sortLabel,
         ListSortDirection sortDirection,
+        DatabaseConnectionId? databaseConnectionId = null,
         CancellationToken cancellationToken = default)
     {
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
         var query = db.ResearchIterations.AsNoTracking();
+
+        if (databaseConnectionId is { } scopeId)
+            query = query.Where(b => b.Experiment!.DatabaseConnectionId == scopeId);
 
         var descending = sortDirection == ListSortDirection.Descending;
         query = sortLabel switch
@@ -527,6 +531,32 @@ public sealed class AIOptimizeDataAccess(IDbContextFactory<AIOptimizeDbContext> 
                         .SetProperty(b => b.AIConnectionId, (AIConnectionId?)null)
                         .SetProperty(b => b.ModifiedAt, now),
                     cancellationToken);
+
+            await db.DatabaseAnalyses
+                .Where(a => a.AIConnectionId == id)
+                .ExecuteUpdateAsync(
+                    s => s
+                        .SetProperty(a => a.AIConnectionId, (AIConnectionId?)null)
+                        .SetProperty(a => a.ModifiedAt, now),
+                    cancellationToken);
+
+            await db.DatabaseConnections
+                .Where(c => c.AIConnectionId == id)
+                .ExecuteUpdateAsync(
+                    s => s
+                        .SetProperty(c => c.AIConnectionId, (AIConnectionId?)null)
+                        .SetProperty(c => c.ModifiedAt, now),
+                    cancellationToken);
+
+            // The token ledger keeps its provider/model snapshot, so clearing the link
+            // costs no history and lets the AI connection row actually be deleted.
+            await db.AiConversations
+                .Where(c => c.AIConnectionId == id)
+                .ExecuteUpdateAsync(
+                    s => s
+                        .SetProperty(c => c.AIConnectionId, (AIConnectionId?)null)
+                        .SetProperty(c => c.ModifiedAt, now),
+                    cancellationToken);
             return;
         }
 
@@ -544,7 +574,80 @@ public sealed class AIOptimizeDataAccess(IDbContextFactory<AIOptimizeDbContext> 
             b.ModifiedAt = now;
         }
 
+        var analyses = await db.DatabaseAnalyses.AsTracking().Where(a => a.AIConnectionId == id).ToListAsync(cancellationToken);
+        foreach (var a in analyses)
+        {
+            a.AIConnectionId = null;
+            a.ModifiedAt = now;
+        }
+
+        var databases = await db.DatabaseConnections.AsTracking().Where(c => c.AIConnectionId == id).ToListAsync(cancellationToken);
+        foreach (var c in databases)
+        {
+            c.AIConnectionId = null;
+            c.ModifiedAt = now;
+        }
+
+        var conversations = await db.AiConversations.AsTracking().Where(c => c.AIConnectionId == id).ToListAsync(cancellationToken);
+        foreach (var c in conversations)
+        {
+            c.AIConnectionId = null;
+            c.ModifiedAt = now;
+        }
+
         await db.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<string>> GetDatabaseNamesUsingAiConnectionAsync(
+        AIConnectionId id, CancellationToken cancellationToken = default)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
+        return await db.DatabaseConnections.AsNoTracking()
+            .Where(c => c.AIConnectionId == id)
+            .OrderBy(c => c.Name)
+            .Select(c => c.Name)
+            .ToListAsync(cancellationToken);
+    }
+
+    public async Task BindAiConnectionToDatabaseAsync(
+        DatabaseConnectionId databaseConnectionId,
+        AIConnectionId? aiConnectionId,
+        CancellationToken cancellationToken = default)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
+        var now = DateTime.UtcNow;
+
+        if (db.Database.IsRelational())
+        {
+            await db.DatabaseConnections
+                .Where(c => c.Id == databaseConnectionId)
+                .ExecuteUpdateAsync(
+                    s => s
+                        .SetProperty(c => c.AIConnectionId, aiConnectionId)
+                        .SetProperty(c => c.ModifiedAt, now),
+                    cancellationToken);
+            return;
+        }
+
+        var row = await db.DatabaseConnections.AsTracking()
+            .FirstOrDefaultAsync(c => c.Id == databaseConnectionId, cancellationToken);
+        if (row is null)
+            return;
+        row.AIConnectionId = aiConnectionId;
+        row.ModifiedAt = now;
+        await db.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task<DateTime?> GetMaxAiConversationModifiedAtAsync(
+        DatabaseConnectionId? databaseConnectionId, CancellationToken cancellationToken = default)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
+        var query = db.AiConversations.AsNoTracking();
+        if (databaseConnectionId is { } id)
+            query = query.Where(c => c.DatabaseConnectionId == id);
+        if (!await query.AnyAsync(cancellationToken))
+            return null;
+        return await query.MaxAsync(c => c.ModifiedAt, cancellationToken);
     }
 
     private static void ApplyAiSnapshotFromExperiment(ResearchIteration iteration, Experiment experiment)

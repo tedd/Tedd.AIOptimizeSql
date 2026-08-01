@@ -1,26 +1,41 @@
+@* Navigation is database-first: until a database is selected there is nothing to navigate
+   inside, so only the picker, settings and docs are offered. *@
+
 <MudNavMenu>
-    <MudNavLink Href="/" Match="NavLinkMatch.All" Icon="@Icons.Material.Filled.Home">
-        Home
+    @if (Db is not null)
+    {
+        <MudNavLink Href="@DbRoutes.Dashboard(Db.Id)" Match="NavLinkMatch.All" Icon="@Icons.Material.Filled.Dashboard">
+            Dashboard
+        </MudNavLink>
+        <MudNavLink Href="@DbRoutes.ExperimentWizard(Db.Id)" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.AutoAwesome">
+            New experiment (wizard)
+        </MudNavLink>
+        <MudNavLink Href="@DbRoutes.Browser(Db.Id)" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.TableView">
+            SQL Browser
+        </MudNavLink>
+        <MudNavLink Href="@DbRoutes.Analyses(Db.Id)" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.MonitorHeart">
+            Analysis
+        </MudNavLink>
+        <MudNavLink Href="@DbRoutes.Experiments(Db.Id)" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.Tune">
+            Experiments
+        </MudNavLink>
+        <MudNavLink Href="@DbRoutes.ResearchIterations(Db.Id)" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.BatchPrediction">
+            Research iterations
+        </MudNavLink>
+        <MudDivider Class="my-2" />
+    }
+
+    <MudNavLink Href="@DbRoutes.SelectDatabase" Match="NavLinkMatch.All" Icon="@Icons.Material.Filled.SwapHoriz">
+        @(Db is null ? "Select database" : "Switch database")
     </MudNavLink>
-    <MudNavLink Href="/database-connections" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.Storage">
-        DB Connections
+    <MudNavLink Href="@DbRoutes.Settings" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.Settings">
+        Settings
     </MudNavLink>
-    <MudNavLink Href="/sql-browser" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.TableView">
-        SQL Browser
-    </MudNavLink>
-    <MudNavLink Href="/ai-connections" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.SmartToy">
-        AI Connections
-    </MudNavLink>
-    <MudNavLink Href="/analyses" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.MonitorHeart">
-        Database analysis
-    </MudNavLink>
-    <MudNavLink Href="/experiments" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.Tune">
-        Experiments
-    </MudNavLink>
-    <MudNavLink Href="/research-iterations" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.BatchPrediction">
-        Research iterations
-    </MudNavLink>
-    <MudNavLink Href="/documentation" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.MenuBook">
+    <MudNavLink Href="@DbRoutes.Documentation" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.MenuBook">
         Documentation
     </MudNavLink>
 </MudNavMenu>
+
+@code {
+    [CascadingParameter] private DatabaseScope? Db { get; set; }
+}

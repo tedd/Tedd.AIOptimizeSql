@@ -1,3 +1,4 @@
+using Tedd.AIOptimizeSql.Database.Models;
 using Tedd.AIOptimizeSql.Database.Models.Enums;
 
 namespace Tedd.AIOptimizeSql.OptimizeEngine.Models.SqlBrowser;
@@ -75,4 +76,7 @@ public sealed record ExperimentBlueprintRequest
 
     /// <summary>Target database name, so generated scripts can name a sandbox that does not collide.</summary>
     public string? DatabaseName { get; init; }
+
+    /// <summary>Which configured database this is for, so the AI spend lands on its token ledger.</summary>
+    public DatabaseConnectionId? DatabaseConnectionId { get; init; }
 }

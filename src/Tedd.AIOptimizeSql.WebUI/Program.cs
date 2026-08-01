@@ -58,6 +58,10 @@ public class Program
 
         builder.Services.AddScoped<IDatabaseReadinessService, DatabaseReadinessService>();
         builder.Services.AddScoped<IAIOptimizeDataAccess, AIOptimizeDataAccess>();
+
+        // Scoped to the circuit: the route guard owns the selected database and reloads it when
+        // a page changes the connection itself (rename, AI rebind).
+        builder.Services.AddScoped<DatabaseScopeNotifier>();
         builder.Services.Configure<UiPollingOptions>(builder.Configuration.GetSection(UiPollingOptions.SectionName));
 
         // The SQL browser and Create Experiment wizard are interactive UI features that must

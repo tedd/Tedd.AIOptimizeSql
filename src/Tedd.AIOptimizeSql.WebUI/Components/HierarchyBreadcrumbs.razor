@@ -10,6 +10,9 @@
 <MudBreadcrumbs Items="@BuildItems()" Class="px-0 py-1" />
 
 @code {
+    /// <summary>Database every crumb lives under; the trail is meaningless outside one.</summary>
+    [Parameter, EditorRequired] public int DbId { get; set; }
+
     /// <summary>Experiment the page belongs to. Resolved from <see cref="IterationId"/> when omitted.</summary>
     [Parameter] public int? ExperimentId { get; set; }
 
@@ -75,30 +78,29 @@
     {
         var items = new List<BreadcrumbItem>
         {
-            new("Experiments", "/experiments")
+            new("Experiments", DbRoutes.Experiments(DbId))
         };
 
         if (_resolvedExperimentId is int experimentId)
         {
-            items.Add(new(ExperimentLabel(experimentId), $"/experiments/{experimentId}/view"));
+            items.Add(new(ExperimentLabel(experimentId), DbRoutes.Experiment(DbId, experimentId)));
 
             if (ShowIterationList)
-                items.Add(new("Research iterations", $"/experiments/{experimentId}/research-iterations"));
+                items.Add(new("Research iterations", DbRoutes.ExperimentIterations(DbId, experimentId)));
 
             if (IterationId is int iterationId)
             {
-                items.Add(new($"Iteration #{iterationId}",
-                    $"/experiments/{experimentId}/research-iterations/{iterationId}"));
+                items.Add(new($"Iteration #{iterationId}", DbRoutes.Iteration(DbId, experimentId, iterationId)));
 
                 if (HypothesisId is int hypothesisId)
                 {
                     items.Add(new($"Hypothesis #{hypothesisId}",
-                        $"/experiments/{experimentId}/research-iterations/{iterationId}/hypotheses/{hypothesisId}"));
+                        DbRoutes.Hypothesis(DbId, experimentId, iterationId, hypothesisId)));
                 }
                 else if (BenchmarkRunId is int benchmarkRunId)
                 {
                     items.Add(new($"Benchmark run #{benchmarkRunId}",
-                        $"/experiments/{experimentId}/research-iterations/{iterationId}/benchmarks/{benchmarkRunId}"));
+                        DbRoutes.BenchmarkRun(DbId, experimentId, iterationId, benchmarkRunId)));
                 }
             }
         }

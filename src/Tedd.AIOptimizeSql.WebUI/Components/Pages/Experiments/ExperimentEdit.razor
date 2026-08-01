@@ -1,5 +1,5 @@
-@page "/experiments/new"
-@page "/experiments/{Id:int}/edit"
+@page "/db/{DbId:int}/experiments/new"
+@page "/db/{DbId:int}/experiments/{Id:int}/edit"
 @implements IDisposable
 @rendermode InteractiveServer
 @inject IDbContextFactory<Tedd.AIOptimizeSql.Database.AIOptimizeDbContext> DbContextFactory
@@ -21,7 +21,7 @@
                      DiscardAsync="DiscardAsync" />
 
 <MudContainer MaxWidth="MaxWidth.Medium" Class="mt-4">
-    <HierarchyBreadcrumbs ExperimentId="@(_isNew ? null : Id)" ShowIterationList="false"
+    <HierarchyBreadcrumbs DbId="@DbId" ExperimentId="@(_isNew ? null : Id)" ShowIterationList="false"
                           Leaf="@(_isNew ? "New experiment" : "Edit")" />
 
     <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-4">
@@ -53,18 +53,13 @@
                                               Lines="2" Variant="Variant.Outlined" Class="mb-4"
                                               HelperText="Human-readable description (not used by AI)" />
 
-                                <MudSelect T="DatabaseConnectionId?" @bind-Value="_selectedDbConnId" Label="Database Connection"
-                                           Variant="Variant.Outlined" Class="mb-4" Clearable="true"
-                                           HelperText="Target database for optimization">
-                                    @foreach (var conn in _dbConnections)
-                                    {
-                                        <MudSelectItem Value="@((DatabaseConnectionId?)conn.Id)">@conn.Name</MudSelectItem>
-                                    }
-                                </MudSelect>
+                                <MudTextField Value="@(Db?.Name ?? $"#{DbId}")" Label="Database" ReadOnly="true"
+                                              Variant="Variant.Outlined" Class="mb-4"
+                                              HelperText="The database you are working in. Switch database to target another one." />
 
                                 <MudSelect T="AIConnectionId?" @bind-Value="_selectedAiConnId" Label="AI Connection"
                                            Variant="Variant.Outlined" Class="mb-4" Clearable="true"
-                                           HelperText="AI provider for optimization">
+                                           HelperText="Defaults to the AI bound to this database.">
                                     @foreach (var conn in _aiConnections)
                                     {
                                         <MudSelectItem Value="@((AIConnectionId?)conn.Id)">@conn.Name (@conn.Provider / @conn.Model)</MudSelectItem>
@@ -237,7 +232,13 @@
 </MudContainer>
 
 @code {
+    [Parameter] public int DbId { get; set; }
+
     [Parameter] public int? Id { get; set; }
+
+    [CascadingParameter] private DatabaseScope? Db { get; set; }
+
+    private DatabaseConnectionId ScopeId => (DatabaseConnectionId)DbId;
 
     private Experiment? _model;
     private bool _isNew;
@@ -245,9 +246,7 @@
     private bool _formValid;
     private int _activeTabIndex;
     private MudForm? _form;
-    private List<DatabaseConnection> _dbConnections = new();
     private List<AIConnection> _aiConnections = new();
-    private DatabaseConnectionId? _selectedDbConnId;
     private AIConnectionId? _selectedAiConnId;
     private readonly CancellationTokenSource _pageCts = new();
     private AIOptimizeDbContext? _db;
@@ -275,7 +274,6 @@
     private string _baselineExperimentPreRunSql = "";
     private string _baselineExperimentPostRunSql = "";
     private string _baselineBenchmarkSql = "";
-    private DatabaseConnectionId? _baselineDbConnId;
     private AIConnectionId? _baselineAiConnId;
     private ExperimentIsolationMode _baselineIsolationMode;
     private string _baselineSandboxSchemaName = "";
@@ -295,7 +293,6 @@
          (_model.ExperimentPreRunSql ?? "") != _baselineExperimentPreRunSql ||
          (_model.ExperimentPostRunSql ?? "") != _baselineExperimentPostRunSql ||
          (_model.BenchmarkSql ?? "") != _baselineBenchmarkSql ||
-         _selectedDbConnId != _baselineDbConnId ||
          _selectedAiConnId != _baselineAiConnId ||
          _model.IsolationMode != _baselineIsolationMode ||
          (_model.SandboxSchemaName ?? "") != _baselineSandboxSchemaName ||
@@ -316,7 +313,6 @@
         _baselineExperimentPreRunSql = _model.ExperimentPreRunSql ?? "";
         _baselineExperimentPostRunSql = _model.ExperimentPostRunSql ?? "";
         _baselineBenchmarkSql = _model.BenchmarkSql ?? "";
-        _baselineDbConnId = _selectedDbConnId;
         _baselineAiConnId = _selectedAiConnId;
         _baselineIsolationMode = _model.IsolationMode;
         _baselineSandboxSchemaName = _model.SandboxSchemaName ?? "";
@@ -333,7 +329,7 @@
             @if (showResearchIterationsLink && !_isNew)
             {
                 <MudButton Variant="Variant.Text" Color="Color.Info"
-                           Href="@($"/experiments/{Id}/research-iterations")" StartIcon="@Icons.Material.Filled.PlayArrow">
+                           Href="@DbRoutes.ExperimentIterations(DbId, Id!.Value)" StartIcon="@Icons.Material.Filled.PlayArrow">
                     View research iterations
                 </MudButton>
             }
@@ -380,10 +376,11 @@
         if (_model is null || _sandboxBusy)
             return;
 
-        var dbConn = _dbConnections.FirstOrDefault(c => c.Id == _selectedDbConnId);
+        var dbConn = await _db!.DatabaseConnections.AsNoTracking()
+            .FirstOrDefaultAsync(c => c.Id == ScopeId, _pageCts.Token);
         if (dbConn is null)
         {
-            Snackbar.Add("Pick a database connection first — the scripts are generated from its catalog.", Severity.Warning);
+            Snackbar.Add("This database connection no longer exists.", Severity.Warning);
             return;
         }
 
@@ -476,7 +473,6 @@
         PageLoadCancellation.RunPageLoadAsync(async ct =>
         {
             _db = await DbContextFactory.CreateDbContextAsync(ct);
-            _dbConnections = await _db.DatabaseConnections.OrderBy(c => c.Name).ToListAsync(ct);
             _aiConnections = await _db.AIConnections.OrderBy(c => c.Name).ToListAsync(ct);
 
             if (Id.HasValue)
@@ -484,19 +480,17 @@
                 _isNew = false;
                 var id = (ExperimentId)(object)Id.Value;
                 _model = await _db.Experiments.AsNoTracking()
-                    .Include(p => p.DatabaseConnection)
                     .Include(p => p.AIConnection)
-                    .FirstOrDefaultAsync(p => p.Id == id, ct);
+                    .FirstOrDefaultAsync(p => p.Id == id && p.DatabaseConnectionId == ScopeId, ct);
                 if (_model != null)
-                {
-                    _selectedDbConnId = _model.DatabaseConnectionId;
                     _selectedAiConnId = _model.AIConnectionId;
-                }
             }
             else
             {
                 _isNew = true;
-                _model = new Experiment { Name = "" };
+                _model = new Experiment { Name = "", DatabaseConnectionId = ScopeId };
+                // Inherited from the database, which is the whole point of binding an AI to it.
+                _selectedAiConnId = Db?.TypedAiConnectionId;
             }
 
             var key = Id?.ToString() ?? "new";
@@ -531,15 +525,13 @@
         {
             if (_isNew)
             {
-                _model = new Experiment { Name = "" };
-                _selectedDbConnId = null;
-                _selectedAiConnId = null;
+                _model = new Experiment { Name = "", DatabaseConnectionId = ScopeId };
+                _selectedAiConnId = Db?.TypedAiConnectionId;
             }
             else
             {
                 var experimentId = _model.Id;
                 _model = await _db.Experiments.AsNoTracking()
-                    .Include(p => p.DatabaseConnection)
                     .Include(p => p.AIConnection)
                     .FirstOrDefaultAsync(p => p.Id == experimentId, _pageCts.Token);
                 if (_model == null)
@@ -547,7 +539,6 @@
                     Snackbar.Add("Experiment not found.", Severity.Error);
                     return;
                 }
-                _selectedDbConnId = _model.DatabaseConnectionId;
                 _selectedAiConnId = _model.AIConnectionId;
             }
             Snackbar.Add("Changes discarded.", Severity.Info);
@@ -575,7 +566,7 @@
             return false;
         }
 
-        _model.DatabaseConnectionId = _selectedDbConnId;
+        _model.DatabaseConnectionId = ScopeId;
         _model.AIConnectionId = _selectedAiConnId;
 
         if (_isNew)
@@ -599,7 +590,6 @@
                 .SetProperty(p => p.HypothesisPreRunSql, _model.HypothesisPreRunSql)
                 .SetProperty(p => p.HypothesisPostRunSql, _model.HypothesisPostRunSql)
                 .SetProperty(p => p.BenchmarkSql, _model.BenchmarkSql)
-                .SetProperty(p => p.DatabaseConnectionId, _selectedDbConnId)
                 .SetProperty(p => p.AIConnectionId, _selectedAiConnId)
                 .SetProperty(p => p.IsolationMode, _model.IsolationMode)
                 .SetProperty(p => p.SandboxSchemaName, _model.SandboxSchemaName)
@@ -625,8 +615,8 @@
     private async Task Save()
     {
         if (!await TryPersistAsync()) return;
-        Navigation.NavigateTo("/experiments");
+        Navigation.NavigateTo(DbRoutes.Experiments(DbId));
     }
 
-    private void GoBack() => Navigation.NavigateTo("/experiments");
+    private void GoBack() => Navigation.NavigateTo(DbRoutes.Experiments(DbId));
 }

@@ -23,6 +23,7 @@ namespace Tedd.AIOptimizeSql.OptimizeEngine.Services;
 /// </summary>
 public sealed class HypothesisTestingService(
     AiAgentFactory agentFactory,
+    AiConversationTracker conversationTracker,
     IServiceScopeFactory scopeFactory,
     ResearchIterationLogger iterationLogger,
     IOptions<OptimizeEngineSettings> settings,
@@ -290,7 +291,7 @@ public sealed class HypothesisTestingService(
                 {
                     await Status($"apply attempt {retry} failed — asking AI for corrected SQL…");
                     var fixResult = await RequestAiFixAsync(
-                        aiConnection, currentOptimizeSql, ex.Message,
+                        aiConnection, iteration, hypothesisId, currentOptimizeSql, ex.Message,
                         isRevert: false, originalOptimizeSql: null, ct);
 
                     if (fixResult != null)
@@ -443,7 +444,7 @@ public sealed class HypothesisTestingService(
                 {
                     await Status($"revert attempt {retry} failed — asking AI for corrected SQL…");
                     var fixResult = await RequestAiFixAsync(
-                        aiConnection, currentRevertSql, ex.Message,
+                        aiConnection, iteration, hypothesisId, currentRevertSql, ex.Message,
                         isRevert: true, originalOptimizeSql: originalOptimizeSql, ct);
 
                     if (fixResult != null && !string.IsNullOrWhiteSpace(fixResult.Revert_sql))
@@ -532,10 +533,23 @@ public sealed class HypothesisTestingService(
 
     private async Task<AiHypothesisResponse?> RequestAiFixAsync(
         AIConnection aiConnection,
+        ResearchIteration iteration,
+        HypothesisId hypothesisId,
         string failedSql, string errorMessage,
         bool isRevert, string? originalOptimizeSql,
         CancellationToken ct)
     {
+        var conversation = await conversationTracker.StartAsync(new AiConversationStart
+        {
+            Kind = AiConversationKind.HypothesisRepair,
+            AiConnection = aiConnection,
+            DatabaseConnectionId = iteration.Experiment?.DatabaseConnectionId,
+            Title = $"Repair {(isRevert ? "revert" : "apply")} SQL — hypothesis #{(int)(object)hypothesisId}",
+            RelatedExperimentId = (int)(object)iteration.ExperimentId,
+            RelatedResearchIterationId = (int)(object)iteration.Id,
+            RelatedHypothesisId = (int)(object)hypothesisId,
+        }, ct);
+
         try
         {
             var fixPrompt = HypothesisPromptBuilder.BuildFixPrompt(
@@ -545,10 +559,13 @@ public sealed class HypothesisTestingService(
                 "You are a MSSQL expert. Fix the SQL script that failed.", []);
 
             var result = await agent.RunAsync(fixPrompt, cancellationToken: ct);
+            conversation.Record(result?.Usage);
+            await conversation.CompleteAsync(CancellationToken.None);
             return AiResponseParser.ParseHypothesisResponse(result?.ToString());
         }
         catch (Exception ex)
         {
+            await conversation.FailAsync(ex.Message, CancellationToken.None);
             _logger.LogWarning(ex, "AI fix request failed");
             return null;
         }

@@ -1,4 +1,4 @@
-@page "/experiments/{ExperimentId:int}/research-iterations/{IterationId:int}/benchmarks/{BenchmarkRunId:int}"
+@page "/db/{DbId:int}/experiments/{ExperimentId:int}/research-iterations/{IterationId:int}/benchmarks/{BenchmarkRunId:int}"
 @implements IDisposable
 @rendermode InteractiveServer
 @inject IDbContextFactory<Tedd.AIOptimizeSql.Database.AIOptimizeDbContext> DbContextFactory
@@ -12,7 +12,7 @@
 <PageTitle>Benchmark run</PageTitle>
 
 <MudContainer MaxWidth="MaxWidth.Large" Class="mt-4">
-    <HierarchyBreadcrumbs ExperimentId="@ExperimentId" IterationId="@IterationId" BenchmarkRunId="@BenchmarkRunId" />
+    <HierarchyBreadcrumbs DbId="@DbId" ExperimentId="@ExperimentId" IterationId="@IterationId" BenchmarkRunId="@BenchmarkRunId" />
 
     <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-4">
         <MudText Typo="Typo.h4">Benchmark run #@BenchmarkRunId</MudText>
@@ -103,6 +103,8 @@
 </MudContainer>
 
 @code {
+    [Parameter] public int DbId { get; set; }
+
     [Parameter] public int ExperimentId { get; set; }
     [Parameter] public int IterationId { get; set; }
     [Parameter] public int BenchmarkRunId { get; set; }

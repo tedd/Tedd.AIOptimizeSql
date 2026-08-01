@@ -1,5 +1,5 @@
-@page "/experiments/{ExperimentId:int}/research-iterations/{IterationId:int}/hypotheses/new"
-@page "/experiments/{ExperimentId:int}/research-iterations/{IterationId:int}/hypotheses/{HypothesisId:int}"
+@page "/db/{DbId:int}/experiments/{ExperimentId:int}/research-iterations/{IterationId:int}/hypotheses/new"
+@page "/db/{DbId:int}/experiments/{ExperimentId:int}/research-iterations/{IterationId:int}/hypotheses/{HypothesisId:int}"
 @implements IDisposable
 @rendermode InteractiveServer
 @inject IDbContextFactory<Tedd.AIOptimizeSql.Database.AIOptimizeDbContext> DbContextFactory
@@ -7,7 +7,9 @@
 @inject IOptions<UiPollingOptions> UiPolling
 @inject NavigationManager Navigation
 @inject ISnackbar Snackbar
+@inject IHypothesisSuggestionService HypothesisSuggestions
 @using Microsoft.EntityFrameworkCore
+@using Tedd.AIOptimizeSql.OptimizeEngine.Services
 @using Tedd.AIOptimizeSql.Database
 @using Tedd.AIOptimizeSql.Database.Models
 @using Tedd.AIOptimizeSql.Database.Models.Enums
@@ -19,7 +21,7 @@
                      DiscardAsync="DiscardChangesAsync" />
 
 <MudContainer MaxWidth="MaxWidth.Medium" Class="mt-4">
-    <HierarchyBreadcrumbs ExperimentId="@ExperimentId" IterationId="@IterationId" HypothesisId="@HypothesisId"
+    <HierarchyBreadcrumbs DbId="@DbId" ExperimentId="@ExperimentId" IterationId="@IterationId" HypothesisId="@HypothesisId"
                           Leaf="@(_isNew ? "New hypothesis" : null)" />
 
     <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-4">
@@ -53,7 +55,7 @@
                         <MudText Typo="Typo.h6">Benchmark SQL</MudText>
                         <MudText Typo="Typo.caption">
                             Stored on the experiment; used to measure performance for this research iteration.
-                            <MudLink Href="@($"/experiments/{ExperimentId}/edit")" Color="Color.Primary">Open experiment</MudLink>
+                            <MudLink Href="@DbRoutes.EditExperiment(DbId, ExperimentId)" Color="Color.Primary">Open experiment</MudLink>
                         </MudText>
                     </CardHeaderContent>
                 </MudCardHeader>
@@ -272,9 +274,47 @@
         <MudCard Elevation="3" Class="rounded-lg">
             <MudCardContent>
                 <MudForm @ref="_form" @bind-IsValid="_formValid">
+                    @if (_isNew || _editMode)
+                    {
+                        @* Writing an optimization and its revert by hand is the tedious part; the
+                           AI already does exactly this during a run, so offer it here too. *@
+                        <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center" Class="mb-3">
+                            <MudTooltip Text="@AiFillDisabledReason" Disabled="@string.IsNullOrEmpty(AiFillDisabledReason)">
+                                <MudButton Variant="Variant.Outlined" Color="Color.Secondary"
+                                           StartIcon="@Icons.Material.Filled.AutoAwesome"
+                                           Disabled="@(_aiFilling || !string.IsNullOrEmpty(AiFillDisabledReason))"
+                                           OnClick="FillWithAiAsync">
+                                    @(_aiFilling ? "Thinking…" : "Fill in with AI")
+                                </MudButton>
+                            </MudTooltip>
+                            @if (_aiFilling)
+                            {
+                                <MudProgressCircular Indeterminate="true" Size="Size.Small" />
+                            }
+                        </MudStack>
+
+                        @if (_aiFillMessage is not null)
+                        {
+                            <MudAlert Severity="Severity.Warning" Class="mb-3">@_aiFillMessage</MudAlert>
+                        }
+                    }
+
                     <MudTextField @bind-Value="_model.Description" Label="Hypothesis"
                                   Lines="4" Variant="Variant.Outlined" Class="mb-4"
                                   ReadOnly="@(!_editMode && !_isNew)" />
+
+                    @if (_isNew || _editMode)
+                    {
+                        <SqlMonacoField EditorId="@_optimizeSqlEditorId"
+                                        Label="Optimization SQL"
+                                        HelperText="Applied before the benchmark runs."
+                                        @bind-Value="_model.OptimizeSql" />
+
+                        <SqlMonacoField EditorId="@_revertSqlEditorId"
+                                        Label="Revert SQL"
+                                        HelperText="Undoes the optimization afterwards. Without it the change is permanent."
+                                        @bind-Value="_model.RevertSql" />
+                    }
 
                     <MudNumericField @bind-Value="_model.ImpovementPercentage" Label="Improvement %"
                                      Variant="Variant.Outlined" Class="mb-4"
@@ -323,7 +363,7 @@
         {
             <MudAlert Severity="Severity.Info" Class="mt-4">
                 This hypothesis builds on
-                <MudLink Href="@($"/experiments/{ExperimentId}/research-iterations/{IterationId}/hypotheses/{(int)(object)_model.BuildsOnHypothesisId}")"
+                <MudLink Href="@DbRoutes.Hypothesis(DbId, ExperimentId, IterationId, (int)(object)_model.BuildsOnHypothesisId)"
                          Color="Color.Primary">
                     Hypothesis #@((int)(object)_model.BuildsOnHypothesisId)
                 </MudLink>
@@ -333,15 +373,23 @@
 </MudContainer>
 
 @code {
+    [Parameter] public int DbId { get; set; }
+
     [Parameter] public int ExperimentId { get; set; }
     [Parameter] public int IterationId { get; set; }
     [Parameter] public int? HypothesisId { get; set; }
+
+    [CascadingParameter] private DatabaseScope? Db { get; set; }
 
     private Hypothesis? _model;
     private ResearchIteration? _iteration;
     private Experiment? _experiment;
     private string? _benchmarkSql;
     private string _benchmarkSqlEditorId = "";
+    private string _optimizeSqlEditorId = "";
+    private string _revertSqlEditorId = "";
+    private bool _aiFilling;
+    private string? _aiFillMessage;
     private bool _isNew;
     private bool _editMode;
     private bool _loading = true;
@@ -359,6 +407,8 @@
 
     private string _baselineDescription = "";
     private string _baselineBenchmarkSql = "";
+    private string _baselineOptimizeSql = "";
+    private string _baselineRevertSql = "";
     private HypothesisId? _baselineBuildsOn;
     private bool _pollStarted;
 
@@ -366,6 +416,8 @@
         _model != null && !_loading && (_isNew || _editMode) &&
         ((_model.Description ?? "") != _baselineDescription ||
          (_benchmarkSql ?? "") != _baselineBenchmarkSql ||
+         (_model.OptimizeSql ?? "") != _baselineOptimizeSql ||
+         (_model.RevertSql ?? "") != _baselineRevertSql ||
          _selectedBuildsOn != _baselineBuildsOn);
 
     private void CaptureBaseline()
@@ -373,6 +425,8 @@
         if (_model == null) return;
         _baselineDescription = _model.Description ?? "";
         _baselineBenchmarkSql = _benchmarkSql ?? "";
+        _baselineOptimizeSql = _model.OptimizeSql ?? "";
+        _baselineRevertSql = _model.RevertSql ?? "";
         _baselineBuildsOn = _selectedBuildsOn;
     }
 
@@ -380,6 +434,79 @@
     {
         _editMode = true;
         CaptureBaseline();
+    }
+
+    /// <summary>Why "Fill in with AI" is unavailable, or empty when it is.</summary>
+    private string AiFillDisabledReason =>
+        _iteration?.AIConnectionId is null && _experiment?.AIConnectionId is null
+            ? "This experiment has no AI connection."
+            : string.IsNullOrWhiteSpace(_benchmarkSql)
+                ? "There is no benchmark SQL to optimize yet."
+                : "";
+
+    /// <summary>
+    /// Drafts this hypothesis with the same AI the run engine would use. Whatever comes back is
+    /// filled into the form for review — it is a starting point, not a decision.
+    /// </summary>
+    private async Task FillWithAiAsync()
+    {
+        if (_model is null || _db is null || _aiFilling || !string.IsNullOrEmpty(AiFillDisabledReason))
+            return;
+
+        var aiId = _iteration?.AIConnectionId ?? _experiment?.AIConnectionId;
+        if (aiId is null)
+            return;
+
+        _aiFilling = true;
+        _aiFillMessage = null;
+        await InvokeAsync(StateHasChanged);
+        try
+        {
+            var aiConnection = await _db.AIConnections.AsNoTracking()
+                .FirstOrDefaultAsync(a => a.Id == aiId.Value, _pageCts.Token);
+            if (aiConnection is null)
+            {
+                _aiFillMessage = "The AI connection for this experiment no longer exists.";
+                return;
+            }
+
+            var suggestion = await HypothesisSuggestions.SuggestAsync(aiConnection, new HypothesisSuggestionRequest
+            {
+                BenchmarkSql = _benchmarkSql!,
+                Instructions = _experiment?.Instructions,
+                Hints = _iteration?.Hints,
+                SchemaContextMarkdown = _iteration?.SchemaDiscoveryMarkdown,
+                AlreadyTried = _otherHypotheses
+                    .Where(h => h.Id != _model.Id && !string.IsNullOrWhiteSpace(h.Description))
+                    .Select(h => h.Description!)
+                    .ToList(),
+                AnalyzeOnly = _experiment?.DatabaseConnection?.AnalyzeOnly ?? (Db?.AnalyzeOnly ?? false),
+                DatabaseConnectionId = (DatabaseConnectionId)DbId,
+                ExperimentId = ExperimentId,
+                ResearchIterationId = IterationId,
+            }, _pageCts.Token);
+
+            _aiFillMessage = suggestion.Error;
+
+            if (!string.IsNullOrWhiteSpace(suggestion.Description))
+                _model.Description = suggestion.Description;
+            if (!string.IsNullOrWhiteSpace(suggestion.OptimizeSql))
+                _model.OptimizeSql = suggestion.OptimizeSql;
+            if (!string.IsNullOrWhiteSpace(suggestion.RevertSql))
+                _model.RevertSql = suggestion.RevertSql;
+        }
+        catch (OperationCanceledException)
+        {
+            // Navigating away.
+        }
+        catch (Exception ex)
+        {
+            _aiFillMessage = $"The AI could not draft a hypothesis: {ex.Message}";
+        }
+        finally
+        {
+            _aiFilling = false;
+        }
     }
 
     public void Dispose()
@@ -453,6 +580,9 @@
             _experiment = _iteration?.Experiment;
             _benchmarkSql = _experiment?.BenchmarkSql;
             _benchmarkSqlEditorId = $"hypothesis-benchmark-sql-e{ExperimentId}-i{IterationId}";
+            var editorKey = HypothesisId?.ToString() ?? "new";
+            _optimizeSqlEditorId = $"hypothesis-optimize-sql-i{IterationId}-{editorKey}";
+            _revertSqlEditorId = $"hypothesis-revert-sql-i{IterationId}-{editorKey}";
 
             _otherHypotheses = await _db.Hypotheses.AsNoTracking()
                 .Where(h => h.ResearchIterationId == iterationId)
@@ -522,7 +652,7 @@
     }
 
     private string BenchmarkHref(BenchmarkRunId id) =>
-        $"/experiments/{ExperimentId}/research-iterations/{IterationId}/benchmarks/{(int)(object)id}";
+        DbRoutes.BenchmarkRun(DbId, ExperimentId, IterationId, (int)(object)id);
 
     private async Task<bool> TryPersistAsync()
     {
@@ -556,6 +686,8 @@
             var hid = _model.Id;
             var n = await _db.Hypotheses.Where(h => h.Id == hid).ExecuteUpdateAsync(s => s
                 .SetProperty(h => h.Description, _model.Description)
+                .SetProperty(h => h.OptimizeSql, _model.OptimizeSql)
+                .SetProperty(h => h.RevertSql, _model.RevertSql)
                 .SetProperty(h => h.BuildsOnHypothesisId, _selectedBuildsOn)
                 .SetProperty(h => h.ModifiedAt, now));
             if (n != 1)
@@ -577,7 +709,7 @@
     private async Task Save()
     {
         if (!await TryPersistAsync()) return;
-        Navigation.NavigateTo($"/experiments/{ExperimentId}/research-iterations/{IterationId}");
+        Navigation.NavigateTo(DbRoutes.Iteration(DbId, ExperimentId, IterationId));
     }
 
     private async Task DiscardChangesAsync()
@@ -624,5 +756,5 @@
         await InvokeAsync(StateHasChanged);
     }
 
-    private void GoBack() => Navigation.NavigateTo($"/experiments/{ExperimentId}/research-iterations/{IterationId}");
+    private void GoBack() => Navigation.NavigateTo(DbRoutes.Iteration(DbId, ExperimentId, IterationId));
 }

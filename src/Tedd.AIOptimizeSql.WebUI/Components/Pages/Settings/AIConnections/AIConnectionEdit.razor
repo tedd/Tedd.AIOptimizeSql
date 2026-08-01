@@ -1,5 +1,5 @@
-@page "/ai-connections/new"
-@page "/ai-connections/{Id:int}"
+@page "/settings/ai/new"
+@page "/settings/ai/{Id:int}"
 @implements IDisposable
 @rendermode InteractiveServer
 @inject IDbContextFactory<Tedd.AIOptimizeSql.Database.AIOptimizeDbContext> DbContextFactory
@@ -201,7 +201,7 @@
     private async Task Save()
     {
         if (!await TryPersistAsync()) return;
-        Navigation.NavigateTo("/ai-connections");
+        Navigation.NavigateTo(DbRoutes.AiConnections);
     }
 
     private async Task DiscardChangesAsync()
@@ -233,5 +233,5 @@
         await InvokeAsync(StateHasChanged);
     }
 
-    private void GoBack() => Navigation.NavigateTo("/ai-connections");
+    private void GoBack() => Navigation.NavigateTo(DbRoutes.AiConnections);
 }

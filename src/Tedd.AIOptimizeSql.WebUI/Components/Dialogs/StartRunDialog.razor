@@ -1,0 +1,95 @@
+@* Starting a run is the one moment where "how much AI work do I want to pay for" is decided,
+   so the hypothesis count is asked for here rather than buried in an edit form. *@
+
+@implements IDisposable
+@inject IAIOptimizeDataAccess DataAccess
+@inject IDialogService DialogService
+@inject ISnackbar Snackbar
+
+<MudDialog>
+    <DialogContent>
+        <MudText Typo="Typo.body2" Class="mb-4">
+            A run is one research iteration: the AI proposes an optimization, applies it, benchmarks
+            it against the baseline, reverts it, and repeats — building on whatever worked.
+        </MudText>
+
+        @if (AnalyzeOnly)
+        {
+            <MudAlert Severity="Severity.Warning" Class="mb-4">
+                This database is <strong>analyze-only</strong>, so nothing can be applied, benchmarked
+                or reverted. The run would produce proposals but no measurements.
+            </MudAlert>
+        }
+
+        <MudNumericField T="int" @bind-Value="_maxHypotheses" Label="How many hypotheses to run"
+                         Min="1" Max="1000" Variant="Variant.Outlined" Class="mb-1" />
+        <MudText Typo="Typo.caption" Color="Color.Secondary" Class="mb-4 d-block">
+            The run stops after this many hypotheses. Each one is a separate AI conversation, so this
+            is also roughly what decides the token spend — check the Token usage tab afterwards.
+        </MudText>
+
+        <MudTextField @bind-Value="_hints" Label="Hints for this run (optional)" Lines="3"
+                      Variant="Variant.Outlined"
+                      HelperText="e.g. 'the previous index attempt regressed, try join order instead'" />
+    </DialogContent>
+    <DialogActions>
+        <MudButton Variant="Variant.Text" OnClick="@(() => MudDialog.Cancel())">Cancel</MudButton>
+        <MudSpacer />
+        <MudButton Variant="Variant.Filled" Color="Color.Success" StartIcon="@Icons.Material.Filled.PlayArrow"
+                   Disabled="@_busy" OnClick="StartAsync">
+            @(_busy ? "Starting…" : "Start run")
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = default!;
+
+    [Parameter, EditorRequired] public ExperimentId ExperimentId { get; set; }
+
+    /// <summary>Warns up front that this connection cannot actually measure anything.</summary>
+    [Parameter] public bool AnalyzeOnly { get; set; }
+
+    /// <summary>Carried over from the previous run so repeating a run does not mean retyping it.</summary>
+    [Parameter] public int DefaultMaxHypotheses { get; set; } = 10;
+
+    private readonly CancellationTokenSource _cts = new();
+    private int _maxHypotheses = 10;
+    private string? _hints;
+    private bool _busy;
+
+    public void Dispose()
+    {
+        _cts.Cancel();
+        _cts.Dispose();
+    }
+
+    protected override void OnInitialized() =>
+        _maxHypotheses = Math.Clamp(DefaultMaxHypotheses, 1, 1000);
+
+    private async Task StartAsync()
+    {
+        if (_busy)
+            return;
+
+        _busy = true;
+        try
+        {
+            var iterationId = await DataAccess.CreateResearchIterationAsync(
+                ExperimentId, string.IsNullOrWhiteSpace(_hints) ? null : _hints, _maxHypotheses, _cts.Token);
+            await DataAccess.SetResearchIterationStateAsync(
+                iterationId, ResearchIterationState.Queued, _cts.Token);
+
+            Snackbar.Add($"Run queued for up to {_maxHypotheses} hypotheses.", Severity.Success);
+            MudDialog.Close(DialogResult.Ok((int)(object)iterationId));
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Could not start the run: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+}

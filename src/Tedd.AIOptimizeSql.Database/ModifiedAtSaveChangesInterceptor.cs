@@ -64,6 +64,9 @@ public sealed class ModifiedAtSaveChangesInterceptor : SaveChangesInterceptor
                 case DatabaseConnection d:
                     d.ModifiedAt = now;
                     break;
+                case AiConversation c:
+                    c.ModifiedAt = now;
+                    break;
             }
         }
     }

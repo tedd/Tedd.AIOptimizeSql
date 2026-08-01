@@ -1,4 +1,4 @@
-@page "/experiments/{ExperimentId:int}/research-iterations"
+@page "/db/{DbId:int}/experiments/{ExperimentId:int}/research-iterations"
 @implements IDisposable
 @rendermode InteractiveServer
 @inject IDbContextFactory<Tedd.AIOptimizeSql.Database.AIOptimizeDbContext> DbContextFactory
@@ -16,7 +16,7 @@
 <PageTitle>Research iterations</PageTitle>
 
 <MudContainer MaxWidth="MaxWidth.ExtraLarge" Class="mt-4">
-    <HierarchyBreadcrumbs ExperimentId="@ExperimentId" />
+    <HierarchyBreadcrumbs DbId="@DbId" ExperimentId="@ExperimentId" />
 
     <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-4">
         <MudText Typo="Typo.h4">
@@ -31,11 +31,11 @@
             </MudButton>
         }
         <MudButton Variant="Variant.Text" Color="Color.Primary"
-                   Href="@($"/experiments/{ExperimentId}/edit")" StartIcon="@Icons.Material.Filled.Edit" Class="mr-2">
+                   Href="@DbRoutes.EditExperiment(DbId, ExperimentId)" StartIcon="@Icons.Material.Filled.Edit" Class="mr-2">
             Edit Experiment
         </MudButton>
         <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Add"
-                   Href="@($"/experiments/{ExperimentId}/research-iterations/new")">
+                   Href="@DbRoutes.NewExperimentIteration(DbId, ExperimentId)">
             New research iteration
         </MudButton>
     </MudStack>
@@ -99,10 +99,10 @@
             <MudTd DataLabel="Created">@context.Iteration.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd")</MudTd>
             <MudTd>
                 <MudIconButton Icon="@Icons.Material.Filled.Edit" Color="Color.Primary" Size="Size.Small"
-                               Href="@($"/experiments/{ExperimentId}/research-iterations/{(int)(object)context.Iteration.Id}/edit")"
+                               Href="@DbRoutes.EditIteration(DbId, ExperimentId, (int)(object)context.Iteration.Id)"
                                aria-label="Edit iteration" />
                 <MudIconButton Icon="@Icons.Material.Filled.List" Color="Color.Info" Size="Size.Small"
-                               Href="@($"/experiments/{ExperimentId}/research-iterations/{(int)(object)context.Iteration.Id}")"
+                               Href="@DbRoutes.Iteration(DbId, ExperimentId, (int)(object)context.Iteration.Id)"
                                aria-label="Hypotheses" />
                 <MudIconButton Icon="@Icons.Material.Filled.Delete" Color="Color.Error" Size="Size.Small"
                                OnClick="@(() => DeleteSingle(context))" aria-label="Delete" />
@@ -118,6 +118,8 @@
 </MudContainer>
 
 @code {
+    [Parameter] public int DbId { get; set; }
+
     [Parameter] public int ExperimentId { get; set; }
 
     private readonly CancellationTokenSource _pageCts = new();
@@ -162,7 +164,9 @@
         {
             await using var db = await DbContextFactory.CreateDbContextAsync(ct);
             var experimentId = (ExperimentId)(object)ExperimentId;
-            _profile = await db.Experiments.AsNoTracking().FirstOrDefaultAsync(e => e.Id == experimentId, ct);
+            var scopeId = (DatabaseConnectionId)DbId;
+            _profile = await db.Experiments.AsNoTracking()
+                .FirstOrDefaultAsync(e => e.Id == experimentId && e.DatabaseConnectionId == scopeId, ct);
             await LoadChartData(db, ct);
         }, _pageCts.Token);
 
@@ -204,9 +208,13 @@
         await using var db = await DbContextFactory.CreateDbContextAsync(cancellationToken);
         var experimentId = (ExperimentId)(object)ExperimentId;
 
+        // The experiment id is in the URL, so it is also checked against the database in the
+        // path: a hand-edited link must not show one database's iterations under another's.
+        var scopeId = (DatabaseConnectionId)DbId;
         IQueryable<ResearchIteration> query = db.ResearchIterations
             .Include(r => r.Hypotheses)
-            .Where(r => r.ExperimentId == experimentId);
+            .Where(r => r.ExperimentId == experimentId
+                        && r.Experiment!.DatabaseConnectionId == scopeId);
 
         query = state.SortLabel switch
         {
@@ -230,7 +238,7 @@
     // row opens the entity rather than its edit form.
     private void OnRowClick(TableRowClickEventArgs<ResearchIterationRunRowViewModel> args)
     {
-        Navigation.NavigateTo($"/experiments/{ExperimentId}/research-iterations/{(int)(object)args.Item!.Iteration.Id}");
+        Navigation.NavigateTo(DbRoutes.Iteration(DbId, ExperimentId, (int)(object)args.Item!.Iteration.Id));
     }
 
     private async Task DeleteSingle(ResearchIterationRunRowViewModel vm)

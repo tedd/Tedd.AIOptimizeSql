@@ -28,11 +28,20 @@ All AI work runs in a background worker, so you can queue work and come back lat
 
 ## Quick start
 
-1. **Add a database connection** (*DB Connections*) — the SQL Server database you want to analyze or optimize.
-2. **Add an AI connection** (*AI Connections*) — the AI provider and model to use (OpenAI, Azure OpenAI, Anthropic, Ollama, …).
-3. Then either:
+1. **Add an AI connection** (*Settings → AI connections*) — the provider and model to use (OpenAI, Azure OpenAI, Anthropic, Ollama, …). This comes first: every database is bound to the AI it works with.
+2. **Add a database connection** (*Settings → Database connections*) — the SQL Server database you want to analyze or optimize, and which AI it uses.
+3. **Select the database** on the start screen. Everything after that — the dashboard, analyses, experiments, the SQL browser — is scoped to it, and its id is part of the URL (`/db/3/experiments/…`), so links and bookmarks carry the database with them.
+4. Then either:
    - run a **Database analysis** to get a health report of the whole database, or
-   - create an **Experiment** around a specific query you want to make faster.
+   - create an **Experiment** — from the menu's wizard, from a query in the SQL browser, or straight from an analysis finding.
+
+### Switching database
+
+The app bar always shows which database you are in; click it (or *Switch database* in the menu) to go back to the picker. Everything is filtered to one database at a time by design — there is no cross-database view, because an experiment measured on one server tells you nothing about another.
+
+### Token usage
+
+The database dashboard has a **Token usage** tab: every AI conversation started for that database, what it was for, which model answered, and how many tokens it cost. The number of hypotheses you allow when starting a run is the main thing that decides that cost.
 
 > **Important:** experiments apply real schema changes (indexes, statistics, etc.) to the target database while testing, and then revert them. Use a **non-production** copy of your database, or at minimum a database where temporary changes are acceptable.
 

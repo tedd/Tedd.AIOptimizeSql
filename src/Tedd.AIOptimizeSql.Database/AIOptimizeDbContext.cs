@@ -27,6 +27,7 @@ public class AIOptimizeDbContext : DbContext
     public DbSet<AnalysisFinding> AnalysisFindings => Set<AnalysisFinding>();
     public DbSet<DatabaseAnalysisLog> DatabaseAnalysisLogs => Set<DatabaseAnalysisLog>();
     public DbSet<AgentTask> AgentTasks => Set<AgentTask>();
+    public DbSet<AiConversation> AiConversations => Set<AiConversation>();
 
     protected override void ConfigureConventions(ModelConfigurationBuilder builder)
     {
@@ -43,6 +44,7 @@ public class AIOptimizeDbContext : DbContext
         builder.Properties<AnalysisFindingId>().HaveConversion<int>();
         builder.Properties<DatabaseAnalysisLogId>().HaveConversion<int>();
         builder.Properties<AgentTaskId>().HaveConversion<int>();
+        builder.Properties<AiConversationId>().HaveConversion<int>();
 
         // AiProvider enum stored as string in DB
         builder.Properties<AiProvider>().HaveConversion<string>().HaveMaxLength(128);
@@ -54,6 +56,8 @@ public class AIOptimizeDbContext : DbContext
         builder.Properties<AgentTaskStatus>().HaveConversion<string>().HaveMaxLength(16);
         builder.Properties<ExperimentIsolationMode>().HaveConversion<string>().HaveMaxLength(32);
         builder.Properties<OutputVerificationMode>().HaveConversion<string>().HaveMaxLength(32);
+        builder.Properties<AiConversationKind>().HaveConversion<string>().HaveMaxLength(32);
+        builder.Properties<AiConversationState>().HaveConversion<string>().HaveMaxLength(16);
     }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -65,6 +69,13 @@ public class AIOptimizeDbContext : DbContext
         modelBuilder.Entity<DatabaseConnection>(entity =>
         {
             entity.Property(e => e.Id).ValueGeneratedOnAdd();
+
+            // Restrict, not SetNull: an AI connection a database still uses must not be
+            // deletable behind the user's back. The UI offers to unbind first.
+            entity.HasOne(e => e.AIConnection)
+                .WithMany()
+                .HasForeignKey(e => e.AIConnectionId)
+                .OnDelete(DeleteBehavior.Restrict);
         });
 
         modelBuilder.Entity<AIConnection>(entity =>
@@ -282,6 +293,34 @@ public class AIOptimizeDbContext : DbContext
 
             entity.HasIndex(t => t.DatabaseAnalysisId);
             entity.HasIndex(t => t.HypothesisId);
+        });
+
+        modelBuilder.Entity<AiConversation>(entity =>
+        {
+            var aiConversationId = entity.Property(c => c.Id)
+                .ValueGeneratedOnAdd()
+                .HasSentinel(AiConversationId.Transient);
+            if (isSqlServer)
+                aiConversationId.UseIdentityColumn();
+
+            if (isSqlServer)
+                entity.Property(c => c.LastMessage).HasColumnType("nvarchar(max)");
+
+            // SetNull on both: the usage ledger outlives the connections it records, so a
+            // deleted connection leaves the historic spend readable through the snapshotted
+            // provider/model instead of taking the row with it.
+            entity.HasOne(c => c.DatabaseConnection)
+                .WithMany()
+                .HasForeignKey(c => c.DatabaseConnectionId)
+                .OnDelete(DeleteBehavior.SetNull);
+
+            entity.HasOne(c => c.AIConnection)
+                .WithMany()
+                .HasForeignKey(c => c.AIConnectionId)
+                .OnDelete(DeleteBehavior.SetNull);
+
+            entity.HasIndex(c => c.DatabaseConnectionId);
+            entity.HasIndex(c => c.StartedAt);
         });
     }
 }

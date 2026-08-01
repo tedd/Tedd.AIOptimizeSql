@@ -24,6 +24,7 @@ public sealed class DatabaseAnalysisService(
     AiAgentFactory agentFactory,
     PerformanceSnapshotService snapshotService,
     AgentTaskLoopRunner taskLoopRunner,
+    AiConversationTracker conversationTracker,
     IServiceScopeFactory scopeFactory,
     IOptions<OptimizeEngineSettings> settings,
     ILoggerFactory loggerFactory)
@@ -224,6 +225,15 @@ public sealed class DatabaseAnalysisService(
                 "AnalysisService", ct);
         }
 
+        var conversation = await conversationTracker.StartAsync(new AiConversationStart
+        {
+            Kind = AiConversationKind.DatabaseAnalysis,
+            AiConnection = analysis.AIConnection,
+            DatabaseConnectionId = analysis.DatabaseConnectionId,
+            Title = $"Analysis: {analysis.Name}",
+            RelatedDatabaseAnalysisId = (int)(object)analysis.Id,
+        }, ct);
+
         try
         {
             var maxRuns = Math.Clamp(settings.Value.MaxAgentContinuations, 1, 100);
@@ -245,14 +255,24 @@ public sealed class DatabaseAnalysisService(
                 isResponseAcceptable: r => !string.IsNullOrWhiteSpace(r),
                 shouldAbort: async abortCt => await IsStoppedAsync(analysis.Id, abortCt),
                 log: (msg, logCt) => AppendLogAsync(analysis.Id, msg, "AnalysisAgent", logCt),
+                conversation: conversation,
                 cancellationToken: ct);
+
+            await conversation.CompleteAsync(CancellationToken.None);
 
             await AppendLogAsync(analysis.Id,
                 $"AI agent finished in {loop.ElapsedMs} ms over {loop.RunsUsed} run(s); " +
-                $"{loop.OpenTaskCount} task(s) left open. Summary length: {loop.LastResponse?.Length ?? 0} chars.",
+                $"{loop.OpenTaskCount} task(s) left open. " +
+                $"Tokens used: {conversation.TotalTokens:N0} ({conversation.InputTokens:N0} in / {conversation.OutputTokens:N0} out). " +
+                $"Summary length: {loop.LastResponse?.Length ?? 0} chars.",
                 "AnalysisAgent", ct);
 
             return loop.LastResponse;
+        }
+        catch (Exception ex)
+        {
+            await conversation.FailAsync(ex.Message, CancellationToken.None);
+            throw;
         }
         finally
         {

@@ -36,6 +36,10 @@ public sealed class AgentTaskLoopRunner(
     /// <paramref name="isResponseAcceptable"/> approves the latest response, or the
     /// continuation limit is reached, or <paramref name="shouldAbort"/> returns true.
     /// </summary>
+    /// <param name="conversation">
+    /// Optional usage ledger. Every run in the loop is one request against the model, so the
+    /// whole loop — initial prompt plus continuations — is recorded as a single conversation.
+    /// </param>
     public async Task<LoopResult> RunAsync(
         AIAgent agent,
         string initialPrompt,
@@ -43,6 +47,7 @@ public sealed class AgentTaskLoopRunner(
         Func<string?, bool>? isResponseAcceptable = null,
         Func<CancellationToken, Task<bool>>? shouldAbort = null,
         Func<string, CancellationToken, Task>? log = null,
+        AiConversationHandle? conversation = null,
         CancellationToken cancellationToken = default)
     {
         var maxRuns = Math.Clamp(settings.Value.MaxAgentContinuations, 1, 100);
@@ -69,6 +74,7 @@ public sealed class AgentTaskLoopRunner(
 
             var result = await agent.RunAsync(prompt, session, cancellationToken: cancellationToken);
             lastResponse = result?.ToString();
+            conversation?.Record(result?.Usage);
 
             openTasks = await GetOpenTasksAsync(scope, cancellationToken);
             var acceptable = isResponseAcceptable(lastResponse);

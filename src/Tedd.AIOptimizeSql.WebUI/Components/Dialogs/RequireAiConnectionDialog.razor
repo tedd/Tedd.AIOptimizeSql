@@ -1,0 +1,120 @@
+@* Asked for whenever something that needs an AI is started on a database that has none bound.
+   Whatever is chosen here is saved onto the database, so the question is asked once and not
+   again on the next analysis or experiment. *@
+
+@implements IDisposable
+@inject IDbContextFactory<Tedd.AIOptimizeSql.Database.AIOptimizeDbContext> DbContextFactory
+@inject IAIOptimizeDataAccess DataAccess
+@inject DatabaseScopeNotifier ScopeNotifier
+@inject NavigationManager Navigation
+@inject ISnackbar Snackbar
+@using Microsoft.EntityFrameworkCore
+
+<MudDialog>
+    <DialogContent>
+        @if (_loading)
+        {
+            <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+        }
+        else if (_aiConnections.Count == 0)
+        {
+            <MudAlert Severity="Severity.Warning" Class="mb-2">
+                There are no AI connections configured at all. Add one, then come back — it will be
+                bound to <strong>@DatabaseName</strong> automatically the next time you are asked.
+            </MudAlert>
+        }
+        else
+        {
+            <MudText Typo="Typo.body1" Class="mb-3">
+                @Reason
+            </MudText>
+            <MudText Typo="Typo.body2" Class="mb-4 mud-text-secondary">
+                Pick the AI <strong>@DatabaseName</strong> should work with. It is saved on the
+                database, so everything started here from now on uses it by default.
+            </MudText>
+
+            <MudSelect T="AIConnectionId?" @bind-Value="_selected" Label="AI connection"
+                       Variant="Variant.Outlined" Class="mb-2">
+                @foreach (var ai in _aiConnections)
+                {
+                    <MudSelectItem Value="@((AIConnectionId?)ai.Id)">@ai.Name (@ai.Provider / @ai.Model)</MudSelectItem>
+                }
+            </MudSelect>
+        }
+    </DialogContent>
+    <DialogActions>
+        <MudButton Variant="Variant.Text" OnClick="Cancel">Cancel</MudButton>
+        <MudSpacer />
+        <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Add" OnClick="AddNew">
+            Add a new AI connection
+        </MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Link"
+                   Disabled="@(_selected is null || _saving)" OnClick="BindAsync">
+            @(_saving ? "Saving…" : "Use this AI")
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = default!;
+
+    /// <summary>The database the AI will be bound to.</summary>
+    [Parameter, EditorRequired] public int DatabaseId { get; set; }
+
+    [Parameter, EditorRequired] public string DatabaseName { get; set; } = "";
+
+    /// <summary>What was being started, so the dialog explains why it appeared.</summary>
+    [Parameter] public string Reason { get; set; } = "This needs an AI, and no AI is bound to this database yet.";
+
+    private readonly CancellationTokenSource _cts = new();
+    private bool _loading = true;
+    private bool _saving;
+    private List<AIConnection> _aiConnections = new();
+    private AIConnectionId? _selected;
+
+    public void Dispose()
+    {
+        _cts.Cancel();
+        _cts.Dispose();
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        await using var db = await DbContextFactory.CreateDbContextAsync(_cts.Token);
+        _aiConnections = await db.AIConnections.AsNoTracking().OrderBy(a => a.Name).ToListAsync(_cts.Token);
+        _selected = _aiConnections.Count == 1 ? _aiConnections[0].Id : null;
+        _loading = false;
+    }
+
+    private void Cancel() => MudDialog.Cancel();
+
+    private void AddNew()
+    {
+        MudDialog.Cancel();
+        Navigation.NavigateTo(DbRoutes.NewAiConnection);
+    }
+
+    private async Task BindAsync()
+    {
+        if (_selected is null || _saving)
+            return;
+
+        _saving = true;
+        try
+        {
+            await DataAccess.BindAiConnectionToDatabaseAsync(
+                (DatabaseConnectionId)DatabaseId, _selected, _cts.Token);
+            await ScopeNotifier.NotifyChangedAsync();
+            Snackbar.Add($"AI connection bound to \"{DatabaseName}\".", Severity.Success);
+            MudDialog.Close(DialogResult.Ok((int)(object)_selected.Value));
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Could not bind the AI connection: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+}

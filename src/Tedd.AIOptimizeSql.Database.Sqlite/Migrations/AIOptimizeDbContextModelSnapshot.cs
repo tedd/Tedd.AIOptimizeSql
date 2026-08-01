@@ -337,6 +337,9 @@ namespace Tedd.AIOptimizeSql.Database.Sqlite.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("INTEGER");
 
+                    b.Property<int?>("AIConnectionId")
+                        .HasColumnType("INTEGER");
+
                     b.Property<bool>("AnalyzeOnly")
                         .HasColumnType("INTEGER");
 
@@ -358,7 +361,96 @@ namespace Tedd.AIOptimizeSql.Database.Sqlite.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("AIConnectionId");
+
                     b.ToTable("DatabaseConnections");
+                });
+
+            modelBuilder.Entity("Tedd.AIOptimizeSql.Database.Models.AiConversation", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("AIConnectionId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int?>("DatabaseConnectionId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long>("ElapsedMs")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime?>("EndedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("InputTokens")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("LastMessage")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Model")
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("ModifiedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("OutputTokens")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Provider")
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int?>("RelatedDatabaseAnalysisId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("RelatedExperimentId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("RelatedHypothesisId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("RelatedResearchIterationId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("RequestCount")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("StartedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("State")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Title")
+                        .HasMaxLength(512)
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("TotalTokens")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AIConnectionId");
+
+                    b.HasIndex("DatabaseConnectionId");
+
+                    b.HasIndex("StartedAt");
+
+                    b.ToTable("AiConversations");
                 });
 
             modelBuilder.Entity("Tedd.AIOptimizeSql.Database.Models.Experiment", b =>
@@ -733,6 +825,33 @@ namespace Tedd.AIOptimizeSql.Database.Sqlite.Migrations
                         .IsRequired();
 
                     b.Navigation("DatabaseAnalysis");
+                });
+
+            modelBuilder.Entity("Tedd.AIOptimizeSql.Database.Models.DatabaseConnection", b =>
+                {
+                    b.HasOne("Tedd.AIOptimizeSql.Database.Models.AIConnection", "AIConnection")
+                        .WithMany()
+                        .HasForeignKey("AIConnectionId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.Navigation("AIConnection");
+                });
+
+            modelBuilder.Entity("Tedd.AIOptimizeSql.Database.Models.AiConversation", b =>
+                {
+                    b.HasOne("Tedd.AIOptimizeSql.Database.Models.AIConnection", "AIConnection")
+                        .WithMany()
+                        .HasForeignKey("AIConnectionId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.HasOne("Tedd.AIOptimizeSql.Database.Models.DatabaseConnection", "DatabaseConnection")
+                        .WithMany()
+                        .HasForeignKey("DatabaseConnectionId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.Navigation("AIConnection");
+
+                    b.Navigation("DatabaseConnection");
                 });
 
             modelBuilder.Entity("Tedd.AIOptimizeSql.Database.Models.Experiment", b =>

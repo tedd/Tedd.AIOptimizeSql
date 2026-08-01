@@ -1,4 +1,4 @@
-@page "/ai-connections"
+@page "/settings/ai"
 @implements IDisposable
 @rendermode InteractiveServer
 @inject IDbContextFactory<Tedd.AIOptimizeSql.Database.AIOptimizeDbContext> DbContextFactory
@@ -7,6 +7,7 @@
 @inject NavigationManager Navigation
 @inject IDialogService DialogService
 @inject ISnackbar Snackbar
+@inject DatabaseScopeNotifier ScopeNotifier
 @using Microsoft.EntityFrameworkCore
 
 <PageTitle>AI Connections</PageTitle>
@@ -23,7 +24,7 @@
             </MudButton>
         }
         <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Add"
-                   Href="/ai-connections/new">
+                   Href="@DbRoutes.NewAiConnection">
             New AI Connection
         </MudButton>
     </MudStack>
@@ -35,6 +36,7 @@
             <MudTh><MudTableSortLabel SortLabel="Name" T="AIConnection">Name</MudTableSortLabel></MudTh>
             <MudTh><MudTableSortLabel SortLabel="Provider" T="AIConnection">Provider</MudTableSortLabel></MudTh>
             <MudTh><MudTableSortLabel SortLabel="Model" T="AIConnection">Model</MudTableSortLabel></MudTh>
+            <MudTh>Used by</MudTh>
             <MudTh><MudTableSortLabel SortLabel="Endpoint" T="AIConnection">Endpoint</MudTableSortLabel></MudTh>
             <MudTh><MudTableSortLabel SortLabel="CreatedAt" T="AIConnection">Created</MudTableSortLabel></MudTh>
             <MudTh><MudTableSortLabel SortLabel="ModifiedAt" T="AIConnection">Modified</MudTableSortLabel></MudTh>
@@ -46,6 +48,16 @@
                 <MudChip T="string" Size="Size.Small" Color="Color.Info" Variant="Variant.Outlined">@context.Provider.ToString()</MudChip>
             </MudTd>
             <MudTd DataLabel="Model">@context.Model</MudTd>
+            <MudTd DataLabel="Used by">
+                @if (_usedBy.TryGetValue(context.Id, out var dbNames) && dbNames.Count > 0)
+                {
+                    <MudText Typo="Typo.body2">@string.Join(", ", dbNames)</MudText>
+                }
+                else
+                {
+                    <MudText Typo="Typo.body2" Class="mud-text-secondary">—</MudText>
+                }
+            </MudTd>
             <MudTd DataLabel="Endpoint">
                 <MudText Typo="Typo.body2" Style="max-width:250px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
                     @context.Endpoint
@@ -71,6 +83,9 @@
     private readonly CancellationTokenSource _pageCts = new();
     private MudTable<AIConnection>? _table;
     private HashSet<AIConnection> _selectedItems = new();
+
+    /// <summary>Databases bound to each AI, so "in use" is visible before you reach for Delete.</summary>
+    private Dictionary<AIConnectionId, List<string>> _usedBy = new();
 
     public void Dispose()
     {
@@ -121,51 +136,84 @@
         var totalItems = await query.CountAsync(cancellationToken);
         var items = await query.Skip(state.Page * state.PageSize).Take(state.PageSize).ToListAsync(cancellationToken);
 
+        var ids = items.Select(a => a.Id).ToList();
+        _usedBy = (await db.DatabaseConnections.AsNoTracking()
+                .Where(c => c.AIConnectionId != null && ids.Contains(c.AIConnectionId.Value))
+                .OrderBy(c => c.Name)
+                .Select(c => new { AiId = c.AIConnectionId!.Value, c.Name })
+                .ToListAsync(cancellationToken))
+            .GroupBy(x => x.AiId)
+            .ToDictionary(g => g.Key, g => g.Select(x => x.Name).ToList());
+
         return new TableData<AIConnection> { TotalItems = totalItems, Items = items };
     }
 
     private void OnRowClick(TableRowClickEventArgs<AIConnection> args)
     {
-        Navigation.NavigateTo($"/ai-connections/{(int)(object)args.Item!.Id}");
+        Navigation.NavigateTo(DbRoutes.AiConnection((int)(object)args.Item!.Id));
     }
 
     private async Task DeleteSingle(AIConnection item)
     {
-        var confirm = await DialogService.ShowMessageBoxAsync(
-            "Confirm Delete",
-            $"Delete AI connection \"{item.Name}\"? Experiments and research iteration snapshots using this connection will have their AI reference cleared.",
-            yesText: "Delete", cancelText: "Cancel");
+        if (!await ConfirmDeleteAsync([item]))
+            return;
 
-        if (confirm == true)
-        {
-            await DataAccess.ClearAiConnectionReferencesAsync(item.Id);
-            await using var db = await DbContextFactory.CreateDbContextAsync();
-            var deleted = await db.AIConnections.Where(a => a.Id == item.Id).ExecuteDeleteAsync();
-            if (deleted == 0)
-                return;
-            Snackbar.Add($"Deleted \"{item.Name}\"", Severity.Success);
-            await _table!.ReloadServerData();
-        }
+        await DataAccess.ClearAiConnectionReferencesAsync(item.Id);
+        await using var db = await DbContextFactory.CreateDbContextAsync();
+        var deleted = await db.AIConnections.Where(a => a.Id == item.Id).ExecuteDeleteAsync();
+        if (deleted == 0)
+            return;
+        Snackbar.Add($"Deleted \"{item.Name}\"", Severity.Success);
+        await ScopeNotifier.NotifyChangedAsync();
+        await _table!.ReloadServerData();
     }
 
     private async Task DeleteSelected()
     {
-        var confirm = await DialogService.ShowMessageBoxAsync(
-            "Confirm Delete",
-            $"Delete {_selectedItems.Count} AI connection(s)? Experiments and research iteration snapshots using these will have their AI reference cleared.",
-            yesText: "Delete All", cancelText: "Cancel");
+        var items = _selectedItems.ToList();
+        if (items.Count == 0 || !await ConfirmDeleteAsync(items))
+            return;
 
-        if (confirm == true)
-        {
-            var ids = _selectedItems.Select(i => i.Id).ToList();
-            foreach (var id in ids)
-                await DataAccess.ClearAiConnectionReferencesAsync(id);
-            await using var db = await DbContextFactory.CreateDbContextAsync();
-            var deleted = await db.AIConnections.Where(a => ids.Contains(a.Id)).ExecuteDeleteAsync();
-            Snackbar.Add(deleted == 0 ? "Nothing deleted" : $"Deleted {deleted} AI connection(s)", deleted == 0 ? Severity.Info : Severity.Success);
-            _selectedItems.Clear();
-            await _table!.ReloadServerData();
-        }
+        var ids = items.Select(i => i.Id).ToList();
+        foreach (var id in ids)
+            await DataAccess.ClearAiConnectionReferencesAsync(id);
+        await using var db = await DbContextFactory.CreateDbContextAsync();
+        var deleted = await db.AIConnections.Where(a => ids.Contains(a.Id)).ExecuteDeleteAsync();
+        Snackbar.Add(deleted == 0 ? "Nothing deleted" : $"Deleted {deleted} AI connection(s)", deleted == 0 ? Severity.Info : Severity.Success);
+        _selectedItems.Clear();
+        await ScopeNotifier.NotifyChangedAsync();
+        await _table!.ReloadServerData();
     }
 
+    /// <summary>
+    /// An AI a database is still bound to is not deleted silently: the databases that would be
+    /// left without one are named, and confirming unbinds them as part of the delete.
+    /// </summary>
+    private async Task<bool> ConfirmDeleteAsync(IReadOnlyList<AIConnection> items)
+    {
+        var boundDatabases = new List<string>();
+        foreach (var item in items)
+            boundDatabases.AddRange(await DataAccess.GetDatabaseNamesUsingAiConnectionAsync(item.Id));
+
+        var what = items.Count == 1
+            ? $"AI connection \"{items[0].Name}\""
+            : $"{items.Count} AI connections";
+
+        if (boundDatabases.Count == 0)
+        {
+            var plain = await DialogService.ShowMessageBoxAsync(
+                "Confirm delete",
+                $"Delete {what}? Experiments, analyses and research iteration snapshots using it will have their AI reference cleared.",
+                yesText: "Delete", cancelText: "Cancel");
+            return plain == true;
+        }
+
+        var names = string.Join(", ", boundDatabases.Distinct().OrderBy(n => n));
+        var confirm = await DialogService.ShowMessageBoxAsync(
+            "Still in use by a database",
+            $"{what} is bound to: {names}. Deleting it leaves {(boundDatabases.Count == 1 ? "that database" : "those databases")} " +
+            "without an AI, and anything started there will ask for a new one. Unbind and delete anyway?",
+            yesText: "Unbind and delete", cancelText: "Keep it");
+        return confirm == true;
+    }
 }

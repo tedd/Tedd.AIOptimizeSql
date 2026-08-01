@@ -1,4 +1,4 @@
-@page "/research-iterations"
+@page "/db/{DbId:int}/research-iterations"
 @implements IDisposable
 @rendermode InteractiveServer
 @inject IAIOptimizeDataAccess DataAccess
@@ -20,9 +20,11 @@
                 Delete selected (@_selectedItems.Count)
             </MudButton>
         }
-        <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Add"
-                   Href="/research-iterations/new">
-            New research iteration
+        @* An iteration always belongs to an experiment, so the way to start one is from
+           an experiment rather than from a picker on this page. *@
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Tune"
+                   Href="@DbRoutes.Experiments(DbId)">
+            Go to experiments
         </MudButton>
     </MudStack>
 
@@ -44,7 +46,7 @@
             <MudTd DataLabel="Iteration">#@((int)(object)context.Id)</MudTd>
             <MudTd DataLabel="Experiment">
                 <span @onclick:stopPropagation="true">
-                    <MudLink Href="@($"/experiments/{(int)(object)context.ExperimentId}/view")" Color="Color.Primary">
+                    <MudLink Href="@DbRoutes.Experiment(DbId, (int)(object)context.ExperimentId)" Color="Color.Primary">
                         @context.ExperimentName
                     </MudLink>
                 </span>
@@ -77,10 +79,10 @@
             </MudTd>
             <MudTd>
                 <MudIconButton Icon="@Icons.Material.Filled.Edit" Color="Color.Primary" Size="Size.Small"
-                               Href="@($"/experiments/{(int)(object)context.ExperimentId}/research-iterations/{(int)(object)context.Id}/edit")"
+                               Href="@DbRoutes.EditIteration(DbId, (int)(object)context.ExperimentId, (int)(object)context.Id)"
                                aria-label="Edit iteration" />
                 <MudIconButton Icon="@Icons.Material.Filled.List" Color="Color.Info" Size="Size.Small"
-                               Href="@($"/experiments/{(int)(object)context.ExperimentId}/research-iterations/{(int)(object)context.Id}")"
+                               Href="@DbRoutes.Iteration(DbId, (int)(object)context.ExperimentId, (int)(object)context.Id)"
                                aria-label="View hypotheses" />
                 <MudIconButton Icon="@Icons.Material.Filled.Delete" Color="Color.Error" Size="Size.Small"
                                OnClick="@(() => DeleteSingle(context))" aria-label="Delete" />
@@ -96,6 +98,8 @@
 </MudContainer>
 
 @code {
+    [Parameter] public int DbId { get; set; }
+
     private readonly CancellationTokenSource _pageCts = new();
     private MudTable<ResearchIterationListRow>? _table;
     private HashSet<ResearchIterationListRow> _selectedItems = new();
@@ -143,6 +147,7 @@
             state.PageSize,
             state.SortLabel,
             ToListSort(state.SortDirection),
+            (DatabaseConnectionId)DbId,
             cancellationToken);
 
         return new TableData<ResearchIterationListRow> { TotalItems = total, Items = items.ToList() };
@@ -151,8 +156,8 @@
     // Opens the iteration itself, keeping the experiment in the path so the page knows where
     // it sits. Row click opens the entity everywhere; the pencil icon is for editing.
     private void OnRowClick(TableRowClickEventArgs<ResearchIterationListRow> args) =>
-        Navigation.NavigateTo(
-            $"/experiments/{(int)(object)args.Item!.ExperimentId}/research-iterations/{(int)(object)args.Item!.Id}");
+        Navigation.NavigateTo(DbRoutes.Iteration(
+            DbId, (int)(object)args.Item!.ExperimentId, (int)(object)args.Item!.Id));
 
     private async Task DeleteSingle(ResearchIterationListRow row)
     {

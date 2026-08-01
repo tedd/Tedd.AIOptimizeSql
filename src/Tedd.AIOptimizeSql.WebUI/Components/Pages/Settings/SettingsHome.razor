@@ -1,0 +1,108 @@
+@page "/settings"
+@implements IDisposable
+@rendermode InteractiveServer
+@inject IDbContextFactory<Tedd.AIOptimizeSql.Database.AIOptimizeDbContext> DbContextFactory
+@using Microsoft.EntityFrameworkCore
+
+<PageTitle>Settings</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.Medium" Class="mt-4">
+    <MudText Typo="Typo.h4" GutterBottom="true">Settings</MudText>
+    <MudText Typo="Typo.body1" Class="mb-6">
+        The connections everything else is built on. An AI connection has to exist before a
+        database can be added, because each database carries the AI it works with.
+    </MudText>
+
+    <MudGrid>
+        <MudItem xs="12" md="6">
+            <MudCard Elevation="3" Class="rounded-lg" Style="height: 100%; display: flex; flex-direction: column;">
+                <MudCardHeader>
+                    <CardHeaderAvatar>
+                        <MudAvatar Color="Color.Secondary" Variant="Variant.Filled">
+                            <MudIcon Icon="@Icons.Material.Filled.SmartToy" />
+                        </MudAvatar>
+                    </CardHeaderAvatar>
+                    <CardHeaderContent>
+                        <MudText Typo="Typo.h6">AI connections</MudText>
+                        <MudText Typo="Typo.caption">@_aiCount configured</MudText>
+                    </CardHeaderContent>
+                </MudCardHeader>
+                <MudCardContent Style="flex-grow: 1;">
+                    <MudText Typo="Typo.body2">
+                        Provider, model, endpoint and API key. Add several — a cheap model for routine
+                        work, a strong one for hard problems — and bind whichever you want per database.
+                    </MudText>
+                </MudCardContent>
+                <MudCardActions>
+                    <MudButton Variant="Variant.Filled" Color="Color.Secondary" Href="@DbRoutes.AiConnections">
+                        Manage AI connections
+                    </MudButton>
+                    <MudButton Variant="Variant.Text" Href="@DbRoutes.NewAiConnection">New</MudButton>
+                </MudCardActions>
+            </MudCard>
+        </MudItem>
+
+        <MudItem xs="12" md="6">
+            <MudCard Elevation="3" Class="rounded-lg" Style="height: 100%; display: flex; flex-direction: column;">
+                <MudCardHeader>
+                    <CardHeaderAvatar>
+                        <MudAvatar Color="Color.Primary" Variant="Variant.Filled">
+                            <MudIcon Icon="@Icons.Material.Filled.Storage" />
+                        </MudAvatar>
+                    </CardHeaderAvatar>
+                    <CardHeaderContent>
+                        <MudText Typo="Typo.h6">Database connections</MudText>
+                        <MudText Typo="Typo.caption">@_dbCount configured</MudText>
+                    </CardHeaderContent>
+                </MudCardHeader>
+                <MudCardContent Style="flex-grow: 1;">
+                    <MudText Typo="Typo.body2">
+                        The SQL Server databases you analyze and optimize. Each one names the AI it
+                        works with and whether it is restricted to read-only access.
+                    </MudText>
+                </MudCardContent>
+                <MudCardActions>
+                    <MudButton Variant="Variant.Filled" Color="Color.Primary" Href="@DbRoutes.DatabaseConnections"
+                               Disabled="@(_aiCount == 0)">
+                        Manage databases
+                    </MudButton>
+                    <MudButton Variant="Variant.Text" Href="@DbRoutes.NewDatabaseConnection" Disabled="@(_aiCount == 0)">
+                        New
+                    </MudButton>
+                </MudCardActions>
+            </MudCard>
+        </MudItem>
+    </MudGrid>
+
+    @if (_aiCount == 0)
+    {
+        <MudAlert Severity="Severity.Info" Class="mt-4">
+            Add an AI connection first — databases cannot be created until there is one to bind them to.
+        </MudAlert>
+    }
+
+    <MudText Typo="Typo.h6" Class="mt-8 mb-2">Maintenance</MudText>
+    <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Storage" Href="@DbRoutes.DatabaseMigration">
+        Metadata database status and migrations
+    </MudButton>
+</MudContainer>
+
+@code {
+    private readonly CancellationTokenSource _pageCts = new();
+    private int _aiCount;
+    private int _dbCount;
+
+    public void Dispose()
+    {
+        _pageCts.Cancel();
+        _pageCts.Dispose();
+    }
+
+    protected override Task OnInitializedAsync() =>
+        PageLoadCancellation.RunPageLoadAsync(async ct =>
+        {
+            await using var db = await DbContextFactory.CreateDbContextAsync(ct);
+            _aiCount = await db.AIConnections.CountAsync(ct);
+            _dbCount = await db.DatabaseConnections.CountAsync(ct);
+        }, _pageCts.Token);
+}

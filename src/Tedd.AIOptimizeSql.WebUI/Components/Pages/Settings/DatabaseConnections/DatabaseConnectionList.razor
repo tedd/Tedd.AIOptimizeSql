@@ -1,4 +1,4 @@
-@page "/database-connections"
+@page "/settings/databases"
 @implements IDisposable
 @rendermode InteractiveServer
 @inject IDbContextFactory<Tedd.AIOptimizeSql.Database.AIOptimizeDbContext> DbContextFactory
@@ -25,7 +25,7 @@
             </MudButton>
         }
         <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Add"
-                   Href="/database-connections/new">
+                   Href="@DbRoutes.NewDatabaseConnection">
             New Connection
         </MudButton>
     </MudStack>
@@ -36,6 +36,7 @@
         <HeaderContent>
             <MudTh><MudTableSortLabel SortLabel="Name" T="DatabaseConnection">Name</MudTableSortLabel></MudTh>
             <MudTh><MudTableSortLabel SortLabel="ConnectionString" T="DatabaseConnection">Connection String</MudTableSortLabel></MudTh>
+            <MudTh><MudTableSortLabel SortLabel="AIConnection" T="DatabaseConnection">AI</MudTableSortLabel></MudTh>
             <MudTh><MudTableSortLabel SortLabel="CreatedAt" T="DatabaseConnection">Created</MudTableSortLabel></MudTh>
             <MudTh><MudTableSortLabel SortLabel="ModifiedAt" T="DatabaseConnection">Modified</MudTableSortLabel></MudTh>
             <MudTh Style="width: 80px;">Actions</MudTh>
@@ -57,6 +58,16 @@
                 <MudText Typo="Typo.body2" Style="max-width:400px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
                     @MaskConnectionString(context.ConnectionString)
                 </MudText>
+            </MudTd>
+            <MudTd DataLabel="AI">
+                @if (context.AIConnection is { } ai)
+                {
+                    <MudText Typo="Typo.body2">@ai.Name</MudText>
+                }
+                else
+                {
+                    <MudChip T="string" Size="Size.Small" Color="Color.Error" Variant="Variant.Outlined">none</MudChip>
+                }
             </MudTd>
             <MudTd DataLabel="Created">@context.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd")</MudTd>
             <MudTd DataLabel="Modified">@context.ModifiedAt.ToLocalTime().ToString("yyyy-MM-dd")</MudTd>
@@ -118,12 +129,17 @@
     private async Task<TableData<DatabaseConnection>> LoadServerDataCore(TableState state, CancellationToken cancellationToken)
     {
         await using var db = await DbContextFactory.CreateDbContextAsync(cancellationToken);
-        IQueryable<DatabaseConnection> query = db.DatabaseConnections;
+        IQueryable<DatabaseConnection> query = db.DatabaseConnections
+            .AsNoTracking()
+            .Include(c => c.AIConnection);
 
         query = state.SortLabel switch
         {
             "Name" => state.SortDirection == SortDirection.Descending ? query.OrderByDescending(x => x.Name) : query.OrderBy(x => x.Name),
             "ConnectionString" => state.SortDirection == SortDirection.Descending ? query.OrderByDescending(x => x.ConnectionString) : query.OrderBy(x => x.ConnectionString),
+            "AIConnection" => state.SortDirection == SortDirection.Descending
+                ? query.OrderByDescending(x => x.AIConnection != null ? x.AIConnection.Name : "")
+                : query.OrderBy(x => x.AIConnection != null ? x.AIConnection.Name : ""),
             "CreatedAt" => state.SortDirection == SortDirection.Descending ? query.OrderByDescending(x => x.CreatedAt) : query.OrderBy(x => x.CreatedAt),
             "ModifiedAt" => state.SortDirection == SortDirection.Descending ? query.OrderByDescending(x => x.ModifiedAt) : query.OrderBy(x => x.ModifiedAt),
             _ => query.OrderByDescending(x => x.ModifiedAt)
@@ -137,7 +153,7 @@
 
     private void OnRowClick(TableRowClickEventArgs<DatabaseConnection> args)
     {
-        Navigation.NavigateTo($"/database-connections/{(int)(object)args.Item!.Id}");
+        Navigation.NavigateTo(DbRoutes.DatabaseConnection((int)(object)args.Item!.Id));
     }
 
     private async Task DeleteSingle(DatabaseConnection item)

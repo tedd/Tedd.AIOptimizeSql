@@ -1,7 +1,10 @@
 @implements IDisposable
 @inject IDatabaseReadinessService Readiness
+@inject IDbContextFactory<Tedd.AIOptimizeSql.Database.AIOptimizeDbContext> DbContextFactory
+@inject DatabaseScopeNotifier ScopeNotifier
 @inject NavigationManager Navigation
 @using System.Threading
+@using Microsoft.EntityFrameworkCore
 
 @if (_phase == GuardPhase.Checking || _phase == GuardPhase.Redirecting)
 {
@@ -12,8 +15,10 @@
 }
 else
 {
-    <RouteView RouteData="RouteData" DefaultLayout="typeof(MainLayout)" />
-    <FocusOnNavigate RouteData="RouteData" Selector="h1" />
+    <CascadingValue Value="_scope" IsFixed="false">
+        <RouteView RouteData="RouteData" DefaultLayout="typeof(MainLayout)" />
+        <FocusOnNavigate RouteData="RouteData" Selector="h1" />
+    </CascadingValue>
 }
 
 @code {
@@ -21,6 +26,12 @@ else
     public RouteData RouteData { get; set; } = default!;
 
     private GuardPhase _phase = GuardPhase.Checking;
+
+    /// <summary>
+    /// The database the current URL is inside, resolved once here and cascaded, so every page,
+    /// the nav menu and the app bar all agree on which database they are showing.
+    /// </summary>
+    private DatabaseScope? _scope;
 
     // Serialize checks: OnParametersSetAsync and LocationChanged can both run RunGuardAsync; parallel
     // GetStatusAsync calls used to share one scoped DbContext and caused intermittent failures.
@@ -30,7 +41,15 @@ else
     protected override void OnInitialized()
     {
         Navigation.LocationChanged += OnLocationChanged;
+        ScopeNotifier.ScopeChanged += OnScopeChangedAsync;
     }
+
+    private Task OnScopeChangedAsync() => InvokeAsync(async () =>
+    {
+        _scope = null;
+        await RunGuardAsync();
+        StateHasChanged();
+    });
 
     protected override async Task OnParametersSetAsync()
     {
@@ -70,10 +89,13 @@ else
             if (_phase != GuardPhase.Ready)
                 _phase = GuardPhase.Checking;
 
+            var relative = Navigation.ToBaseRelativePath(Navigation.Uri);
+
             // Database-free routes must not touch the database at all: the login page is
             // served to unauthenticated visitors and must work even when the database is down.
-            if (IsDatabaseFreeRoute())
+            if (DbRoutes.IsDatabaseFreeRoute(relative))
             {
+                _scope = null;
                 _phase = GuardPhase.Ready;
                 return;
             }
@@ -83,14 +105,17 @@ else
             if (ct.IsCancellationRequested)
                 return;
 
-            if (status.IsReady)
+            if (!status.IsReady)
             {
-                _phase = GuardPhase.Ready;
+                _phase = GuardPhase.Redirecting;
+                Navigation.NavigateTo(DbRoutes.DatabaseMigration, replace: true);
                 return;
             }
 
-            _phase = GuardPhase.Redirecting;
-            Navigation.NavigateTo("/database/migration", replace: true);
+            if (!await ResolveScopeAsync(relative, ct))
+                return;
+
+            _phase = GuardPhase.Ready;
         }
         catch (OperationCanceledException)
         {
@@ -107,18 +132,57 @@ else
         }
     }
 
-    private bool IsDatabaseFreeRoute()
+    /// <summary>
+    /// Loads the database named in the URL. Returns false when the caller should stop because a
+    /// redirect is already under way — a URL naming a database that no longer exists goes back to
+    /// the picker rather than rendering a page full of empty lists.
+    /// </summary>
+    private async Task<bool> ResolveScopeAsync(string relativePath, CancellationToken ct)
     {
-        var relative = Navigation.ToBaseRelativePath(Navigation.Uri);
-        var path = relative.Split('?', 2)[0].TrimEnd('/');
-        return string.Equals(path, "database/migration", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(path, "documentation", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(path, "login", StringComparison.OrdinalIgnoreCase);
+        var dbId = DbRoutes.TryGetDatabaseId(relativePath);
+        if (dbId is null)
+        {
+            _scope = null;
+            return true;
+        }
+
+        if (_scope?.Id == dbId.Value)
+            return true;
+
+        await using var db = await DbContextFactory.CreateDbContextAsync(ct);
+        var id = (DatabaseConnectionId)dbId.Value;
+        var row = await db.DatabaseConnections.AsNoTracking()
+            .Where(c => c.Id == id)
+            .Select(c => new
+            {
+                c.Name,
+                c.AnalyzeOnly,
+                c.AIConnectionId,
+                AiName = c.AIConnection != null ? c.AIConnection.Name : null
+            })
+            .FirstOrDefaultAsync(ct);
+
+        if (row is null)
+        {
+            _scope = null;
+            _phase = GuardPhase.Redirecting;
+            Navigation.NavigateTo(DbRoutes.SelectDatabase, replace: true);
+            return false;
+        }
+
+        _scope = new DatabaseScope(
+            dbId.Value,
+            row.Name,
+            row.AnalyzeOnly,
+            row.AIConnectionId is { } aiId ? (int)(object)aiId : null,
+            row.AiName);
+        return true;
     }
 
     public void Dispose()
     {
         Navigation.LocationChanged -= OnLocationChanged;
+        ScopeNotifier.ScopeChanged -= OnScopeChangedAsync;
         _cts.Cancel();
         _cts.Dispose();
         _guardRunLock.Dispose();

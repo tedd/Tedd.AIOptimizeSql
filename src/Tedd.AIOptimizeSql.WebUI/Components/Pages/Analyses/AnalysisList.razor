@@ -1,4 +1,4 @@
-@page "/analyses"
+@page "/db/{DbId:int}/analyses"
 @implements IDisposable
 @rendermode InteractiveServer
 @inject IDbContextFactory<Tedd.AIOptimizeSql.Database.AIOptimizeDbContext> DbContextFactory
@@ -26,14 +26,15 @@
             </MudButton>
         }
         <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Add"
-                   Href="/analyses/new">
+                   Href="@DbRoutes.NewAnalysis(DbId)">
             New Analysis
         </MudButton>
     </MudStack>
 
     <MudText Typo="Typo.body2" Color="Color.Secondary" Class="mb-4">
-        Point an analysis at a database and it digs in: missing indexes, fragmentation, stale statistics,
-        expensive queries, stored procedures, views, and configuration — strictly read-only, safe for production.
+        Every analysis of <strong>@(Db?.Name ?? "this database")</strong>. An analysis digs in: missing
+        indexes, fragmentation, stale statistics, expensive queries, stored procedures, views, and
+        configuration — strictly read-only, safe for production.
     </MudText>
 
     <MudTable @ref="_table" T="AnalysisRow" ServerData="LoadServerData" Hover="true" Elevation="3"
@@ -41,7 +42,6 @@
               OnRowClick="OnRowClick" RowClass="cursor-pointer" Class="rounded-lg">
         <HeaderContent>
             <MudTh><MudTableSortLabel SortLabel="Name" T="AnalysisRow">Name</MudTableSortLabel></MudTh>
-            <MudTh><MudTableSortLabel SortLabel="Connection" T="AnalysisRow">DB Connection</MudTableSortLabel></MudTh>
             <MudTh><MudTableSortLabel SortLabel="State" T="AnalysisRow">State</MudTableSortLabel></MudTh>
             <MudTh>Findings</MudTh>
             <MudTh>Last message</MudTh>
@@ -50,22 +50,6 @@
         </HeaderContent>
         <RowTemplate>
             <MudTd DataLabel="Name">@context.Analysis.Name</MudTd>
-            <MudTd DataLabel="DB Connection">
-                @if (context.Analysis.DatabaseConnection != null)
-                {
-                    <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1">
-                        <span>@context.Analysis.DatabaseConnection.Name</span>
-                        @if (context.Analysis.DatabaseConnection.AnalyzeOnly)
-                        {
-                            <MudChip T="string" Size="Size.Small" Color="Color.Warning" Variant="Variant.Outlined">analyze-only</MudChip>
-                        }
-                    </MudStack>
-                }
-                else
-                {
-                    <MudText Typo="Typo.body2">--</MudText>
-                }
-            </MudTd>
             <MudTd DataLabel="State">
                 <MudChip T="string" Size="Size.Small" Color="@StateColor(context.Analysis.State)">
                     @context.Analysis.State
@@ -123,6 +107,10 @@
 </MudContainer>
 
 @code {
+    [Parameter] public int DbId { get; set; }
+
+    [CascadingParameter] private DatabaseScope? Db { get; set; }
+
     private readonly CancellationTokenSource _pageCts = new();
     private MudTable<AnalysisRow>? _table;
     private HashSet<AnalysisRow> _selectedItems = new();
@@ -172,16 +160,14 @@
     private async Task<TableData<AnalysisRow>> LoadServerDataCore(TableState state, CancellationToken cancellationToken)
     {
         await using var db = await DbContextFactory.CreateDbContextAsync(cancellationToken);
+        var scopeId = (DatabaseConnectionId)DbId;
         IQueryable<DatabaseAnalysis> query = db.DatabaseAnalyses
             .AsNoTracking()
-            .Include(a => a.DatabaseConnection);
+            .Where(a => a.DatabaseConnectionId == scopeId);
 
         query = state.SortLabel switch
         {
             "Name" => state.SortDirection == SortDirection.Descending ? query.OrderByDescending(x => x.Name) : query.OrderBy(x => x.Name),
-            "Connection" => state.SortDirection == SortDirection.Descending
-                ? query.OrderByDescending(x => x.DatabaseConnection != null ? x.DatabaseConnection.Name : "")
-                : query.OrderBy(x => x.DatabaseConnection != null ? x.DatabaseConnection.Name : ""),
             "State" => state.SortDirection == SortDirection.Descending ? query.OrderByDescending(x => x.State) : query.OrderBy(x => x.State),
             "CreatedAt" => state.SortDirection == SortDirection.Descending ? query.OrderByDescending(x => x.CreatedAt) : query.OrderBy(x => x.CreatedAt),
             _ => query.OrderByDescending(x => x.ModifiedAt)
@@ -216,8 +202,21 @@
 
     private async Task QueueAnalysis(DatabaseAnalysis analysis)
     {
+        // An analysis whose AI was deleted would run rule-based checks only. Ask for one and bind
+        // it to the database, rather than starting a run that quietly does half the job.
+        var aiId = analysis.AIConnectionId ?? await AiBindingPrompt.EnsureAiConnectionAsync(
+            Db, DialogService, "This analysis has no AI connection, and an analysis needs one for its deep dive.");
+        if (aiId is null)
+            return;
+
         await using var db = await DbContextFactory.CreateDbContextAsync();
         var now = DateTime.UtcNow;
+        await db.DatabaseAnalyses
+            .Where(a => a.Id == analysis.Id && a.AIConnectionId == null)
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(a => a.AIConnectionId, aiId)
+                .SetProperty(a => a.ModifiedAt, now));
+
         var n = await db.DatabaseAnalyses
             .Where(a => a.Id == analysis.Id &&
                         (a.State == DatabaseAnalysisState.Draft || a.State == DatabaseAnalysisState.Failed ||
@@ -267,7 +266,7 @@
     }
 
     private void OnRowClick(TableRowClickEventArgs<AnalysisRow> args) =>
-        Navigation.NavigateTo($"/analyses/{(int)(object)args.Item!.Analysis.Id}");
+        Navigation.NavigateTo(DbRoutes.Analysis(DbId, (int)(object)args.Item!.Analysis.Id));
 
     private async Task DeleteSelected()
     {

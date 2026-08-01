@@ -1,3 +1,4 @@
+using Tedd.AIOptimizeSql.Database.Models;
 using Tedd.AIOptimizeSql.Database.Models.Enums;
 
 namespace Tedd.AIOptimizeSql.OptimizeEngine.Models.SqlBrowser;
@@ -6,6 +7,9 @@ namespace Tedd.AIOptimizeSql.OptimizeEngine.Models.SqlBrowser;
 public sealed record SandboxScriptRequest
 {
     public ExperimentIsolationMode IsolationMode { get; init; } = ExperimentIsolationMode.None;
+
+    /// <summary>Which configured database this is for, so the AI spend lands on its token ledger.</summary>
+    public DatabaseConnectionId? DatabaseConnectionId { get; init; }
 
     /// <summary>Schema the copies live in, for <see cref="ExperimentIsolationMode.SandboxSchema"/>.</summary>
     public string? SandboxSchemaName { get; init; }
